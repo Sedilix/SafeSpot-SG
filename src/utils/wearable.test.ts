@@ -189,6 +189,49 @@ describe('positionAge', () => {
   it('validates the new fields', () => {
     expect(typeof parseWearableEvent({ ...base, positionAge: -1 })).toBe('string');
     expect(typeof parseWearableEvent({ ...base, isBackground: 'yes' })).toBe('string');
-    expect(parseWearableEvent({ ...base, positionAge: 12.4, isBackground: true })).toMatchObject({ positionAge: 12, isBackground: true });
+    expect(typeof parseWearableEvent({ ...base, sosActive: 'true' })).toBe('string');
+    expect(parseWearableEvent({ ...base, positionAge: 12.4, isBackground: true, sosActive: true })).toMatchObject({
+      positionAge: 12,
+      isBackground: true,
+      sosActive: true,
+    });
+  });
+
+  it('recovers sosActive on cold start if watch indicates sosActive in heartbeat', () => {
+    const recovered = applyWearableEvent(
+      undefined,
+      ev({ eventType: 'HEARTBEAT', sosActive: true }),
+      5000,
+      null,
+    );
+    expect(recovered.sosActive).toBe(true);
+  });
+
+  it('preserves activeIncidentId while alert continues and clears it on SOS_CANCEL', () => {
+    const start = applyWearableEvent(
+      undefined,
+      ev({ eventType: 'SOS_TRIGGER' }),
+      1000,
+      null,
+    );
+    start.activeIncidentId = 'inc_w_test123';
+
+    const ongoing = applyWearableEvent(
+      start,
+      ev({ eventType: 'HEARTBEAT' }),
+      2000,
+      null,
+    );
+    expect(ongoing.sosActive).toBe(true);
+    expect(ongoing.activeIncidentId).toBe('inc_w_test123');
+
+    const cancelled = applyWearableEvent(
+      ongoing,
+      ev({ eventType: 'SOS_CANCEL' }),
+      3000,
+      null,
+    );
+    expect(cancelled.sosActive).toBe(false);
+    expect(cancelled.activeIncidentId).toBeNull();
   });
 });

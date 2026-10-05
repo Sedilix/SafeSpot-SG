@@ -82,17 +82,50 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
       {/* Status Banner */}
       <header
         className={`${
-          isActive ? 'bg-brick text-on-brick' : 'bg-pine text-on-pine'
+          !loaded
+            ? 'bg-ink text-white'
+            : isActive
+              ? 'bg-brick text-on-brick'
+              : incident
+                ? 'bg-pine text-on-pine'
+                : 'bg-paper text-ink border-b border-line'
         } px-4 py-4 sm:px-8`}
       >
         <div className="mx-auto flex max-w-5xl items-center gap-3">
-          {isActive ? <ShieldAlert className="h-8 w-8" /> : <ShieldCheck className="h-8 w-8" />}
+          {!loaded ? (
+            <RefreshCw className="h-8 w-8 animate-spin" />
+          ) : isActive ? (
+            <ShieldAlert className="h-8 w-8" />
+          ) : incident ? (
+            <ShieldCheck className="h-8 w-8" />
+          ) : (
+            <ShieldAlert className="h-8 w-8 text-brick" />
+          )}
           <div>
-            <h1 className="font-display text-xl leading-tight font-bold sm:text-2xl">
-              {incident?.elderName || 'Senior'} • {t('tracker.title', lang)}
-            </h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="font-display text-xl leading-tight font-bold sm:text-2xl">
+                {incident?.elderName || 'Senior'} • {t('tracker.title', lang)}
+              </h1>
+              {incident?.incidentType && (
+                <span className="inline-flex items-center rounded bg-black/20 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-white">
+                  {incident.incidentType === 'fall'
+                    ? t('tracker.alertFall', lang)
+                    : incident.incidentType === 'heart_rate'
+                      ? t('tracker.alertHr', lang)
+                      : incident.incidentType === 'crash'
+                        ? t('tracker.alertCrash', lang)
+                        : t('tracker.alertSos', lang)}
+                </span>
+              )}
+            </div>
             <p className="text-sm font-semibold opacity-90">
-              {isActive ? t('tracker.statusActive', lang) : t('tracker.statusResolved', lang)}
+              {!loaded
+                ? t('tracker.connecting', lang)
+                : isActive
+                  ? t('tracker.statusActive', lang)
+                  : incident
+                    ? t('tracker.statusResolved', lang)
+                    : t('tracker.notFound', lang)}
             </p>
           </div>
         </div>
@@ -106,7 +139,7 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
         {!loaded && (
           <div className="card flex items-center justify-center gap-3 p-10 text-lg font-semibold">
             <RefreshCw className="animate-spin h-6 w-6" />
-            <span>Connecting to live incident...</span>
+            <span>{t('tracker.connecting', lang)}</span>
           </div>
         )}
 
@@ -132,7 +165,7 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
               ) : (
                 <div className="flex h-[200px] items-center justify-center gap-2 text-ink-soft font-semibold">
                   <MapPin className="h-5 w-5" />
-                  <span>Waiting for first GPS fix...</span>
+                  <span>{t('tracker.waitingGps', lang)}</span>
                 </div>
               )}
 

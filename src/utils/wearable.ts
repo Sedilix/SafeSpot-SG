@@ -34,6 +34,7 @@ export interface WearableEvent {
   timestamp: number; // unix seconds, as reported by the watch
   positionAge?: number; // seconds since GPS fix was captured on device
   isBackground?: boolean; // true if dispatched by Connect IQ background temporal event
+  sosActive?: boolean; // true if watch app is currently in active SOS countdown or confirmed state
 }
 
 export interface WearableState {
@@ -48,6 +49,7 @@ export interface WearableState {
   heartRate: number | null;
   battery: number | null;
   landmark: string | null;
+  activeIncidentId?: string | null;
   checkInRequested?: boolean;
   checkInRequestedAt?: number | null;
   lastCheckInOkAt?: number | null;
@@ -98,6 +100,9 @@ export function parseWearableEvent(body: unknown): WearableEvent | string {
   if (b.isBackground != null && typeof b.isBackground !== 'boolean') {
     return 'isBackground must be a boolean.';
   }
+  if (b.sosActive != null && typeof b.sosActive !== 'boolean') {
+    return 'sosActive must be a boolean.';
+  }
 
   return {
     deviceId: b.deviceId.trim(),
@@ -109,6 +114,7 @@ export function parseWearableEvent(body: unknown): WearableEvent | string {
     timestamp: isFiniteNumber(b.timestamp) ? b.timestamp : Math.floor(Date.now() / 1000),
     positionAge: isFiniteNumber(b.positionAge) ? Math.round(b.positionAge) : undefined,
     isBackground: typeof b.isBackground === 'boolean' ? b.isBackground : undefined,
+    sosActive: typeof b.sosActive === 'boolean' ? b.sosActive : undefined,
   };
 }
 
@@ -123,7 +129,13 @@ export function applyWearableEvent(
   landmark: string | null,
 ): WearableState {
   const reason = ALERT_REASONS[event.eventType];
-  const sosActive = reason ? true : event.eventType === 'SOS_CANCEL' ? false : prev?.sosActive ?? false;
+  const sosActive = reason
+    ? true
+    : event.eventType === 'SOS_CANCEL'
+      ? false
+      : typeof event.sosActive === 'boolean'
+        ? event.sosActive
+        : prev?.sosActive ?? false;
   // An alert that is already active keeps its original reason and start time.
   const continuing = sosActive && prev?.sosActive;
 
@@ -144,6 +156,7 @@ export function applyWearableEvent(
     heartRate: event.heartRate ?? prev?.heartRate ?? null,
     battery: event.battery ?? prev?.battery ?? null,
     landmark: landmark ?? prev?.landmark ?? null,
+    activeIncidentId: sosActive ? (continuing ? prev?.activeIncidentId ?? null : null) : null,
     checkInRequested,
     checkInRequestedAt: checkInRequested ? prev?.checkInRequestedAt ?? null : null,
     lastCheckInOkAt: isCheckInOk ? now : prev?.lastCheckInOkAt ?? null,

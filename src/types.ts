@@ -311,12 +311,13 @@ export interface AccessibilitySettings {
  */
 export interface Incident {
   incidentId: string;
+  deviceId?: string;
   elderUid: string | null;
   elderName: string;
   elderSelfieUrl?: string;
   bloodType?: string;
   medicalNotes?: string;
-  incidentType?: 'manual_sos' | 'fall' | 'crash';
+  incidentType?: 'manual_sos' | 'fall' | 'crash' | 'heart_rate';
   crashMetrics?: {
     impactGForce: number; // in Gs (e.g. 3.8G)
     preImpactSpeedKmh: number; // e.g. 52 km/h

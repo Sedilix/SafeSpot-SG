@@ -276,7 +276,8 @@ class SafeSpotModel {
             "deviceId" => Config.DEVICE_ID,
             "eventType" => eventType,
             "timestamp" => Time.now().value(),
-            "battery" => System.getSystemStats().battery.toNumber()
+            "battery" => System.getSystemStats().battery.toNumber(),
+            "sosActive" => (mode == MODE_SOS)
         } as Dictionary<Object, Object>;
         if (heartRate != null) {
             body["heartRate"] = heartRate;
