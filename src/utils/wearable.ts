@@ -5,7 +5,14 @@
 
 import { haversineMeters, GeoPoint } from './geo';
 
-export const WEARABLE_EVENT_TYPES = ['SOS_TRIGGER', 'SOS_CANCEL', 'HEARTBEAT', 'FALL_DETECTED', 'HR_ALERT'] as const;
+export const WEARABLE_EVENT_TYPES = [
+  'SOS_TRIGGER',
+  'SOS_CANCEL',
+  'HEARTBEAT',
+  'FALL_DETECTED',
+  'HR_ALERT',
+  'CHECK_IN_OK',
+] as const;
 export type WearableEventType = (typeof WEARABLE_EVENT_TYPES)[number];
 
 /** Why the current alert was raised: button press, watch fall detector, or abnormal heart rate. */
@@ -25,6 +32,8 @@ export interface WearableEvent {
   heartRate?: number;
   battery?: number;
   timestamp: number; // unix seconds, as reported by the watch
+  positionAge?: number; // seconds since GPS fix was captured on device
+  isBackground?: boolean; // true if dispatched by Connect IQ background temporal event
 }
 
 export interface WearableState {
@@ -39,6 +48,11 @@ export interface WearableState {
   heartRate: number | null;
   battery: number | null;
   landmark: string | null;
+  checkInRequested?: boolean;
+  checkInRequestedAt?: number | null;
+  lastCheckInOkAt?: number | null;
+  isBackground?: boolean;
+  positionAge?: number | null;
 }
 
 // A watch heartbeats every ~60s; treat it as offline after a few missed beats.
@@ -70,6 +84,12 @@ export function parseWearableEvent(body: unknown): WearableEvent | string {
   if (b.battery != null && (!isFiniteNumber(b.battery) || b.battery < 0 || b.battery > 100)) {
     return 'battery must be 0-100.';
   }
+  if (b.positionAge != null && (!isFiniteNumber(b.positionAge) || b.positionAge < 0)) {
+    return 'positionAge must be non-negative.';
+  }
+  if (b.isBackground != null && typeof b.isBackground !== 'boolean') {
+    return 'isBackground must be a boolean.';
+  }
 
   return {
     deviceId: b.deviceId.trim(),
@@ -79,6 +99,8 @@ export function parseWearableEvent(body: unknown): WearableEvent | string {
     heartRate: isFiniteNumber(b.heartRate) ? Math.round(b.heartRate) : undefined,
     battery: isFiniteNumber(b.battery) ? Math.round(b.battery) : undefined,
     timestamp: isFiniteNumber(b.timestamp) ? b.timestamp : Math.floor(Date.now() / 1000),
+    positionAge: isFiniteNumber(b.positionAge) ? Math.round(b.positionAge) : undefined,
+    isBackground: typeof b.isBackground === 'boolean' ? b.isBackground : undefined,
   };
 }
 
@@ -97,6 +119,11 @@ export function applyWearableEvent(
   // An alert that is already active keeps its original reason and start time.
   const continuing = sosActive && prev?.sosActive;
 
+  const isCheckInOk = event.eventType === 'CHECK_IN_OK';
+  const checkInRequested = isCheckInOk || event.eventType === 'SOS_CANCEL'
+    ? false
+    : prev?.checkInRequested ?? false;
+
   return {
     deviceId: event.deviceId,
     lastEventType: event.eventType,
@@ -109,6 +136,11 @@ export function applyWearableEvent(
     heartRate: event.heartRate ?? prev?.heartRate ?? null,
     battery: event.battery ?? prev?.battery ?? null,
     landmark: landmark ?? prev?.landmark ?? null,
+    checkInRequested,
+    checkInRequestedAt: checkInRequested ? prev?.checkInRequestedAt ?? null : null,
+    lastCheckInOkAt: isCheckInOk ? now : prev?.lastCheckInOkAt ?? null,
+    isBackground: event.isBackground !== undefined ? event.isBackground : prev?.isBackground ?? false,
+    positionAge: event.positionAge !== undefined ? event.positionAge : prev?.positionAge ?? null,
   };
 }
 

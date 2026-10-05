@@ -73,8 +73,13 @@ class SafeSpotView extends WatchUi.View {
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
         dc.clear();
 
-        dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, 26, Graphics.FONT_XTINY, "SafeSpot", Graphics.TEXT_JUSTIFY_CENTER);
+        if (_model.checkInPending) {
+            dc.setColor(Graphics.COLOR_YELLOW, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(cx, 26, Graphics.FONT_XTINY, "Caregiver asks: OK?", Graphics.TEXT_JUSTIFY_CENTER);
+        } else {
+            dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(cx, 26, Graphics.FONT_XTINY, "SafeSpot", Graphics.TEXT_JUSTIFY_CENTER);
+        }
 
         var hr = _model.heartRate;
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
@@ -89,11 +94,19 @@ class SafeSpotView extends WatchUi.View {
         dc.drawText(cx, 160, Graphics.FONT_XTINY, _model.linkLabel(), Graphics.TEXT_JUSTIFY_CENTER);
 
         // START-button hint, placed toward the top-right button.
-        dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_TRANSPARENT);
-        dc.fillRoundedRectangle(cx - 62, h - 50, 124, 28, 14);
-        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, h - 36, Graphics.FONT_XTINY, "START = SOS",
-            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        if (_model.checkInPending) {
+            dc.setColor(Graphics.COLOR_GREEN, Graphics.COLOR_TRANSPARENT);
+            dc.fillRoundedRectangle(cx - 65, h - 50, 130, 28, 14);
+            dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(cx, h - 36, Graphics.FONT_XTINY, "START = I'M OK",
+                Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        } else {
+            dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_TRANSPARENT);
+            dc.fillRoundedRectangle(cx - 62, h - 50, 124, 28, 14);
+            dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(cx, h - 36, Graphics.FONT_XTINY, "START = SOS",
+                Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        }
     }
 
     private function vitalsLine() as String {

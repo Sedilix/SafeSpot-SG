@@ -1712,7 +1712,52 @@ app.post('/api/wearable/event', (req, res) => {
     });
   }
 
-  return res.json({ status: 'acknowledged', sosActive: state.sosActive, landmark: state.landmark });
+  return res.json({
+    status: 'acknowledged',
+    sosActive: state.sosActive,
+    landmark: state.landmark,
+    checkInRequested: Boolean(state.checkInRequested),
+  });
+});
+
+app.post('/api/wearable/checkin', (req, res) => {
+  const expectedToken = process.env.WEARABLE_TOKEN;
+  if (expectedToken && req.get('X-SafeSpot-Token') !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid wearable token.' });
+  }
+
+  const deviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId.trim() : '';
+  if (!deviceId) {
+    return res.status(400).json({ error: 'deviceId is required.' });
+  }
+
+  const existing = wearableStates.get(deviceId);
+  const now = Date.now();
+  const state: WearableState = existing
+    ? {
+        ...existing,
+        checkInRequested: true,
+        checkInRequestedAt: now,
+      }
+    : {
+        deviceId,
+        lastEventType: 'HEARTBEAT',
+        lastSeen: now,
+        sosActive: false,
+        sosSince: null,
+        alertReason: null,
+        lat: null,
+        lng: null,
+        heartRate: null,
+        battery: null,
+        landmark: null,
+        checkInRequested: true,
+        checkInRequestedAt: now,
+      };
+
+  wearableStates.set(deviceId, state);
+  console.log(`[WEARABLE] Caregiver requested check-in for ${deviceId}`);
+  return res.json({ status: 'ok', checkInRequested: true, deviceId });
 });
 
 app.get('/api/wearable/status', (req, res) => {

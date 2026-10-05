@@ -1,3 +1,4 @@
+import Toybox.Application;
 import Toybox.Attention;
 import Toybox.Communications;
 import Toybox.Lang;
@@ -26,6 +27,7 @@ class SafeSpotModel {
     var alertEvent as String = "SOS_TRIGGER";
     var sosAcked as Boolean = false;
     var cancelPending as Boolean = false;
+    var checkInPending as Boolean = false;
 
     var heartRate as Number? = null;
     var lat as Double? = null;
@@ -73,9 +75,13 @@ class SafeSpotModel {
 
     // ── Button actions ───────────────────────────────────────────────────────
 
-    // START: idle -> countdown; countdown -> send immediately; SOS -> resend.
+    // START: if check-in pending -> send CHECK_IN_OK; idle -> countdown; countdown -> send immediately; SOS -> resend.
     function onStartPressed() as Void {
-        if (mode == MODE_IDLE) {
+        if (checkInPending) {
+            checkInPending = false;
+            buzz(200);
+            send("CHECK_IN_OK");
+        } else if (mode == MODE_IDLE) {
             startAlert("SOS_TRIGGER", Config.COUNTDOWN_SECONDS);
         } else if (mode == MODE_COUNTDOWN) {
             fireSos();
@@ -166,6 +172,9 @@ class SafeSpotModel {
             var deg = loc.toDegrees();
             lat = deg[0];
             lng = deg[1];
+            Application.Storage.setValue("last_lat", lat);
+            Application.Storage.setValue("last_lng", lng);
+            Application.Storage.setValue("last_pos_time", Time.now().value());
         }
         WatchUi.requestUpdate();
     }
@@ -186,6 +195,13 @@ class SafeSpotModel {
             if (lm instanceof String) {
                 landmark = lm;
             }
+            var req = data["checkInRequested"];
+            if (req == true) {
+                checkInPending = true;
+                buzz(400);
+            } else if (req == false && "CHECK_IN_OK".equals(type)) {
+                checkInPending = false;
+            }
             if (alertEvent.equals(type) && mode == MODE_SOS && !sosAcked) {
                 sosAcked = true;
                 buzz(1000);
@@ -194,6 +210,14 @@ class SafeSpotModel {
             }
         }
         WatchUi.requestUpdate();
+    }
+
+    function onBackgroundDataReceived(data as Dictionary) as Void {
+        if (data["checkInRequested"] == true) {
+            checkInPending = true;
+            buzz(400);
+            WatchUi.requestUpdate();
+        }
     }
 
     private function startAlert(eventType as String, seconds as Number) as Void {
@@ -232,7 +256,7 @@ class SafeSpotModel {
             body["lng"] = lng;
         }
 
-        var headers = { "Content-Type" => Communications.REQUEST_CONTENT_TYPE_JSON } as Dictionary<String, Object>;
+        var headers = { "Content-Type" => Communications.REQUEST_CONTENT_TYPE_JSON } as Dictionary<Object, Object>;
         if (!Config.TOKEN.equals("")) {
             headers["X-SafeSpot-Token"] = Config.TOKEN;
         }
