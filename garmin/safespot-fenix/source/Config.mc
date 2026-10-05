@@ -11,4 +11,14 @@ module Config {
     const HEARTBEAT_SECONDS = 60;
     // While an SOS is active and unacknowledged, retry this often.
     const SOS_RETRY_SECONDS = 5;
+
+    // Automatic alerts (fall, heart rate) get a longer "Are you OK?" window
+    // than a deliberate button press.
+    const ALERT_COUNTDOWN_SECONDS = 30;
+    const ACCEL_SAMPLE_RATE = 25;
+    const HR_LOW_BPM = 40;
+    const HR_HIGH_BPM = 150;
+    const HR_ALERT_SECONDS = 60;
+    // After a dismissed HR alert, don't ask again for this long.
+    const HR_ALERT_COOLDOWN_SECONDS = 600;
 }

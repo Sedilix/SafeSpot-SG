@@ -5,8 +5,17 @@
 
 import { haversineMeters, GeoPoint } from './geo';
 
-export const WEARABLE_EVENT_TYPES = ['SOS_TRIGGER', 'SOS_CANCEL', 'HEARTBEAT', 'FALL_DETECTED'] as const;
+export const WEARABLE_EVENT_TYPES = ['SOS_TRIGGER', 'SOS_CANCEL', 'HEARTBEAT', 'FALL_DETECTED', 'HR_ALERT'] as const;
 export type WearableEventType = (typeof WEARABLE_EVENT_TYPES)[number];
+
+/** Why the current alert was raised: button press, watch fall detector, or abnormal heart rate. */
+export type WearableAlertReason = 'manual' | 'fall' | 'heartRate';
+
+const ALERT_REASONS: Partial<Record<WearableEventType, WearableAlertReason>> = {
+  SOS_TRIGGER: 'manual',
+  FALL_DETECTED: 'fall',
+  HR_ALERT: 'heartRate',
+};
 
 export interface WearableEvent {
   deviceId: string;
@@ -24,6 +33,7 @@ export interface WearableState {
   lastSeen: number; // server ms
   sosActive: boolean;
   sosSince: number | null; // server ms
+  alertReason: WearableAlertReason | null;
   lat: number | null;
   lng: number | null;
   heartRate: number | null;
@@ -82,15 +92,18 @@ export function applyWearableEvent(
   now: number,
   landmark: string | null,
 ): WearableState {
-  const triggersSos = event.eventType === 'SOS_TRIGGER' || event.eventType === 'FALL_DETECTED';
-  const sosActive = triggersSos ? true : event.eventType === 'SOS_CANCEL' ? false : prev?.sosActive ?? false;
+  const reason = ALERT_REASONS[event.eventType];
+  const sosActive = reason ? true : event.eventType === 'SOS_CANCEL' ? false : prev?.sosActive ?? false;
+  // An alert that is already active keeps its original reason and start time.
+  const continuing = sosActive && prev?.sosActive;
 
   return {
     deviceId: event.deviceId,
     lastEventType: event.eventType,
     lastSeen: now,
     sosActive,
-    sosSince: sosActive ? (prev?.sosActive ? prev.sosSince : now) : null,
+    sosSince: sosActive ? (continuing ? prev!.sosSince : now) : null,
+    alertReason: sosActive ? (continuing ? prev!.alertReason : reason ?? null) : null,
     lat: event.lat ?? prev?.lat ?? null,
     lng: event.lng ?? prev?.lng ?? null,
     heartRate: event.heartRate ?? prev?.heartRate ?? null,

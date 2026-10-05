@@ -15,11 +15,15 @@ enum {
 }
 
 // Owns sensor state, the SOS state machine, and the link to the SafeSpot server.
-// A single 1 Hz timer drives the countdown, retries, and heartbeats.
+// A single 1 Hz timer drives the countdown, retries, heartbeats, and the
+// heart-rate check. All alert sources (button, fall, heart rate) share one
+// path: countdown -> send `alertEvent` -> retry until acknowledged.
 class SafeSpotModel {
 
     var mode as Number = MODE_IDLE;
     var countdown as Number = 0;
+    // What the current countdown / SOS will send: SOS_TRIGGER, FALL_DETECTED or HR_ALERT.
+    var alertEvent as String = "SOS_TRIGGER";
     var sosAcked as Boolean = false;
     var cancelPending as Boolean = false;
 
@@ -36,14 +40,26 @@ class SafeSpotModel {
     // keeps SOS_TRIGGER / SOS_CANCEL ordered on the server.
     private var _inFlightType as String? = null;
 
+    private var _fall as FallDetector;
+    private var _hrAbnormalSeconds as Number = 0;
+    private var _hrQuietUntilTick as Number = 0;
+
     function initialize() {
         _timer = new Timer.Timer();
+        _fall = new FallDetector(Config.ACCEL_SAMPLE_RATE);
     }
 
     function start() as Void {
         Position.enableLocationEvents(Position.LOCATION_CONTINUOUS, method(:onPosition));
         Sensor.setEnabledSensors([Sensor.SENSOR_HEARTRATE]);
         Sensor.enableSensorEvents(method(:onSensor));
+        Sensor.registerSensorDataListener(method(:onAccel), {
+            :period => 1,
+            :accelerometer => {
+                :enabled => true,
+                :sampleRate => Config.ACCEL_SAMPLE_RATE
+            }
+        });
         _timer.start(method(:onTick), 1000, true);
         send("HEARTBEAT");
     }
@@ -52,6 +68,7 @@ class SafeSpotModel {
         _timer.stop();
         Position.enableLocationEvents(Position.LOCATION_DISABLE, null);
         Sensor.enableSensorEvents(null);
+        Sensor.unregisterSensorDataListener();
     }
 
     // ── Button actions ───────────────────────────────────────────────────────
@@ -59,21 +76,21 @@ class SafeSpotModel {
     // START: idle -> countdown; countdown -> send immediately; SOS -> resend.
     function onStartPressed() as Void {
         if (mode == MODE_IDLE) {
-            mode = MODE_COUNTDOWN;
-            countdown = Config.COUNTDOWN_SECONDS;
-            cancelPending = false;
-            wake();
-            buzz(300);
+            startAlert("SOS_TRIGGER", Config.COUNTDOWN_SECONDS);
         } else if (mode == MODE_COUNTDOWN) {
             fireSos();
         } else {
-            send("SOS_TRIGGER");
+            send(alertEvent);
         }
         WatchUi.requestUpdate();
     }
 
     function cancelCountdown() as Void {
         mode = MODE_IDLE;
+        if ("HR_ALERT".equals(alertEvent)) {
+            _hrQuietUntilTick = _ticks + Config.HR_ALERT_COOLDOWN_SECONDS;
+        }
+        _hrAbnormalSeconds = 0;
         buzz(100);
         WatchUi.requestUpdate();
     }
@@ -83,6 +100,8 @@ class SafeSpotModel {
         mode = MODE_IDLE;
         sosAcked = false;
         cancelPending = true;
+        _hrAbnormalSeconds = 0;
+        _hrQuietUntilTick = _ticks + Config.HR_ALERT_COOLDOWN_SECONDS;
         send("SOS_CANCEL");
         WatchUi.requestUpdate();
     }
@@ -100,7 +119,7 @@ class SafeSpotModel {
             }
         } else if (mode == MODE_SOS && !sosAcked) {
             if (_ticks % Config.SOS_RETRY_SECONDS == 0) {
-                send("SOS_TRIGGER");
+                send(alertEvent);
             }
         } else if (cancelPending) {
             if (_ticks % Config.SOS_RETRY_SECONDS == 0) {
@@ -109,7 +128,35 @@ class SafeSpotModel {
         } else if (_ticks % Config.HEARTBEAT_SECONDS == 0) {
             send("HEARTBEAT");
         }
+        if (mode == MODE_IDLE) {
+            checkHeartRate();
+        }
         WatchUi.requestUpdate();
+    }
+
+    function onAccel(data as Sensor.SensorData) as Void {
+        var accel = data.accelerometerData;
+        if (accel == null) {
+            return;
+        }
+        // Always feed the detector so `moving` stays current for the HR check.
+        if (_fall.addSamples(accel.x, accel.y, accel.z) && mode == MODE_IDLE && !cancelPending) {
+            startAlert("FALL_DETECTED", Config.ALERT_COUNTDOWN_SECONDS);
+            WatchUi.requestUpdate();
+        }
+    }
+
+    // Very low HR at any time, or very high HR while not moving, sustained
+    // for HR_ALERT_SECONDS. Exercise raises HR legitimately, so a high reading
+    // only counts during seconds the accelerometer says the wearer is still.
+    private function checkHeartRate() as Void {
+        var hr = heartRate;
+        var abnormal = hr != null && hr > 0
+            && (hr < Config.HR_LOW_BPM || (hr > Config.HR_HIGH_BPM && !_fall.moving));
+        _hrAbnormalSeconds = abnormal ? _hrAbnormalSeconds + 1 : 0;
+        if (_hrAbnormalSeconds >= Config.HR_ALERT_SECONDS && _ticks >= _hrQuietUntilTick && !cancelPending) {
+            startAlert("HR_ALERT", Config.ALERT_COUNTDOWN_SECONDS);
+        }
     }
 
     function onPosition(info as Position.Info) as Void {
@@ -139,7 +186,7 @@ class SafeSpotModel {
             if (lm instanceof String) {
                 landmark = lm;
             }
-            if ("SOS_TRIGGER".equals(type) && mode == MODE_SOS && !sosAcked) {
+            if (alertEvent.equals(type) && mode == MODE_SOS && !sosAcked) {
                 sosAcked = true;
                 buzz(1000);
             } else if ("SOS_CANCEL".equals(type)) {
@@ -149,11 +196,21 @@ class SafeSpotModel {
         WatchUi.requestUpdate();
     }
 
+    private function startAlert(eventType as String, seconds as Number) as Void {
+        mode = MODE_COUNTDOWN;
+        alertEvent = eventType;
+        countdown = seconds;
+        cancelPending = false;
+        _hrAbnormalSeconds = 0;
+        wake();
+        buzz(eventType.equals("SOS_TRIGGER") ? 300 : 1000);
+    }
+
     private function fireSos() as Void {
         mode = MODE_SOS;
         sosAcked = false;
         buzz(800);
-        send("SOS_TRIGGER");
+        send(alertEvent);
     }
 
     private function send(eventType as String) as Void {
@@ -212,6 +269,9 @@ class SafeSpotModel {
             return "Linked";
         } else if (lastResponseCode == Communications.BLE_CONNECTION_UNAVAILABLE) {
             return "No phone";
+        } else if (lastResponseCode == Communications.BLE_HOST_TIMEOUT
+                || lastResponseCode == Communications.BLE_SERVER_TIMEOUT) {
+            return "Phone slow";
         } else if (lastResponseCode == 401) {
             return "Bad token";
         }

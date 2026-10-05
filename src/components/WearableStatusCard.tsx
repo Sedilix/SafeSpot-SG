@@ -52,7 +52,16 @@ export const WearableStatusCard: React.FC<{ lang: Language }> = ({ lang }) => {
       {device.sosActive && (
         <div className="bg-brick mb-4 flex items-center gap-2 rounded-xl px-4 py-3 text-lg font-bold text-white">
           <ShieldAlert className="h-6 w-6 shrink-0" />
-          <span>{t('wearable.sosActive', lang)}</span>
+          <span>
+            {t(
+              device.alertReason === 'fall'
+                ? 'wearable.fallDetected'
+                : device.alertReason === 'heartRate'
+                  ? 'wearable.hrAlert'
+                  : 'wearable.sosActive',
+              lang,
+            )}
+          </span>
         </div>
       )}
 
