@@ -12,6 +12,7 @@ import {
   handleWatchIncidentUpdate,
   handleWatchAlertCancel,
   pairWearableDevice,
+  unpairWearableDevice,
   getDevicePairedProfile,
   getIncidentById,
   getActiveIncidentForDevice,
@@ -176,6 +177,23 @@ describe('wearableIncidentService', () => {
       expect(doc?.currentGps?.lat).toBe(1.35);
       expect(doc?.nearestLandmarks).toEqual(['Bishan Junction 8']);
       expect(doc?.batteryLevel).toBe(82);
+      expect(doc?.locationSource).toBe('watch_gps');
+    });
+
+    it('unpairs a device cleanly', async () => {
+      await pairWearableDevice({
+        deviceId: 'fenix-to-unpair',
+        elderName: 'Grandma Mary',
+        bloodType: 'A+',
+      });
+      let profile = await getDevicePairedProfile('fenix-to-unpair');
+      expect(profile.elderName).toBe('Grandma Mary');
+
+      await unpairWearableDevice('fenix-to-unpair');
+      profile = await getDevicePairedProfile('fenix-to-unpair');
+      // Should revert to fallback profile
+      expect(profile.elderName).toBe('Senior');
+      expect(profile.uid).toBeNull();
     });
 
     it('updates ongoing incident with fresh telemetry', async () => {

@@ -17,12 +17,17 @@ import {
   RefreshCw, 
   LogOut, 
   AlertCircle,
-  FileText
+  FileText,
+  Watch,
+  Radio,
+  Unlink,
+  CheckCircle2,
 } from 'lucide-react';
 import { UserProfile, BloodType, EmergencyContact, AccessibilitySettings } from '../types';
 import { AddressAutocompleteInput } from './AddressAutocompleteInput';
 import { saveUserProfile, signOutUser } from '../lib/firebase';
 import { User as FirebaseUser } from 'firebase/auth';
+import { t } from '../locales/translations';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -62,7 +67,16 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  void settings;
+  // Watch State
+  const [pairedDeviceId, setPairedDeviceId] = useState('');
+  const [inputDeviceId, setInputDeviceId] = useState('fenix-6s-solar');
+  const [isPairingWatch, setIsPairingWatch] = useState(false);
+  const [watchFeedback, setWatchFeedback] = useState<string | null>(null);
+  const [watchStatus, setWatchStatus] = useState<{
+    online: boolean;
+    battery?: number;
+    heartRate?: number;
+  } | null>(null);
 
   useEffect(() => {
     if (profile) {
@@ -72,10 +86,48 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       setAddress(profile.address || '');
       setMedicalNotes(profile.medicalNotes || '');
       setSelfiePhotoUrl(profile.selfiePhotoUrl);
+      setPairedDeviceId(profile.wearableDeviceId || '');
+      if (profile.wearableDeviceId) {
+        setInputDeviceId(profile.wearableDeviceId);
+      }
     } else if (user) {
       setActualName(user.displayName || '');
     }
   }, [profile, user, isOpen]);
+
+  // Poll status of paired watch when modal is open
+  useEffect(() => {
+    if (!isOpen || !pairedDeviceId) {
+      setWatchStatus(null);
+      return;
+    }
+
+    let active = true;
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch(`/api/wearable/status?deviceId=${encodeURIComponent(pairedDeviceId)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const dev = data.devices?.[0];
+        if (active && dev) {
+          setWatchStatus({
+            online: Boolean(dev.online),
+            battery: dev.battery,
+            heartRate: dev.heartRate,
+          });
+        }
+      } catch {
+        // silent network error in modal
+      }
+    };
+
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 10000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [isOpen, pairedDeviceId]);
 
   // Clean up camera on unmount or close
   useEffect(() => {
@@ -169,6 +221,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         email: user.email || profile?.email,
         authProvider: user.isAnonymous ? 'anonymous' : (user.providerData[0]?.providerId?.includes('google') ? 'google' : 'phone'),
         medicalNotes: medicalNotes.trim(),
+        wearableDeviceId: pairedDeviceId.trim() || undefined,
         createdAt: profile?.createdAt || Date.now(),
         updatedAt: Date.now(),
       };
@@ -185,6 +238,95 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       setErrorMessage(err.message || 'Failed to save profile to Firestore.');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handlePairWatch = async () => {
+    const id = inputDeviceId.trim();
+    if (!id || !user) return;
+    setIsPairingWatch(true);
+    setWatchFeedback(null);
+    setErrorMessage(null);
+    try {
+      await fetch('/api/wearable/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: id,
+          uid: user.uid,
+          elderName: actualName.trim() || user.displayName || 'Senior',
+          bloodType,
+          medicalNotes: medicalNotes.trim(),
+          emergencyContacts: contacts,
+        }),
+      });
+
+      setPairedDeviceId(id);
+      const updatedProfile: UserProfile = {
+        uid: user.uid,
+        actualName: actualName.trim() || user.displayName || 'Senior',
+        dob: dob.trim(),
+        bloodType,
+        address: address.trim(),
+        selfiePhotoUrl,
+        emergencyContacts: contacts,
+        phone: user.phoneNumber || profile?.phone,
+        email: user.email || profile?.email,
+        authProvider: user.isAnonymous ? 'anonymous' : (user.providerData[0]?.providerId?.includes('google') ? 'google' : 'phone'),
+        medicalNotes: medicalNotes.trim(),
+        wearableDeviceId: id,
+        createdAt: profile?.createdAt || Date.now(),
+        updatedAt: Date.now(),
+      };
+      await saveUserProfile(updatedProfile);
+      onProfileUpdated(updatedProfile);
+      setWatchFeedback(t('wearable.pairingSuccess', settings.language));
+      setTimeout(() => setWatchFeedback(null), 3000);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to pair watch.');
+    } finally {
+      setIsPairingWatch(false);
+    }
+  };
+
+  const handleUnpairWatch = async () => {
+    if (!pairedDeviceId || !user) return;
+    setIsPairingWatch(true);
+    setWatchFeedback(null);
+    setErrorMessage(null);
+    try {
+      await fetch('/api/wearable/unpair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: pairedDeviceId }),
+      });
+
+      const updatedProfile: UserProfile = {
+        uid: user.uid,
+        actualName: actualName.trim() || user.displayName || 'Senior',
+        dob: dob.trim(),
+        bloodType,
+        address: address.trim(),
+        selfiePhotoUrl,
+        emergencyContacts: contacts,
+        phone: user.phoneNumber || profile?.phone,
+        email: user.email || profile?.email,
+        authProvider: user.isAnonymous ? 'anonymous' : (user.providerData[0]?.providerId?.includes('google') ? 'google' : 'phone'),
+        medicalNotes: medicalNotes.trim(),
+        wearableDeviceId: undefined,
+        createdAt: profile?.createdAt || Date.now(),
+        updatedAt: Date.now(),
+      };
+      await saveUserProfile(updatedProfile);
+      onProfileUpdated(updatedProfile);
+      setPairedDeviceId('');
+      setWatchStatus(null);
+      setWatchFeedback(t('wearable.unpairedSuccess', settings.language));
+      setTimeout(() => setWatchFeedback(null), 3000);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to unpair watch.');
+    } finally {
+      setIsPairingWatch(false);
     }
   };
 
@@ -433,6 +575,113 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             >
               Edit Contacts →
             </button>
+          </div>
+
+          {/* Section 6: Garmin Watch Pairing */}
+          <div className="border-line bg-well/60 space-y-3 rounded-xl border p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Watch className="text-sky h-5 w-5" />
+                <label className="text-base font-bold sm:text-lg">
+                  {t('wearable.pairingTitle', settings.language)}
+                </label>
+              </div>
+              {pairedDeviceId ? (
+                <span className="text-pine-deep flex items-center gap-1 text-sm font-bold">
+                  <CheckCircle2 className="h-4 w-4" /> {t('wearable.pairedBadge', settings.language)}
+                </span>
+              ) : (
+                <span className="text-ink-soft text-sm font-semibold">
+                  {t('wearable.notPaired', settings.language)}
+                </span>
+              )}
+            </div>
+
+            <p className="text-ink-soft text-sm">
+              {t('wearable.pairingDesc', settings.language)}
+            </p>
+
+            {pairedDeviceId ? (
+              <div className="space-y-3 pt-1">
+                <div className="bg-paper border-line flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-sky-soft text-sky-deep flex h-10 w-10 items-center justify-center rounded-xl font-bold">
+                      <Radio className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="font-mono text-base font-bold">{pairedDeviceId}</div>
+                      <div className="text-ink-soft flex items-center gap-2 text-xs font-semibold">
+                        <span
+                          className={`inline-block h-2 w-2 rounded-full ${
+                            watchStatus?.online ? 'bg-pine' : 'bg-ink-faint'
+                          }`}
+                        />
+                        <span>
+                          {watchStatus?.online
+                            ? t('wearable.online', settings.language)
+                            : t('wearable.offline', settings.language)}
+                        </span>
+                        {watchStatus?.battery != null && <span>• {watchStatus.battery}% battery</span>}
+                        {watchStatus?.heartRate != null && <span>• {watchStatus.heartRate} bpm</span>}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleUnpairWatch}
+                    disabled={isPairingWatch}
+                    className="btn btn-sm btn-secondary text-brick hover:bg-brick-soft hover:text-brick-deep border-brick/30"
+                  >
+                    <Unlink className="h-4 w-4" />
+                    <span>{t('wearable.unpairButton', settings.language)}</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3 pt-1">
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <div className="relative flex-1">
+                    <input
+                      id="watch-device-id"
+                      type="text"
+                      value={inputDeviceId}
+                      onChange={(e) => setInputDeviceId(e.target.value)}
+                      placeholder={t('wearable.deviceIdPlaceholder', settings.language)}
+                      className="input font-mono"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handlePairWatch}
+                    disabled={isPairingWatch || !inputDeviceId.trim()}
+                    className="btn btn-md btn-primary shrink-0"
+                  >
+                    {isPairingWatch ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                        <span>{t('wearable.connecting', settings.language)}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Watch className="h-4 w-4" />
+                        <span>{t('wearable.pairButton', settings.language)}</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                <p className="text-ink-soft text-xs">
+                  {t('wearable.howToFindId', settings.language)}
+                </p>
+              </div>
+            )}
+
+            {watchFeedback && (
+              <div className="border-pine/40 bg-pine-soft text-pine-deep flex items-center gap-2 rounded-lg border p-2 text-sm font-semibold">
+                <Check className="h-4 w-4" />
+                <span>{watchFeedback}</span>
+              </div>
+            )}
           </div>
 
           {/* Account Metadata / Sign Out */}

@@ -26,6 +26,7 @@ import {
   handleWatchIncidentUpdate,
   handleWatchAlertCancel,
   pairWearableDevice,
+  unpairWearableDevice,
   getDevicePairedProfile,
   getActiveIncidentForDevice,
   getPairingOwner,
@@ -1871,6 +1872,20 @@ app.get('/api/wearable/pair/:deviceId', async (req, res) => {
 
   const profile = await getDevicePairedProfile(deviceId);
   return res.json({ deviceId, profile });
+});
+
+app.post('/api/wearable/unpair', async (req, res) => {
+  const deviceId = req.body?.deviceId?.trim();
+  if (!deviceId) return res.status(400).json({ error: 'deviceId is required.' });
+  const success = await unpairWearableDevice(deviceId);
+  return res.json({ status: success ? 'ok' : 'error', deviceId });
+});
+
+app.delete('/api/wearable/pair/:deviceId', async (req, res) => {
+  const deviceId = req.params.deviceId?.trim();
+  if (!deviceId) return res.status(400).json({ error: 'deviceId is required.' });
+  const success = await unpairWearableDevice(deviceId);
+  return res.json({ status: success ? 'ok' : 'error', deviceId });
 });
 
 // Caregiver-facing, so it can't use the watch's X-SafeSpot-Token (a browser
