@@ -90,23 +90,20 @@ class SafeSpotView extends WatchUi.View {
         var linked = _model.lastResponseCode == 200;
         dc.drawText(cx, 138, Graphics.FONT_XTINY,
             _model.batteryPercent() + "%  " + _model.gpsLabel(), Graphics.TEXT_JUSTIFY_CENTER);
-        dc.setColor(linked ? Graphics.COLOR_GREEN : Graphics.COLOR_YELLOW, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, 160, Graphics.FONT_XTINY, _model.linkLabel(), Graphics.TEXT_JUSTIFY_CENTER);
-
-        // START-button hint, placed toward the top-right button.
         if (_model.checkInPending) {
             dc.setColor(Graphics.COLOR_GREEN, Graphics.COLOR_TRANSPARENT);
-            dc.fillRoundedRectangle(cx - 65, h - 50, 130, 28, 14);
-            dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(cx, h - 36, Graphics.FONT_XTINY, "START = I'M OK",
-                Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+            dc.drawText(cx, 160, Graphics.FONT_XTINY, "UP/DOWN = I'M OK", Graphics.TEXT_JUSTIFY_CENTER);
         } else {
-            dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_TRANSPARENT);
-            dc.fillRoundedRectangle(cx - 62, h - 50, 124, 28, 14);
-            dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(cx, h - 36, Graphics.FONT_XTINY, "START = SOS",
-                Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+            dc.setColor(linked ? Graphics.COLOR_GREEN : Graphics.COLOR_YELLOW, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(cx, 160, Graphics.FONT_XTINY, _model.linkLabel(), Graphics.TEXT_JUSTIFY_CENTER);
         }
+
+        // START always means SOS, even during a check-in.
+        dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_TRANSPARENT);
+        dc.fillRoundedRectangle(cx - 62, h - 50, 124, 28, 14);
+        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(cx, h - 36, Graphics.FONT_XTINY, "START = SOS",
+            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     private function vitalsLine() as String {

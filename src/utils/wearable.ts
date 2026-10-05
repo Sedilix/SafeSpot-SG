@@ -55,8 +55,16 @@ export interface WearableState {
   positionAge?: number | null;
 }
 
-// A watch heartbeats every ~60s; treat it as offline after a few missed beats.
-export const WEARABLE_STALE_MS = 3 * 60 * 1000;
+// Foreground heartbeat is ~60s but the background service only beats every 5 min
+// (Connect IQ minimum), so the offline window must outlast one background gap.
+export const WEARABLE_STALE_MS = 7 * 60 * 1000;
+
+/** A caregiver check-in request lapses if the senior never answers. */
+export const CHECK_IN_TTL_MS = 15 * 60 * 1000;
+/** Minimum gap between check-in requests for one device (anti-spam). */
+export const CHECK_IN_MIN_INTERVAL_MS = 30 * 1000;
+/** Hard cap on tracked devices: the intake endpoints are unauthenticated. */
+export const MAX_WEARABLE_DEVICES = 50;
 
 const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
@@ -140,12 +148,40 @@ export function applyWearableEvent(
     checkInRequestedAt: checkInRequested ? prev?.checkInRequestedAt ?? null : null,
     lastCheckInOkAt: isCheckInOk ? now : prev?.lastCheckInOkAt ?? null,
     isBackground: event.isBackground !== undefined ? event.isBackground : prev?.isBackground ?? false,
-    positionAge: event.positionAge !== undefined ? event.positionAge : prev?.positionAge ?? null,
+    // Age describes the coordinates in this event; if new coordinates arrive
+    // without an age (older watch build) it is unknown, never the previous one.
+    positionAge: event.positionAge ?? (event.lat !== undefined ? null : prev?.positionAge ?? null),
   };
 }
 
 export function isWearableOnline(state: Pick<WearableState, 'lastSeen'>, now: number): boolean {
   return now - state.lastSeen <= WEARABLE_STALE_MS;
+}
+
+/** True while a caregiver check-in request is outstanding and not yet expired. */
+export function isCheckInActive(
+  state: Pick<WearableState, 'checkInRequested' | 'checkInRequestedAt'> | undefined,
+  now: number,
+): boolean {
+  if (!state?.checkInRequested) return false;
+  const at = state.checkInRequestedAt;
+  return typeof at === 'number' && now - at <= CHECK_IN_TTL_MS;
+}
+
+export type CheckInResult =
+  | { ok: true; state: WearableState }
+  | { ok: false; reason: 'unknown_device' | 'rate_limited' };
+
+/**
+ * Flags a check-in for a device that has already reported in. Unknown devices
+ * are rejected so the unauthenticated endpoint can't mint phantom watches.
+ */
+export function requestCheckIn(prev: WearableState | undefined, now: number): CheckInResult {
+  if (!prev) return { ok: false, reason: 'unknown_device' };
+  if (isCheckInActive(prev, now) && now - (prev.checkInRequestedAt ?? 0) < CHECK_IN_MIN_INTERVAL_MS) {
+    return { ok: false, reason: 'rate_limited' };
+  }
+  return { ok: true, state: { ...prev, checkInRequested: true, checkInRequestedAt: now } };
 }
 
 /** Nearest named place within maxMeters, or null. */

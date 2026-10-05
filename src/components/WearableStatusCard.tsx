@@ -12,6 +12,8 @@ import type { WearableState } from '../utils/wearable';
 type WearableDevice = WearableState & { online: boolean };
 
 const POLL_MS = 10_000;
+const OK_VISIBLE_MS = 30 * 60_000;
+const STALE_LOCATION_MIN = 3;
 
 /**
  * Live telemetry from a paired Garmin watch (via /api/wearable/status).
@@ -62,7 +64,17 @@ export const WearableStatusCard: React.FC<{ lang: Language }> = ({ lang }) => {
 
   if (!device) return null;
 
-  const minutesAgo = Math.max(0, Math.round((Date.now() - device.lastSeen) / 60_000));
+  const now = Date.now();
+  const minutesAgo = Math.max(0, Math.round((now - device.lastSeen) / 60_000));
+  // The confirmation is remembered for a while; lastEventType gets overwritten by the next heartbeat.
+  const recentlyOk = !device.checkInRequested
+    && typeof device.lastCheckInOkAt === 'number'
+    && now - device.lastCheckInOkAt < OK_VISIBLE_MS;
+  // Age of the coordinates themselves = age when sent + time since it was sent.
+  const locationAgeMin = typeof device.positionAge === 'number'
+    ? Math.round((device.positionAge + (now - device.lastSeen) / 1000) / 60)
+    : null;
+  const locationStale = locationAgeMin !== null && locationAgeMin >= STALE_LOCATION_MIN;
   const mapsUrl = device.lat !== null && device.lng !== null
     ? `https://www.google.com/maps/search/?api=1&query=${device.lat},${device.lng}`
     : null;
@@ -92,7 +104,7 @@ export const WearableStatusCard: React.FC<{ lang: Language }> = ({ lang }) => {
         </div>
       )}
 
-      {!device.checkInRequested && device.lastEventType === 'CHECK_IN_OK' && (
+      {recentlyOk && (
         <div className="bg-pine/10 border-pine/20 text-pine mb-4 flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold">
           <CheckCircle2 className="h-5 w-5 shrink-0" />
           <span>{t('wearable.checkinOk', lang)}</span>
@@ -133,6 +145,11 @@ export const WearableStatusCard: React.FC<{ lang: Language }> = ({ lang }) => {
               {t('wearable.near', lang)} {device.landmark}
             </span>
           )}
+          {locationStale && (
+            <span className="text-brick text-sm font-semibold">
+              {t('wearable.locationAge', lang)} {locationAgeMin} {t('wearable.minAgo', lang)}
+            </span>
+          )}
           {device.isBackground && (
             <span className="bg-ink-soft/10 text-ink-soft rounded-md px-2 py-0.5 text-xs font-semibold">
               {t('wearable.bgSync', lang)}
@@ -147,7 +164,7 @@ export const WearableStatusCard: React.FC<{ lang: Language }> = ({ lang }) => {
             className="btn btn-md btn-secondary flex items-center gap-1.5 disabled:opacity-50"
           >
             <HelpCircle className="h-4 w-4" />
-            {device.checkInRequested ? t('wearable.checkinPending', lang) : t('wearable.requestCheckin', lang)}
+            {t('wearable.requestCheckin', lang)}
           </button>
           {mapsUrl && (
             <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="btn btn-md btn-secondary">

@@ -8,9 +8,14 @@ import {
   parseWearableEvent,
   applyWearableEvent,
   isWearableOnline,
+  isCheckInActive,
+  requestCheckIn,
   nearestLandmark,
   WEARABLE_STALE_MS,
+  CHECK_IN_TTL_MS,
+  CHECK_IN_MIN_INTERVAL_MS,
   WearableEvent,
+  WearableState,
 } from './wearable';
 
 const base = { deviceId: 'fenix-6s-solar', eventType: 'HEARTBEAT', timestamp: 1728135000 };
@@ -124,5 +129,66 @@ describe('nearestLandmark', () => {
   });
   it('returns null when nothing is close', () => {
     expect(nearestLandmark({ lat: 1.45, lng: 103.6 }, places)).toBeNull();
+  });
+});
+
+describe('check-in rules', () => {
+  const seen = (): WearableState =>
+    applyWearableEvent(undefined, { ...(base as WearableEvent), heartRate: 70 }, 1000, null);
+
+  it('rejects unknown devices so no phantom watch can be created', () => {
+    expect(requestCheckIn(undefined, 1000)).toEqual({ ok: false, reason: 'unknown_device' });
+  });
+
+  it('flags a known device and rate-limits repeat requests', () => {
+    const first = requestCheckIn(seen(), 5000);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(first.state.checkInRequested).toBe(true);
+    expect(requestCheckIn(first.state, 5000 + CHECK_IN_MIN_INTERVAL_MS - 1)).toEqual({ ok: false, reason: 'rate_limited' });
+    expect(requestCheckIn(first.state, 5000 + CHECK_IN_MIN_INTERVAL_MS).ok).toBe(true);
+  });
+
+  it('expires an unanswered request after the TTL', () => {
+    const r = requestCheckIn(seen(), 5000);
+    if (!r.ok) throw new Error('expected ok');
+    expect(isCheckInActive(r.state, 5000 + CHECK_IN_TTL_MS)).toBe(true);
+    expect(isCheckInActive(r.state, 5000 + CHECK_IN_TTL_MS + 1)).toBe(false);
+    expect(isCheckInActive(undefined, 1)).toBe(false);
+  });
+
+  it('CHECK_IN_OK and SOS_CANCEL clear the request and record the confirmation', () => {
+    const r = requestCheckIn(seen(), 5000);
+    if (!r.ok) throw new Error('expected ok');
+    const ok = applyWearableEvent(r.state, { ...(base as WearableEvent), eventType: 'CHECK_IN_OK' }, 6000, null);
+    expect(ok.checkInRequested).toBe(false);
+    expect(ok.lastCheckInOkAt).toBe(6000);
+    const next = applyWearableEvent(ok, { ...(base as WearableEvent), eventType: 'HEARTBEAT' }, 7000, null);
+    expect(next.lastCheckInOkAt).toBe(6000); // survives later heartbeats
+  });
+
+  it('stays online across one 5-minute background gap', () => {
+    expect(isWearableOnline({ lastSeen: 0 }, 5 * 60 * 1000 + 30_000)).toBe(true);
+  });
+});
+
+describe('positionAge', () => {
+  const ev = (over: Partial<WearableEvent>): WearableEvent => ({ ...(base as WearableEvent), ...over });
+
+  it('describes the latest coordinates, not an older background beat', () => {
+    const bg = applyWearableEvent(undefined, ev({ lat: 1.3, lng: 103.8, positionAge: 240, isBackground: true }), 1000, null);
+    expect(bg.positionAge).toBe(240);
+    const fresh = applyWearableEvent(bg, ev({ lat: 1.31, lng: 103.81, positionAge: 2 }), 2000, null);
+    expect(fresh.positionAge).toBe(2);
+    const unknown = applyWearableEvent(fresh, ev({ lat: 1.32, lng: 103.82 }), 3000, null);
+    expect(unknown.positionAge).toBeNull();
+    const noCoords = applyWearableEvent(fresh, ev({}), 3000, null);
+    expect(noCoords.positionAge).toBe(2);
+  });
+
+  it('validates the new fields', () => {
+    expect(typeof parseWearableEvent({ ...base, positionAge: -1 })).toBe('string');
+    expect(typeof parseWearableEvent({ ...base, isBackground: 'yes' })).toBe('string');
+    expect(parseWearableEvent({ ...base, positionAge: 12.4, isBackground: true })).toMatchObject({ positionAge: 12, isBackground: true });
   });
 });

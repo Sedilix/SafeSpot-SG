@@ -66,11 +66,10 @@ class SafeSpotBgService extends System.ServiceDelegate {
     }
 
     function onBgResponse(code as Number, data as Dictionary or String or Null) as Void {
-        var ack = false;
+        var requested = false;
         if (code == 200 && data instanceof Dictionary) {
-            ack = true;
-            var checkInReq = data["checkInRequested"];
-            if (checkInReq == true) {
+            requested = data["checkInRequested"] == true;
+            if (requested) {
                 if (Background has :requestApplicationWake) {
                     try {
                         Background.requestApplicationWake("Caregiver asks: are you OK?");
@@ -80,7 +79,9 @@ class SafeSpotBgService extends System.ServiceDelegate {
                 }
             }
         }
-        Background.exit(ack);
+        // Delivered to SafeSpotApp.onBackgroundData when the app is next open.
+        var result = { "checkInRequested" => requested } as Dictionary<Application.PropertyKeyType, Application.PropertyValueType>;
+        Background.exit(result);
     }
 
     private function getRecentHeartRate() as Number? {

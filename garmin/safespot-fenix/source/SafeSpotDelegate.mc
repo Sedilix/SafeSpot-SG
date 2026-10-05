@@ -16,6 +16,15 @@ class SafeSpotDelegate extends WatchUi.BehaviorDelegate {
         return true;
     }
 
+    // UP / DOWN answer a caregiver check-in (START stays SOS-only).
+    function onNextPage() as Boolean {
+        return _model.confirmCheckIn();
+    }
+
+    function onPreviousPage() as Boolean {
+        return _model.confirmCheckIn();
+    }
+
     function onBack() as Boolean {
         if (_model.mode == MODE_COUNTDOWN) {
             _model.cancelCountdown();
