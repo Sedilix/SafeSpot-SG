@@ -270,6 +270,7 @@ export async function handleWatchAlertTrigger(params: {
 
   const incidentDoc: Incident = {
     incidentId,
+    deviceId: event.deviceId,
     elderUid: profile.uid,
     elderName: profile.elderName,
     bloodType: (profile.bloodType as any) || 'Unknown',
@@ -466,6 +467,35 @@ export async function getIncidentById(incidentId: string): Promise<Incident | nu
       }
     } catch (e: any) {
       console.warn(`[WEARABLE_INCIDENT] Failed to read Incidents/${incidentId}:`, e.message);
+    }
+  }
+  return null;
+}
+
+/**
+ * Looks up the latest active incident for a device from in-memory cache or Firestore.
+ */
+export async function getActiveIncidentForDevice(deviceId: string): Promise<Incident | null> {
+  for (const inc of inMemoryIncidents.values()) {
+    if (inc.status === 'active' && inc.deviceId === deviceId) {
+      return inc;
+    }
+  }
+
+  const db = getFirebaseAdminDb();
+  if (db) {
+    try {
+      const snap = await db
+        .collection('Incidents')
+        .where('status', '==', 'active')
+        .where('deviceId', '==', deviceId)
+        .limit(1)
+        .get();
+      if (!snap.empty) {
+        return snap.docs[0].data() as Incident;
+      }
+    } catch (e: any) {
+      console.warn(`[WEARABLE_INCIDENT] Error looking up active incident for ${deviceId}:`, e.message);
     }
   }
   return null;

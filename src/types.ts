@@ -311,6 +311,7 @@ export interface AccessibilitySettings {
  */
 export interface Incident {
   incidentId: string;
+  deviceId?: string;
   elderUid: string | null;
   elderName: string;
   elderSelfieUrl?: string;

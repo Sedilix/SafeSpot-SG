@@ -14,6 +14,7 @@ import {
   pairWearableDevice,
   getDevicePairedProfile,
   getIncidentById,
+  getActiveIncidentForDevice,
   _setAdminDbForTest,
 } from './wearableIncidentService';
 import * as notifications from './notifications';
@@ -230,6 +231,27 @@ describe('wearableIncidentService', () => {
       const doc = await getIncidentById(res.incidentId);
       expect(doc?.status).toBe('resolved');
       expect(sendSpy).toHaveBeenCalled();
+    });
+
+    it('retrieves active incident for device when an alert is live', async () => {
+      const res = await handleWatchAlertTrigger({
+        event: {
+          deviceId: 'fenix-coldstart-device',
+          eventType: 'SOS_TRIGGER',
+          lat: 1.35,
+          lng: 103.85,
+          timestamp: 1700000000,
+        },
+      });
+
+      const active = await getActiveIncidentForDevice('fenix-coldstart-device');
+      expect(active).not.toBeNull();
+      expect(active?.incidentId).toBe(res.incidentId);
+      expect(active?.deviceId).toBe('fenix-coldstart-device');
+
+      await handleWatchAlertCancel(res.incidentId, 'fenix-coldstart-device');
+      const afterCancel = await getActiveIncidentForDevice('fenix-coldstart-device');
+      expect(afterCancel).toBeNull();
     });
   });
 });

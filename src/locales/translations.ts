@@ -545,6 +545,42 @@ export const TRANSLATIONS: Record<string, Partial<Record<Language, string>>> = {
     ms: 'Pautan penjejakan tidak dijumpai. Sila minta ahli keluarga menghantar semula amaran.',
     ta: 'கண்காணிப்பு இணைப்பு கிடைக்கவில்லை. உங்கள் குடும்ப உறுப்பினரிடம் மீண்டும் அனுப்பச் சொல்லவும்.',
   },
+  'tracker.connecting': {
+    en: 'Connecting to live incident telemetry...',
+    zh: '正在连接长辈的实时求助信息...',
+    ms: 'Menyambung ke telemetri insiden langsung...',
+    ta: 'நேரலை சம்பவத் தகவலுடன் இணைக்கிறது...',
+  },
+  'tracker.waitingGps': {
+    en: 'Waiting for first GPS fix...',
+    zh: '正在等待首次GPS定位...',
+    ms: 'Menunggu isyarat GPS pertama...',
+    ta: 'முதல் GPS இணைப்பிற்காக காத்திருக்கிறது...',
+  },
+  'tracker.alertFall': {
+    en: 'Fall Detected',
+    zh: '检测到跌倒',
+    ms: 'Jatuh Dikesan',
+    ta: 'வீழ்ச்சி கண்டறியப்பட்டது',
+  },
+  'tracker.alertHr': {
+    en: 'Heart Rate Alert',
+    zh: '心率异常警报',
+    ms: 'Amaran Kadar Jantung',
+    ta: 'இதயத் துடிப்பு எச்சரிக்கை',
+  },
+  'tracker.alertCrash': {
+    en: 'Crash Detected',
+    zh: '检测到碰撞',
+    ms: 'Kemalangan Dikesan',
+    ta: 'விபத்து கண்டறியப்பட்டது',
+  },
+  'tracker.alertSos': {
+    en: 'SOS Alert',
+    zh: '紧急求救警报',
+    ms: 'Amaran Kecemasan SOS',
+    ta: 'அவசர SOS எச்சரிக்கை',
+  },
 
   // ── Hero & Camera Extra ─────────────────────────────────────────────────
   'hero.orImAt': {

@@ -27,6 +27,7 @@ import {
   handleWatchAlertCancel,
   pairWearableDevice,
   getDevicePairedProfile,
+  getActiveIncidentForDevice,
 } from './src/utils/wearableIncidentService';
 
 const app = express();
@@ -1696,6 +1697,19 @@ app.post('/api/wearable/event', async (req, res) => {
   const prevState = wearableStates.get(event.deviceId);
   const state = applyWearableEvent(prevState, event, Date.now(), landmark);
 
+  // If an alert is active but no incident ID is cached locally (e.g. after a cold start),
+  // recover the existing active incident from Firestore before deciding whether to create a new one.
+  if (state.sosActive && !state.activeIncidentId) {
+    try {
+      const existing = await getActiveIncidentForDevice(event.deviceId);
+      if (existing) {
+        state.activeIncidentId = existing.incidentId;
+      }
+    } catch (e: any) {
+      console.warn('[WEARABLE] Could not recover active incident:', e.message);
+    }
+  }
+
   let formattedAddress: string | null = null;
   if (event.lat !== undefined && event.lng !== undefined) {
     try {
@@ -1728,7 +1742,7 @@ app.post('/api/wearable/event', async (req, res) => {
       }
     }
   } else if (event.eventType === 'SOS_CANCEL') {
-    const previousIncidentId = prevState?.activeIncidentId;
+    const previousIncidentId = prevState?.activeIncidentId || state.activeIncidentId;
     if (previousIncidentId) {
       try {
         await handleWatchAlertCancel(previousIncidentId, event.deviceId);

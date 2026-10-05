@@ -109,18 +109,18 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
               {incident?.incidentType && (
                 <span className="inline-flex items-center rounded bg-black/20 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-white">
                   {incident.incidentType === 'fall'
-                    ? 'Fall Detected'
+                    ? t('tracker.alertFall', lang)
                     : incident.incidentType === 'heart_rate'
-                      ? 'Heart Rate Alert'
+                      ? t('tracker.alertHr', lang)
                       : incident.incidentType === 'crash'
-                        ? 'Crash Detected'
-                        : 'SOS Alert'}
+                        ? t('tracker.alertCrash', lang)
+                        : t('tracker.alertSos', lang)}
                 </span>
               )}
             </div>
             <p className="text-sm font-semibold opacity-90">
               {!loaded
-                ? 'Connecting to live incident telemetry...'
+                ? t('tracker.connecting', lang)
                 : isActive
                   ? t('tracker.statusActive', lang)
                   : incident
@@ -139,7 +139,7 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
         {!loaded && (
           <div className="card flex items-center justify-center gap-3 p-10 text-lg font-semibold">
             <RefreshCw className="animate-spin h-6 w-6" />
-            <span>Connecting to live incident...</span>
+            <span>{t('tracker.connecting', lang)}</span>
           </div>
         )}
 
@@ -165,7 +165,7 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
               ) : (
                 <div className="flex h-[200px] items-center justify-center gap-2 text-ink-soft font-semibold">
                   <MapPin className="h-5 w-5" />
-                  <span>Waiting for first GPS fix...</span>
+                  <span>{t('tracker.waitingGps', lang)}</span>
                 </div>
               )}
 
