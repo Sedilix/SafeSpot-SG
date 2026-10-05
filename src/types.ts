@@ -216,6 +216,7 @@ export interface UserProfile {
   email?: string;
   authProvider: 'google' | 'phone' | 'anonymous';
   medicalNotes?: string; // Optional allergies or medical conditions (e.g., "Diabetic, Pacemaker")
+  wearableDeviceId?: string; // Paired Garmin device ID (e.g., "fenix-6s-solar")
   createdAt: number;
   updatedAt: number;
 }
@@ -305,6 +306,8 @@ export interface AccessibilitySettings {
   crashDetection?: boolean; // High-G vehicle crash impact detection (iOS / Android)
 }
 
+export type LocationSource = 'watch_gps' | 'phone_gps' | 'phone_ble_assisted';
+
 /**
  * Live incident document stored at Firestore `Incidents/{incidentId}`.
  * Created when the elder alerts family or when a crash/fall is detected.
@@ -329,6 +332,9 @@ export interface Incident {
     accuracy: number;
     timestamp: number;
   } | null;
+  locationSource?: LocationSource;
+  floorLevel?: string;
+  venueName?: string;
   batteryLevel: number | null; // 0-100, null if unsupported
   isCharging: boolean | null;
   nearestLandmarks: string[];

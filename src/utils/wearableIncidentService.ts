@@ -173,6 +173,23 @@ export async function pairWearableDevice(doc: PairedWearableDoc): Promise<boolea
 }
 
 /**
+ * Unpairs a wearable device, removing it from Firestore and in-memory cache.
+ */
+export async function unpairWearableDevice(deviceId: string): Promise<boolean> {
+  inMemoryPairings.delete(deviceId);
+  const db = getFirebaseAdminDb();
+  if (db) {
+    try {
+      await db.collection('WearableDevices').doc(deviceId).delete();
+      return true;
+    } catch (e: any) {
+      console.warn(`[WEARABLE_PAIR] Failed to delete WearableDevices/${deviceId}:`, e.message);
+    }
+  }
+  return true;
+}
+
+/**
  * Maps wearable event types to incidentType enum in Incident schema.
  */
 export function mapEventToIncidentType(
@@ -285,6 +302,7 @@ export async function handleWatchAlertTrigger(params: {
             timestamp: event.timestamp ? event.timestamp * 1000 : now,
           }
         : null,
+    locationSource: event.lat !== undefined && event.lng !== undefined ? 'watch_gps' : undefined,
     batteryLevel: event.battery ?? null,
     isCharging: null,
     nearestLandmarks: landmark ? [landmark] : [],
@@ -371,6 +389,7 @@ export async function handleWatchIncidentUpdate(
       accuracy: 10,
       timestamp: event.timestamp ? event.timestamp * 1000 : now,
     };
+    updates.locationSource = 'watch_gps';
   }
   if (event.battery !== undefined) {
     updates.batteryLevel = event.battery;
