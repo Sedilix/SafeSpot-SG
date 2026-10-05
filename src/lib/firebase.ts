@@ -31,14 +31,16 @@ import {
 } from 'firebase/firestore';
 import { UserProfile, EmergencyContact, Incident } from '../types';
 
+// SafeSpot's own Firebase project (safespot-sg). Web config values are
+// public identifiers, not secrets; the fallbacks keep local builds working
+// when VITE_FIREBASE_* is unset.
 export const firebaseConfig = {
-  apiKey: (import.meta as any).env?.VITE_FIREBASE_API_KEY || 'AIzaSyBTJgt3h1eWOC12iYsTBYPxZx_eLyXFLIs',
-  authDomain: (import.meta as any).env?.VITE_FIREBASE_AUTH_DOMAIN || 'cybrdeck.firebaseapp.com',
-  projectId: (import.meta as any).env?.VITE_FIREBASE_PROJECT_ID || 'cybrdeck',
-  storageBucket: (import.meta as any).env?.VITE_FIREBASE_STORAGE_BUCKET || 'cybrdeck.firebasestorage.app',
-  messagingSenderId: (import.meta as any).env?.VITE_FIREBASE_MESSAGING_SENDER_ID || '258662267000',
-  appId: (import.meta as any).env?.VITE_FIREBASE_APP_ID || '1:258662267000:web:652ca286c29248df9bd58d',
-  measurementId: (import.meta as any).env?.VITE_FIREBASE_MEASUREMENT_ID || 'G-P15TZJSXBW'
+  apiKey: (import.meta as any).env?.VITE_FIREBASE_API_KEY || 'AIzaSyBYYL46PgVVGpLagBFdMrEubpQG8dJ0dXQ',
+  authDomain: (import.meta as any).env?.VITE_FIREBASE_AUTH_DOMAIN || 'safespot-sg.firebaseapp.com',
+  projectId: (import.meta as any).env?.VITE_FIREBASE_PROJECT_ID || 'safespot-sg',
+  storageBucket: (import.meta as any).env?.VITE_FIREBASE_STORAGE_BUCKET || 'safespot-sg.firebasestorage.app',
+  messagingSenderId: (import.meta as any).env?.VITE_FIREBASE_MESSAGING_SENDER_ID || '606598293391',
+  appId: (import.meta as any).env?.VITE_FIREBASE_APP_ID || '1:606598293391:web:fdfac16e0d56048ba18dfa',
 };
 
 // Initialize Firebase App singleton safely
@@ -49,13 +51,12 @@ function initFirebaseApp() {
   } catch (err) {
     console.error('Failed to initialize Firebase with environment config, using fallback:', err);
     return initializeApp({
-      apiKey: 'AIzaSyBTJgt3h1eWOC12iYsTBYPxZx_eLyXFLIs',
-      authDomain: 'cybrdeck.firebaseapp.com',
-      projectId: 'cybrdeck',
-      storageBucket: 'cybrdeck.firebasestorage.app',
-      messagingSenderId: '258662267000',
-      appId: '1:258662267000:web:652ca286c29248df9bd58d',
-      measurementId: 'G-P15TZJSXBW'
+      apiKey: 'AIzaSyBYYL46PgVVGpLagBFdMrEubpQG8dJ0dXQ',
+      authDomain: 'safespot-sg.firebaseapp.com',
+      projectId: 'safespot-sg',
+      storageBucket: 'safespot-sg.firebasestorage.app',
+      messagingSenderId: '606598293391',
+      appId: '1:606598293391:web:fdfac16e0d56048ba18dfa',
     });
   }
 }
