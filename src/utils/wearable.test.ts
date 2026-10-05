@@ -69,6 +69,37 @@ describe('applyWearableEvent', () => {
     expect(hr).toMatchObject({ sosActive: true, alertReason: 'heartRate', heartRate: 165, sosSince: 4000 });
   });
 
+  it('handles background check-in requests and CHECK_IN_OK clears them', () => {
+    const s1 = applyWearableEvent(
+      {
+        deviceId: 'fenix-6s-solar',
+        lastEventType: 'HEARTBEAT',
+        lastSeen: 1000,
+        sosActive: false,
+        sosSince: null,
+        alertReason: null,
+        lat: null,
+        lng: null,
+        heartRate: 70,
+        battery: 80,
+        landmark: null,
+        checkInRequested: true,
+        checkInRequestedAt: 1000,
+      },
+      ev({ eventType: 'HEARTBEAT', isBackground: true, positionAge: 120 }),
+      2000,
+      null,
+    );
+    expect(s1.checkInRequested).toBe(true);
+    expect(s1.isBackground).toBe(true);
+    expect(s1.positionAge).toBe(120);
+
+    const s2 = applyWearableEvent(s1, ev({ eventType: 'CHECK_IN_OK', lat: 1.29, lng: 103.85 }), 3000, 'Suntec');
+    expect(s2.checkInRequested).toBe(false);
+    expect(s2.lastCheckInOkAt).toBe(3000);
+    expect(s2.landmark).toBe('Suntec');
+  });
+
   it('keeps last known readings when the watch omits them', () => {
     const s1 = applyWearableEvent(undefined, ev({ lat: 1.3, lng: 103.8, heartRate: 70, battery: 90 }), 1000, 'Suntec');
     const s2 = applyWearableEvent(s1, ev({ battery: 89 }), 2000, null);

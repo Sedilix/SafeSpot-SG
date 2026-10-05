@@ -1,5 +1,6 @@
 // Build-time settings. Sideloaded apps can't receive Garmin Connect settings,
 // so these are baked into the .prg.
+(:background)
 module Config {
     // Real watches require HTTPS (requests are proxied through the paired phone).
     const SERVER_URL = "https://safespot-sg-258662267000.asia-southeast1.run.app/api/wearable/event";

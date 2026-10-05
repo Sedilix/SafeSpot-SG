@@ -497,6 +497,30 @@ export const TRANSLATIONS: Record<string, Partial<Record<Language, string>>> = {
     ms: 'Buka lokasi jam',
     ta: 'கைக்கடிகார இருப்பிடத்தைத் திற',
   },
+  'wearable.requestCheckin': {
+    en: 'Ask if OK',
+    zh: '询问是否平安',
+    ms: 'Tanya jika selamat',
+    ta: 'நலமா எனக் கேள்',
+  },
+  'wearable.checkinPending': {
+    en: 'Check-in sent • Waiting for watch…',
+    zh: '已发送询问 • 等待手表回应…',
+    ms: 'Pertanyaan dihantar • Menunggu jam…',
+    ta: 'கேள்வி அனுப்பப்பட்டது • காத்திருக்கிறது…',
+  },
+  'wearable.checkinOk': {
+    en: 'Senior confirmed OK',
+    zh: '长辈已确认平安',
+    ms: 'Warga emas sahkan selamat',
+    ta: 'மூத்தோர் நலம் என உறுதிப்படுத்தினார்',
+  },
+  'wearable.bgSync': {
+    en: 'Background sync',
+    zh: '后台同步',
+    ms: 'Segerak latar',
+    ta: 'பின்னணி ஒத்திசைவு',
+  },
   'tracker.statusActive': {
     en: 'ACTIVE — Senior needs assistance',
     zh: '进行中 — 长辈需要帮助',
