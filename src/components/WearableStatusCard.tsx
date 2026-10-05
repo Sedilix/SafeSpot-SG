@@ -19,7 +19,7 @@ const STALE_LOCATION_MIN = 3;
  * Live telemetry from a paired Garmin watch (via /api/wearable/status).
  * Renders nothing until a watch has reported in.
  */
-export const WearableStatusCard: React.FC<{ lang: Language }> = ({ lang }) => {
+export const WearableStatusCard: React.FC<{ lang: Language; deviceId?: string }> = ({ lang, deviceId }) => {
   const [device, setDevice] = useState<WearableDevice | null>(null);
   const [requestingCheckin, setRequestingCheckin] = useState(false);
 
@@ -46,10 +46,16 @@ export const WearableStatusCard: React.FC<{ lang: Language }> = ({ lang }) => {
     let cancelled = false;
     const poll = async () => {
       try {
-        const res = await fetch('/api/wearable/status');
+        const url = deviceId
+          ? `/api/wearable/status?deviceId=${encodeURIComponent(deviceId)}`
+          : '/api/wearable/status';
+        const res = await fetch(url);
         if (!res.ok) return;
         const data: { devices: WearableDevice[] } = await res.json();
-        if (!cancelled) setDevice(data.devices[0] ?? null);
+        const matched = deviceId
+          ? data.devices.find((d) => d.deviceId === deviceId) ?? (data.devices[0] ?? null)
+          : (data.devices[0] ?? null);
+        if (!cancelled) setDevice(matched);
       } catch {
         // transient network error; keep showing the last reading
       }

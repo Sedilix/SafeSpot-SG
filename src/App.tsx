@@ -68,7 +68,8 @@ import {
   updateMotionGpsSpeed, 
   CrashEventData 
 } from './utils/fallDetection';
-import { getBeaconsForVerification, startBeaconScan, stopBeaconScan, updateBeaconsFromGps } from './utils/ble';
+import { getBeaconsForVerification, getNearbyBeacons, startBeaconScan, stopBeaconScan, updateBeaconsFromGps } from './utils/ble';
+import { fuseLocations, WatchLocationInput } from './utils/locationFusion';
 import { getPreferredContact } from './utils/contacts';
 import { resolveSavedPlace } from './utils/places';
 import { auth, subscribeToUserProfile, saveUserProfile, createIncident, updateIncident } from './lib/firebase';
@@ -494,7 +495,51 @@ function SeniorSafeSpotHome() {
     try {
       const batt = battery.supported ? battery : await getBatteryStatus();
       const now = Date.now();
+
+      // Multi-source location fusion (BLE Beacon -> Watch GNSS -> Phone GPS)
+      let watchLoc: WatchLocationInput | null = null;
+      if (userProfile?.wearableDeviceId) {
+        try {
+          const res = await fetch(`/api/wearable/status?deviceId=${encodeURIComponent(userProfile.wearableDeviceId)}`);
+          if (res.ok) {
+            const data = await res.json();
+            const dev = data.devices?.[0];
+            if (dev && dev.lat != null && dev.lng != null) {
+              watchLoc = {
+                lat: dev.lat,
+                lng: dev.lng,
+                timestamp: dev.lastSeen || now,
+                positionAge: dev.positionAge,
+              };
+            }
+          }
+        } catch {
+          // ignore network failure
+        }
+      }
+
+      const fused = fuseLocations({
+        watchLocation: watchLoc,
+        phoneLocation: gps
+          ? {
+              latitude: gps.latitude,
+              longitude: gps.longitude,
+              accuracy: gps.accuracy,
+              timestamp: gps.timestamp,
+            }
+          : null,
+        beacons: getNearbyBeacons(),
+        now,
+      });
+
+      const currentGps = fused
+        ? { lat: fused.lat, lng: fused.lng, accuracy: fused.accuracy, timestamp: fused.timestamp }
+        : gps
+          ? { lat: gps.latitude, lng: gps.longitude, accuracy: gps.accuracy, timestamp: gps.timestamp }
+          : null;
+
       const incidentId = await createIncident({
+        deviceId: userProfile?.wearableDeviceId,
         elderUid: currentUser?.uid || null,
         elderName: userProfile?.actualName || currentUser?.displayName || 'Senior',
         elderSelfieUrl: userProfile?.selfiePhotoUrl,
@@ -502,9 +547,10 @@ function SeniorSafeSpotHome() {
         medicalNotes: userProfile?.medicalNotes || '',
         incidentType,
         crashMetrics,
-        currentGps: gps
-          ? { lat: gps.latitude, lng: gps.longitude, accuracy: gps.accuracy, timestamp: gps.timestamp }
-          : null,
+        currentGps,
+        locationSource: fused?.source || (gps ? 'phone_gps' : undefined),
+        floorLevel: fused?.floorLevel,
+        venueName: fused?.venueName,
         batteryLevel: batt.level,
         isCharging: batt.charging,
         nearestLandmarks: (verification?.visualLandmarks || [])
@@ -560,13 +606,35 @@ function SeniorSafeSpotHome() {
           const now = Date.now();
           if (now - lastIncidentGpsPushRef.current < 5000) return;
           lastIncidentGpsPushRef.current = now;
-          void updateIncident(activeIncidentId, {
-            currentGps: {
-              lat: pos.coords.latitude,
-              lng: pos.coords.longitude,
+
+          const fusedStream = fuseLocations({
+            phoneLocation: {
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
               accuracy: pos.coords.accuracy || 15,
               timestamp: pos.timestamp,
             },
+            beacons: getNearbyBeacons(),
+            now,
+          });
+
+          void updateIncident(activeIncidentId, {
+            currentGps: fusedStream
+              ? {
+                  lat: fusedStream.lat,
+                  lng: fusedStream.lng,
+                  accuracy: fusedStream.accuracy,
+                  timestamp: fusedStream.timestamp,
+                }
+              : {
+                  lat: pos.coords.latitude,
+                  lng: pos.coords.longitude,
+                  accuracy: pos.coords.accuracy || 15,
+                  timestamp: pos.timestamp,
+                },
+            locationSource: fusedStream?.source ?? 'phone_gps',
+            floorLevel: fusedStream?.floorLevel,
+            venueName: fusedStream?.venueName,
           });
         },
         () => {},

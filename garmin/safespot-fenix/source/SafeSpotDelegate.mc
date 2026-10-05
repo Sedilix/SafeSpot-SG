@@ -16,13 +16,36 @@ class SafeSpotDelegate extends WatchUi.BehaviorDelegate {
         return true;
     }
 
+    function onMenu() as Boolean {
+        if (_model.mode == MODE_IDLE) {
+            WatchUi.pushView(new PairingInfoView(), new PairingInfoDelegate(), WatchUi.SLIDE_UP);
+            return true;
+        }
+        return false;
+    }
+
     // UP / DOWN answer a caregiver check-in (START stays SOS-only).
+    // When idle with no check-in, UP / DOWN opens device pairing info.
     function onNextPage() as Boolean {
-        return _model.confirmCheckIn();
+        if (_model.checkInPending) {
+            return _model.confirmCheckIn();
+        }
+        if (_model.mode == MODE_IDLE) {
+            WatchUi.pushView(new PairingInfoView(), new PairingInfoDelegate(), WatchUi.SLIDE_UP);
+            return true;
+        }
+        return false;
     }
 
     function onPreviousPage() as Boolean {
-        return _model.confirmCheckIn();
+        if (_model.checkInPending) {
+            return _model.confirmCheckIn();
+        }
+        if (_model.mode == MODE_IDLE) {
+            WatchUi.pushView(new PairingInfoView(), new PairingInfoDelegate(), WatchUi.SLIDE_UP);
+            return true;
+        }
+        return false;
     }
 
     function onBack() as Boolean {

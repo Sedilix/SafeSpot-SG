@@ -16,6 +16,8 @@ import {
   ShieldAlert,
   ShieldCheck,
   Clock,
+  Watch,
+  Radio,
 } from 'lucide-react';
 import { Incident, Language } from '../types';
 import { subscribeToIncident } from '../lib/firebase';
@@ -133,7 +135,7 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
 
       <main className="mx-auto max-w-5xl space-y-5 px-4 py-6 sm:px-8">
         {/* Garmin watch telemetry (independent of the phone incident) */}
-        <WearableStatusCard lang={lang} />
+        <WearableStatusCard lang={lang} deviceId={incident?.deviceId} />
 
         {/* Loading / Not Found states */}
         {!loaded && (
@@ -170,12 +172,48 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
               )}
 
               <div className="border-line flex flex-wrap items-center justify-between gap-3 border-t p-4">
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  <Clock className="text-ink-soft h-4 w-4" />
-                  <span>
-                    {t('tracker.lastUpdated', lang)}: {lastUpdatedText}
-                    {gps && ` • ±${Math.round(gps.accuracy)}m`}
-                  </span>
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <Clock className="text-ink-soft h-4 w-4" />
+                    <span>
+                      {t('tracker.lastUpdated', lang)}: {lastUpdatedText}
+                      {gps && ` • ±${Math.round(gps.accuracy)}m`}
+                    </span>
+                  </div>
+
+                  {/* Location Source Badge & Floor Micro-Location */}
+                  {incident.locationSource && (
+                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                      {incident.locationSource === 'phone_ble_assisted' ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-soft text-sky-deep border border-sky/30 px-2.5 py-0.5 text-xs font-bold">
+                          <Radio className="h-3 w-3 animate-pulse text-sky" />
+                          <span>{t('fusion.phoneBle', lang)}</span>
+                        </span>
+                      ) : incident.locationSource === 'watch_gps' ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-pine-soft text-pine-deep border border-pine/30 px-2.5 py-0.5 text-xs font-bold">
+                          <Watch className="h-3 w-3 text-pine" />
+                          <span>{t('fusion.watchGps', lang)}</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-well text-ink border border-line px-2.5 py-0.5 text-xs font-bold">
+                          <MapPin className="h-3 w-3 text-ink-soft" />
+                          <span>{t('fusion.phoneGps', lang)}</span>
+                        </span>
+                      )}
+
+                      {incident.floorLevel && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30 px-2 py-0.5 text-xs font-bold">
+                          <span>{t('fusion.floor', lang)}: {incident.floorLevel}</span>
+                        </span>
+                      )}
+
+                      {incident.venueName && (
+                        <span className="text-ink-soft text-xs font-semibold truncate max-w-[220px]">
+                          📍 {incident.venueName}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Direct navigation buttons for the caregiver / driver */}
