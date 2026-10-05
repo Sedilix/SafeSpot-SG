@@ -12,6 +12,8 @@ module Config {
     const HEARTBEAT_SECONDS = 60;
     // While an SOS is active and unacknowledged, retry this often.
     const SOS_RETRY_SECONDS = 5;
+    // A request with no callback after this long is treated as lost.
+    const REQUEST_TIMEOUT_SECONDS = 30;
 
     // Automatic alerts (fall, heart rate) get a longer "Are you OK?" window
     // than a deliberate button press.
