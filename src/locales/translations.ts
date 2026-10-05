@@ -521,6 +521,12 @@ export const TRANSLATIONS: Record<string, Partial<Record<Language, string>>> = {
     ms: 'Segerak latar',
     ta: 'பின்னணி ஒத்திசைவு',
   },
+  'wearable.locationAge': {
+    en: 'Location last updated',
+    zh: '位置更新于',
+    ms: 'Lokasi dikemas kini',
+    ta: 'இருப்பிடம் புதுப்பிக்கப்பட்டது',
+  },
   'tracker.statusActive': {
     en: 'ACTIVE — Senior needs assistance',
     zh: '进行中 — 长辈需要帮助',

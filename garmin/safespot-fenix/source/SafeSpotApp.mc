@@ -47,8 +47,8 @@ class SafeSpotApp extends Application.AppBase {
 
     (:typecheck(false))
     function onBackgroundData(data as Application.PersistableType) as Void {
-        if (_model != null && data instanceof Dictionary) {
-            _model.onBackgroundDataReceived(data as Dictionary);
+        if (data instanceof Dictionary) {
+            getModel().onBackgroundDataReceived(data as Dictionary);
         }
     }
 

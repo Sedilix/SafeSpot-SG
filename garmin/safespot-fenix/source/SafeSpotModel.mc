@@ -28,6 +28,8 @@ class SafeSpotModel {
     var sosAcked as Boolean = false;
     var cancelPending as Boolean = false;
     var checkInPending as Boolean = false;
+    // "I'm OK" answered locally but not yet acknowledged by the server.
+    var checkInOkPending as Boolean = false;
 
     var heartRate as Number? = null;
     var lat as Double? = null;
@@ -38,6 +40,7 @@ class SafeSpotModel {
 
     private var _timer as Timer.Timer;
     private var _ticks as Number = 0;
+    private var _lastFixTime as Number? = null;
     // At most one request in flight: the phone proxy queue is tiny, and it
     // keeps SOS_TRIGGER / SOS_CANCEL ordered on the server.
     private var _inFlightType as String? = null;
@@ -75,13 +78,11 @@ class SafeSpotModel {
 
     // ── Button actions ───────────────────────────────────────────────────────
 
-    // START: if check-in pending -> send CHECK_IN_OK; idle -> countdown; countdown -> send immediately; SOS -> resend.
+    // START: idle -> countdown; countdown -> send immediately; SOS -> resend.
+    // START is *only* ever SOS, even during a caregiver check-in, so a senior in
+    // distress can never reassure the caregiver by reflex.
     function onStartPressed() as Void {
-        if (checkInPending) {
-            checkInPending = false;
-            buzz(200);
-            send("CHECK_IN_OK");
-        } else if (mode == MODE_IDLE) {
+        if (mode == MODE_IDLE) {
             startAlert("SOS_TRIGGER", Config.COUNTDOWN_SECONDS);
         } else if (mode == MODE_COUNTDOWN) {
             fireSos();
@@ -89,6 +90,27 @@ class SafeSpotModel {
             send(alertEvent);
         }
         WatchUi.requestUpdate();
+    }
+
+    // UP/DOWN while a caregiver check-in is pending: answer "I'm OK".
+    function confirmCheckIn() as Boolean {
+        if (!checkInPending || mode != MODE_IDLE) {
+            return false;
+        }
+        checkInPending = false;
+        checkInOkPending = true;
+        buzz(200);
+        send("CHECK_IN_OK");
+        WatchUi.requestUpdate();
+        return true;
+    }
+
+    // Only a transition into "pending" buzzes; repeated heartbeats must not nag.
+    function noteCheckInRequested() as Void {
+        if (!checkInPending && !checkInOkPending) {
+            checkInPending = true;
+            buzz(400);
+        }
     }
 
     function cancelCountdown() as Void {
@@ -130,6 +152,10 @@ class SafeSpotModel {
         } else if (cancelPending) {
             if (_ticks % Config.SOS_RETRY_SECONDS == 0) {
                 send("SOS_CANCEL");
+            }
+        } else if (checkInOkPending) {
+            if (_ticks % Config.SOS_RETRY_SECONDS == 0) {
+                send("CHECK_IN_OK");
             }
         } else if (_ticks % Config.HEARTBEAT_SECONDS == 0) {
             send("HEARTBEAT");
@@ -175,6 +201,7 @@ class SafeSpotModel {
             Application.Storage.setValue("last_lat", lat);
             Application.Storage.setValue("last_lng", lng);
             Application.Storage.setValue("last_pos_time", Time.now().value());
+            _lastFixTime = Time.now().value();
         }
         WatchUi.requestUpdate();
     }
@@ -196,11 +223,13 @@ class SafeSpotModel {
                 landmark = lm;
             }
             var req = data["checkInRequested"];
-            if (req == true) {
-                checkInPending = true;
-                buzz(400);
-            } else if (req == false && "CHECK_IN_OK".equals(type)) {
+            if ("CHECK_IN_OK".equals(type)) {
+                checkInOkPending = false;
                 checkInPending = false;
+            } else if (req == true) {
+                noteCheckInRequested();
+            } else if (req == false) {
+                checkInPending = false; // answered elsewhere or expired on the server
             }
             if (alertEvent.equals(type) && mode == MODE_SOS && !sosAcked) {
                 sosAcked = true;
@@ -208,14 +237,15 @@ class SafeSpotModel {
             } else if ("SOS_CANCEL".equals(type)) {
                 cancelPending = false;
             }
+        } else if ("CHECK_IN_OK".equals(type) && code >= 400 && code < 500) {
+            checkInOkPending = false; // server rejected it; retrying can't help
         }
         WatchUi.requestUpdate();
     }
 
     function onBackgroundDataReceived(data as Dictionary) as Void {
         if (data["checkInRequested"] == true) {
-            checkInPending = true;
-            buzz(400);
+            noteCheckInRequested();
             WatchUi.requestUpdate();
         }
     }
@@ -254,6 +284,9 @@ class SafeSpotModel {
         if (lat != null && lng != null) {
             body["lat"] = lat;
             body["lng"] = lng;
+            if (_lastFixTime != null) {
+                body["positionAge"] = Time.now().value() - _lastFixTime;
+            }
         }
 
         var headers = { "Content-Type" => Communications.REQUEST_CONTENT_TYPE_JSON } as Dictionary<Object, Object>;

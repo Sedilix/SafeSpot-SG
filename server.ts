@@ -10,7 +10,16 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import { ringSamplePoints, bearingDegrees, withinFieldOfView, haversineMeters } from './src/utils/geo';
 import { SPEECHMATICS_VOICE_OPTIONS } from './src/types';
-import { parseWearableEvent, applyWearableEvent, isWearableOnline, nearestLandmark, WearableState } from './src/utils/wearable';
+import {
+  parseWearableEvent,
+  applyWearableEvent,
+  isWearableOnline,
+  isCheckInActive,
+  requestCheckIn,
+  nearestLandmark,
+  MAX_WEARABLE_DEVICES,
+  WearableState,
+} from './src/utils/wearable';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 9003;
@@ -1700,6 +1709,10 @@ app.post('/api/wearable/event', (req, res) => {
     return res.status(400).json({ error: event });
   }
 
+  if (!wearableStates.has(event.deviceId) && wearableStates.size >= MAX_WEARABLE_DEVICES) {
+    return res.status(429).json({ error: 'Too many tracked devices.' });
+  }
+
   const landmark = event.lat !== undefined && event.lng !== undefined
     ? nearestLandmark({ lat: event.lat, lng: event.lng }, SINGAPORE_PRESET_PLACES)
     : null;
@@ -1716,46 +1729,28 @@ app.post('/api/wearable/event', (req, res) => {
     status: 'acknowledged',
     sosActive: state.sosActive,
     landmark: state.landmark,
-    checkInRequested: Boolean(state.checkInRequested),
+    checkInRequested: isCheckInActive(state, Date.now()),
   });
 });
 
+// Caregiver-facing, so it can't use the watch's X-SafeSpot-Token (a browser
+// can't keep a secret). It is therefore limited to devices that already
+// reported in and rate-limited per device. Real caregiver auth comes with
+// watch<->account pairing (handoff Step 3).
 app.post('/api/wearable/checkin', (req, res) => {
-  const expectedToken = process.env.WEARABLE_TOKEN;
-  if (expectedToken && req.get('X-SafeSpot-Token') !== expectedToken) {
-    return res.status(401).json({ error: 'Invalid wearable token.' });
-  }
-
   const deviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId.trim() : '';
   if (!deviceId) {
     return res.status(400).json({ error: 'deviceId is required.' });
   }
 
-  const existing = wearableStates.get(deviceId);
-  const now = Date.now();
-  const state: WearableState = existing
-    ? {
-        ...existing,
-        checkInRequested: true,
-        checkInRequestedAt: now,
-      }
-    : {
-        deviceId,
-        lastEventType: 'HEARTBEAT',
-        lastSeen: now,
-        sosActive: false,
-        sosSince: null,
-        alertReason: null,
-        lat: null,
-        lng: null,
-        heartRate: null,
-        battery: null,
-        landmark: null,
-        checkInRequested: true,
-        checkInRequestedAt: now,
-      };
+  const result = requestCheckIn(wearableStates.get(deviceId), Date.now());
+  if (result.ok === false) {
+    return res
+      .status(result.reason === 'unknown_device' ? 404 : 429)
+      .json({ error: result.reason });
+  }
 
-  wearableStates.set(deviceId, state);
+  wearableStates.set(deviceId, result.state);
   console.log(`[WEARABLE] Caregiver requested check-in for ${deviceId}`);
   return res.json({ status: 'ok', checkInRequested: true, deviceId });
 });
@@ -1769,7 +1764,7 @@ app.get('/api/wearable/status', (req, res) => {
   res.json({
     devices: states
       .sort((a, b) => b.lastSeen - a.lastSeen)
-      .map((s) => ({ ...s, online: isWearableOnline(s, now) })),
+      .map((s) => ({ ...s, checkInRequested: isCheckInActive(s, now), online: isWearableOnline(s, now) })),
     serverTime: now,
   });
 });
