@@ -42,8 +42,11 @@ class SafeSpotModel {
     private var _ticks as Number = 0;
     private var _lastFixTime as Number? = null;
     // At most one request in flight: the phone proxy queue is tiny, and it
-    // keeps SOS_TRIGGER / SOS_CANCEL ordered on the server.
+    // keeps SOS_TRIGGER / SOS_CANCEL ordered on the server. A request with no
+    // callback after REQUEST_TIMEOUT_SECONDS is abandoned, so a lost callback
+    // can't block every later send (including SOS).
     private var _inFlightType as String? = null;
+    private var _inFlightSinceTick as Number = 0;
 
     private var _fall as FallDetector;
     private var _hrAbnormalSeconds as Number = 0;
@@ -213,6 +216,9 @@ class SafeSpotModel {
     // ── Networking ───────────────────────────────────────────────────────────
 
     function onResponse(code as Number, data as Dictionary or String or Null) as Void {
+        // After a timeout this may be a late reply to an abandoned request, so
+        // `type` can be wrong. SOS/cancel acks are therefore confirmed from the
+        // server's reported sosActive, not from `type` alone.
         var type = _inFlightType;
         _inFlightType = null;
         lastResponseCode = code;
@@ -231,10 +237,11 @@ class SafeSpotModel {
             } else if (req == false) {
                 checkInPending = false; // answered elsewhere or expired on the server
             }
-            if (alertEvent.equals(type) && mode == MODE_SOS && !sosAcked) {
+            var serverSos = data["sosActive"];
+            if (alertEvent.equals(type) && mode == MODE_SOS && !sosAcked && serverSos == true) {
                 sosAcked = true;
                 buzz(1000);
-            } else if ("SOS_CANCEL".equals(type)) {
+            } else if ("SOS_CANCEL".equals(type) && serverSos == false) {
                 cancelPending = false;
             }
         } else if ("CHECK_IN_OK".equals(type) && code >= 400 && code < 500) {
@@ -269,7 +276,11 @@ class SafeSpotModel {
 
     private function send(eventType as String) as Void {
         if (_inFlightType != null) {
-            return; // the timer retries SOS/cancel; a skipped heartbeat doesn't matter
+            if (_ticks - _inFlightSinceTick < Config.REQUEST_TIMEOUT_SECONDS) {
+                return; // the timer retries SOS/cancel; a skipped heartbeat doesn't matter
+            }
+            // No callback for too long: assume it's lost and stop showing the old status.
+            lastResponseCode = Communications.NETWORK_REQUEST_TIMED_OUT;
         }
 
         var body = {
@@ -296,6 +307,7 @@ class SafeSpotModel {
         }
 
         _inFlightType = eventType;
+        _inFlightSinceTick = _ticks;
         Communications.makeWebRequest(Config.SERVER_URL, body, {
             :method => Communications.HTTP_REQUEST_METHOD_POST,
             :headers => headers,
@@ -328,7 +340,8 @@ class SafeSpotModel {
         } else if (lastResponseCode == Communications.BLE_CONNECTION_UNAVAILABLE) {
             return "No phone";
         } else if (lastResponseCode == Communications.BLE_HOST_TIMEOUT
-                || lastResponseCode == Communications.BLE_SERVER_TIMEOUT) {
+                || lastResponseCode == Communications.BLE_SERVER_TIMEOUT
+                || lastResponseCode == Communications.NETWORK_REQUEST_TIMED_OUT) {
             return "Phone slow";
         } else if (lastResponseCode == 401) {
             return "Bad token";
