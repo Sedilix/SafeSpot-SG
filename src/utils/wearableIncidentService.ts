@@ -42,10 +42,9 @@ export function getFirebaseAdminDb(): admin.firestore.Firestore | null {
 
   try {
     if (admin.apps.length === 0) {
-      const projectId =
-        process.env.VITE_FIREBASE_PROJECT_ID ||
-        process.env.GCLOUD_PROJECT ||
-        'cybrdeck';
+      // SafeSpot's Firebase project. Cloud Run itself still runs in the
+      // cybrdeck GCP project, so GCLOUD_PROJECT must NOT be used as a fallback.
+      const projectId = process.env.FIREBASE_PROJECT_ID || 'safespot-sg';
       admin.initializeApp({ projectId });
     }
     adminDb = admin.firestore();

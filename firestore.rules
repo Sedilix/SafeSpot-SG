@@ -1,0 +1,36 @@
+rules_version = '2';
+
+// Firestore rules for the safespot-sg project. The server (firebase-admin)
+// bypasses these; they only govern the browser client.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Profiles hold medical notes and emergency contacts: owner only.
+    match /Users/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Caregivers open /track/:incidentId without an account, so a single
+    // incident is readable by its (random, unguessable) ID. Listing or
+    // querying incidents is never allowed.
+    match /Incidents/{incidentId} {
+      allow get: if true;
+      allow create: if isSignedIn()
+        && request.resource.data.elderUid == request.auth.uid
+        && request.resource.data.incidentId == incidentId;
+      allow update: if isSignedIn()
+        && resource.data.elderUid == request.auth.uid
+        && request.resource.data.elderUid == resource.data.elderUid
+        && request.resource.data.incidentId == resource.data.incidentId;
+    }
+
+    // WearableDevices and anything else: server-only.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
