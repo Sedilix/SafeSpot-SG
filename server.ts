@@ -10,6 +10,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import { ringSamplePoints, bearingDegrees, withinFieldOfView, haversineMeters } from './src/utils/geo';
 import { SPEECHMATICS_VOICE_OPTIONS } from './src/types';
+import { parseWearableEvent, applyWearableEvent, isWearableOnline, nearestLandmark, WearableState } from './src/utils/wearable';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 9003;
@@ -1677,6 +1678,55 @@ app.post('/api/notify/dispatch-pin', async (req, res) => {
     console.error('Error in /api/notify/dispatch-pin:', error);
     return res.status(500).json({ error: 'Failed to dispatch location pin', details: error.message });
   }
+});
+
+// ── Wearable (Garmin Connect IQ) intake ─────────────────────────────────────
+// In-memory, keyed by deviceId. Resets on restart / differs per Cloud Run
+// instance; fine for a single-watch trial, swap for Firestore before scaling.
+const wearableStates = new Map<string, WearableState>();
+
+if (!process.env.WEARABLE_TOKEN) {
+  console.warn('WEARABLE_TOKEN is not set — /api/wearable/event accepts unauthenticated events.');
+}
+
+app.post('/api/wearable/event', (req, res) => {
+  const expectedToken = process.env.WEARABLE_TOKEN;
+  if (expectedToken && req.get('X-SafeSpot-Token') !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid wearable token.' });
+  }
+
+  const event = parseWearableEvent(req.body);
+  if (typeof event === 'string') {
+    return res.status(400).json({ error: event });
+  }
+
+  const landmark = event.lat !== undefined && event.lng !== undefined
+    ? nearestLandmark({ lat: event.lat, lng: event.lng }, SINGAPORE_PRESET_PLACES)
+    : null;
+  const state = applyWearableEvent(wearableStates.get(event.deviceId), event, Date.now(), landmark);
+  wearableStates.set(event.deviceId, state);
+
+  if (event.eventType !== 'HEARTBEAT') {
+    console.log(`[WEARABLE] ${event.eventType} from ${event.deviceId}`, {
+      lat: state.lat, lng: state.lng, heartRate: state.heartRate, battery: state.battery, landmark: state.landmark,
+    });
+  }
+
+  return res.json({ status: 'acknowledged', sosActive: state.sosActive, landmark: state.landmark });
+});
+
+app.get('/api/wearable/status', (req, res) => {
+  const now = Date.now();
+  const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId : undefined;
+  const states = deviceId
+    ? [wearableStates.get(deviceId)].filter((s): s is WearableState => Boolean(s))
+    : [...wearableStates.values()];
+  res.json({
+    devices: states
+      .sort((a, b) => b.lastSeen - a.lastSeen)
+      .map((s) => ({ ...s, online: isWearableOnline(s, now) })),
+    serverTime: now,
+  });
 });
 
 // Setup Vite development middleware or static production serving

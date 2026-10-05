@@ -1,0 +1,86 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { describe, it, expect } from 'vitest';
+import {
+  parseWearableEvent,
+  applyWearableEvent,
+  isWearableOnline,
+  nearestLandmark,
+  WEARABLE_STALE_MS,
+  WearableEvent,
+} from './wearable';
+
+const base = { deviceId: 'fenix-6s-solar', eventType: 'HEARTBEAT', timestamp: 1728135000 };
+
+describe('parseWearableEvent', () => {
+  it('accepts the payload the watch sends', () => {
+    const parsed = parseWearableEvent({ ...base, eventType: 'SOS_TRIGGER', lat: 1.29027, lng: 103.851959, heartRate: 78, battery: 84 });
+    expect(parsed).toEqual({ ...base, eventType: 'SOS_TRIGGER', lat: 1.29027, lng: 103.851959, heartRate: 78, battery: 84 });
+  });
+
+  it('allows a heartbeat with no GPS fix', () => {
+    const parsed = parseWearableEvent(base) as WearableEvent;
+    expect(parsed.lat).toBeUndefined();
+    expect(parsed.lng).toBeUndefined();
+  });
+
+  it('rejects bad input', () => {
+    expect(typeof parseWearableEvent(null)).toBe('string');
+    expect(typeof parseWearableEvent({ ...base, deviceId: '' })).toBe('string');
+    expect(typeof parseWearableEvent({ ...base, eventType: 'PARTY' })).toBe('string');
+    expect(typeof parseWearableEvent({ ...base, lat: 1.3 })).toBe('string');
+    expect(typeof parseWearableEvent({ ...base, lat: 91, lng: 103 })).toBe('string');
+    expect(typeof parseWearableEvent({ ...base, battery: 140 })).toBe('string');
+    expect(typeof parseWearableEvent({ ...base, heartRate: '80' })).toBe('string');
+  });
+});
+
+describe('applyWearableEvent', () => {
+  const ev = (over: Partial<WearableEvent>): WearableEvent => ({ ...(base as WearableEvent), ...over });
+
+  it('activates SOS and keeps the original start time across repeats', () => {
+    const s1 = applyWearableEvent(undefined, ev({ eventType: 'SOS_TRIGGER' }), 1000, null);
+    expect(s1.sosActive).toBe(true);
+    expect(s1.sosSince).toBe(1000);
+    const s2 = applyWearableEvent(s1, ev({ eventType: 'HEARTBEAT' }), 2000, null);
+    expect(s2.sosActive).toBe(true);
+    expect(s2.sosSince).toBe(1000);
+  });
+
+  it('treats a fall as an SOS and clears on cancel', () => {
+    const s1 = applyWearableEvent(undefined, ev({ eventType: 'FALL_DETECTED' }), 1000, null);
+    expect(s1.sosActive).toBe(true);
+    const s2 = applyWearableEvent(s1, ev({ eventType: 'SOS_CANCEL' }), 2000, null);
+    expect(s2.sosActive).toBe(false);
+    expect(s2.sosSince).toBeNull();
+  });
+
+  it('keeps last known readings when the watch omits them', () => {
+    const s1 = applyWearableEvent(undefined, ev({ lat: 1.3, lng: 103.8, heartRate: 70, battery: 90 }), 1000, 'Suntec');
+    const s2 = applyWearableEvent(s1, ev({ battery: 89 }), 2000, null);
+    expect(s2).toMatchObject({ lat: 1.3, lng: 103.8, heartRate: 70, battery: 89, landmark: 'Suntec', lastSeen: 2000 });
+  });
+});
+
+describe('isWearableOnline', () => {
+  it('goes offline after the stale window', () => {
+    expect(isWearableOnline({ lastSeen: 0 }, WEARABLE_STALE_MS)).toBe(true);
+    expect(isWearableOnline({ lastSeen: 0 }, WEARABLE_STALE_MS + 1)).toBe(false);
+  });
+});
+
+describe('nearestLandmark', () => {
+  const places = [
+    { title: 'Far', lat: 1.35, lng: 103.9 },
+    { title: 'Near', lat: 1.2905, lng: 103.852 },
+  ];
+  it('picks the closest place within range', () => {
+    expect(nearestLandmark({ lat: 1.29027, lng: 103.851959 }, places)).toBe('Near');
+  });
+  it('returns null when nothing is close', () => {
+    expect(nearestLandmark({ lat: 1.45, lng: 103.6 }, places)).toBeNull();
+  });
+});
