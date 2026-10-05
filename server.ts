@@ -1874,19 +1874,20 @@ app.get('/api/wearable/pair/:deviceId', async (req, res) => {
   return res.json({ deviceId, profile });
 });
 
-app.post('/api/wearable/unpair', async (req, res) => {
-  const deviceId = req.body?.deviceId?.trim();
+// Unpairing silently stops SOS alerts reaching caregivers, so it needs the
+// same owner check as pairing. Unpairing an already-unpaired device is a no-op.
+async function handleUnpair(deviceId: string | undefined, req: express.Request, res: express.Response) {
   if (!deviceId) return res.status(400).json({ error: 'deviceId is required.' });
-  const success = await unpairWearableDevice(deviceId);
-  return res.json({ status: success ? 'ok' : 'error', deviceId });
-});
 
-app.delete('/api/wearable/pair/:deviceId', async (req, res) => {
-  const deviceId = req.params.deviceId?.trim();
-  if (!deviceId) return res.status(400).json({ error: 'deviceId is required.' });
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid || !(await requirePairingAccess(deviceId, uid, res, 'write'))) return;
+
   const success = await unpairWearableDevice(deviceId);
   return res.json({ status: success ? 'ok' : 'error', deviceId });
-});
+}
+
+app.post('/api/wearable/unpair', (req, res) => handleUnpair(req.body?.deviceId?.trim(), req, res));
+app.delete('/api/wearable/pair/:deviceId', (req, res) => handleUnpair(req.params.deviceId?.trim(), req, res));
 
 // Caregiver-facing, so it can't use the watch's X-SafeSpot-Token (a browser
 // can't keep a secret). It is therefore limited to devices that already
