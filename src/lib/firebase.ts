@@ -27,7 +27,8 @@ import {
   updateDoc, 
   collection, 
   onSnapshot,
-  serverTimestamp 
+  serverTimestamp,
+  deleteField 
 } from 'firebase/firestore';
 import { UserProfile, EmergencyContact, Incident } from '../types';
 
@@ -71,16 +72,25 @@ export const auth = getAuth(app);
  * Falls back to the default in-memory instance if the cache cannot init
  * (e.g. another tab already claimed single-tab cache in an older session).
  */
+// Optional profile/incident fields are often undefined (e.g. a Google account
+// has no phone number). Firestore rejects undefined values unless told to skip
+// them, which made the first profile save fail. Note: skipped means *not
+// written*, so clearing a field needs deleteField() (see clearWearableDeviceId).
 function createFirestore() {
   try {
     return initializeFirestore(app, {
+      ignoreUndefinedProperties: true,
       localCache: persistentLocalCache({
         tabManager: persistentMultipleTabManager(),
       }),
     });
   } catch (err) {
     console.warn('Persistent Firestore cache unavailable, using default:', err);
-    return getFirestore(app);
+    try {
+      return initializeFirestore(app, { ignoreUndefinedProperties: true });
+    } catch {
+      return getFirestore(app);
+    }
   }
 }
 
@@ -164,6 +174,14 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
 /**
  * Save or update User profile in Firestore collection `Users/{uid}`
  */
+/** Removes the paired watch ID from a profile (undefined would just be skipped). */
+export async function clearWearableDeviceId(uid: string): Promise<void> {
+  await updateDoc(doc(db, USERS_COLLECTION, uid), {
+    wearableDeviceId: deleteField(),
+    updatedAt: Date.now(),
+  });
+}
+
 export async function saveUserProfile(profile: Partial<UserProfile> & { uid: string }): Promise<void> {
   try {
     const userDocRef = doc(db, USERS_COLLECTION, profile.uid);

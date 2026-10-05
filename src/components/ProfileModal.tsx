@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { UserProfile, BloodType, EmergencyContact, AccessibilitySettings } from '../types';
 import { AddressAutocompleteInput } from './AddressAutocompleteInput';
-import { saveUserProfile, signOutUser } from '../lib/firebase';
+import { saveUserProfile, signOutUser, clearWearableDeviceId } from '../lib/firebase';
 import { User as FirebaseUser } from 'firebase/auth';
 import { t } from '../locales/translations';
 
@@ -329,6 +329,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         updatedAt: Date.now(),
       };
       await saveUserProfile(updatedProfile);
+      await clearWearableDeviceId(user.uid);
       onProfileUpdated(updatedProfile);
       setPairedDeviceId('');
       setWatchStatus(null);
