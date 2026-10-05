@@ -82,17 +82,50 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
       {/* Status Banner */}
       <header
         className={`${
-          isActive ? 'bg-brick text-on-brick' : 'bg-pine text-on-pine'
+          !loaded
+            ? 'bg-ink text-white'
+            : isActive
+              ? 'bg-brick text-on-brick'
+              : incident
+                ? 'bg-pine text-on-pine'
+                : 'bg-paper text-ink border-b border-line'
         } px-4 py-4 sm:px-8`}
       >
         <div className="mx-auto flex max-w-5xl items-center gap-3">
-          {isActive ? <ShieldAlert className="h-8 w-8" /> : <ShieldCheck className="h-8 w-8" />}
+          {!loaded ? (
+            <RefreshCw className="h-8 w-8 animate-spin" />
+          ) : isActive ? (
+            <ShieldAlert className="h-8 w-8" />
+          ) : incident ? (
+            <ShieldCheck className="h-8 w-8" />
+          ) : (
+            <ShieldAlert className="h-8 w-8 text-brick" />
+          )}
           <div>
-            <h1 className="font-display text-xl leading-tight font-bold sm:text-2xl">
-              {incident?.elderName || 'Senior'} • {t('tracker.title', lang)}
-            </h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="font-display text-xl leading-tight font-bold sm:text-2xl">
+                {incident?.elderName || 'Senior'} • {t('tracker.title', lang)}
+              </h1>
+              {incident?.incidentType && (
+                <span className="inline-flex items-center rounded bg-black/20 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-white">
+                  {incident.incidentType === 'fall'
+                    ? 'Fall Detected'
+                    : incident.incidentType === 'heart_rate'
+                      ? 'Heart Rate Alert'
+                      : incident.incidentType === 'crash'
+                        ? 'Crash Detected'
+                        : 'SOS Alert'}
+                </span>
+              )}
+            </div>
             <p className="text-sm font-semibold opacity-90">
-              {isActive ? t('tracker.statusActive', lang) : t('tracker.statusResolved', lang)}
+              {!loaded
+                ? 'Connecting to live incident telemetry...'
+                : isActive
+                  ? t('tracker.statusActive', lang)
+                  : incident
+                    ? t('tracker.statusResolved', lang)
+                    : t('tracker.notFound', lang)}
             </p>
           </div>
         </div>

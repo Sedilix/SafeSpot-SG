@@ -20,6 +20,14 @@ import {
   MAX_WEARABLE_DEVICES,
   WearableState,
 } from './src/utils/wearable';
+import { sendTwilioSms } from './src/utils/notifications';
+import {
+  handleWatchAlertTrigger,
+  handleWatchIncidentUpdate,
+  handleWatchAlertCancel,
+  pairWearableDevice,
+  getDevicePairedProfile,
+} from './src/utils/wearableIncidentService';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 9003;
@@ -1633,51 +1641,19 @@ app.post('/api/notify/dispatch-pin', async (req, res) => {
       `🗺️ Google Maps Pin: ${googleMapsUrl || 'https://maps.google.com'}\n` +
       (incidentId ? `⚡ Live Tracking: https://safespot-sg-258662267000.asia-southeast1.run.app/track/${incidentId}` : '');
 
-    // Check for Twilio carrier integration if configured
-    let carrierStatus = 'DISPATCHED_DIRECT_GATEWAY';
-    const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
-    const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
-    const twilioFrom = process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER;
-
-    if (twilioAccountSid && twilioAuthToken && twilioFrom && cleanPhone) {
-      try {
-        const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioAccountSid}/Messages.json`;
-        const params = new URLSearchParams();
-        params.append('To', cleanPhone.startsWith('+') ? cleanPhone : `+65${cleanPhone}`);
-        params.append('From', twilioFrom);
-        params.append('Body', messageBody);
-
-        const twilioRes = await fetch(twilioUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Basic ' + Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString('base64'),
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: params.toString(),
-        });
-
-        if (twilioRes.ok) {
-          carrierStatus = 'SENT_CARRIER_SMS';
-        } else {
-          const twErr = await twilioRes.text();
-          console.warn('Twilio dispatch warning:', twErr);
-        }
-      } catch (err: any) {
-        console.warn('Twilio carrier dispatch error:', err.message);
-      }
-    }
+    const twilioResult = await sendTwilioSms({ to: cleanPhone, body: messageBody });
 
     console.log(`[DISPATCH_PIN] Successfully sent location pin to ${contactName} (${cleanPhone}):`, {
-      messageId,
-      carrierStatus,
+      messageId: twilioResult.messageId || messageId,
+      carrierStatus: twilioResult.carrierStatus,
       address,
       googleMapsUrl,
     });
 
     return res.json({
       success: true,
-      messageId,
-      carrierStatus,
+      messageId: twilioResult.messageId || messageId,
+      carrierStatus: twilioResult.carrierStatus,
       recipient: contactName || 'Caregiver',
       phone: cleanPhone,
       timestamp,
@@ -1698,7 +1674,7 @@ if (!process.env.WEARABLE_TOKEN) {
   console.warn('WEARABLE_TOKEN is not set — /api/wearable/event accepts unauthenticated events.');
 }
 
-app.post('/api/wearable/event', (req, res) => {
+app.post('/api/wearable/event', async (req, res) => {
   const expectedToken = process.env.WEARABLE_TOKEN;
   if (expectedToken && req.get('X-SafeSpot-Token') !== expectedToken) {
     return res.status(401).json({ error: 'Invalid wearable token.' });
@@ -1716,12 +1692,72 @@ app.post('/api/wearable/event', (req, res) => {
   const landmark = event.lat !== undefined && event.lng !== undefined
     ? nearestLandmark({ lat: event.lat, lng: event.lng }, SINGAPORE_PRESET_PLACES)
     : null;
-  const state = applyWearableEvent(wearableStates.get(event.deviceId), event, Date.now(), landmark);
+
+  const prevState = wearableStates.get(event.deviceId);
+  const state = applyWearableEvent(prevState, event, Date.now(), landmark);
+
+  let formattedAddress: string | null = null;
+  if (event.lat !== undefined && event.lng !== undefined) {
+    try {
+      formattedAddress = await fetchReverseGeocode(event.lat, event.lng);
+    } catch (e) {
+      // non-fatal
+    }
+  }
+
+  // Step 2: Handle server-side Incident creation and Twilio alert notifications
+  if (event.eventType === 'SOS_TRIGGER' || event.eventType === 'FALL_DETECTED' || event.eventType === 'HR_ALERT') {
+    if (!prevState?.sosActive || !state.activeIncidentId) {
+      try {
+        const result = await handleWatchAlertTrigger({
+          event,
+          landmark: state.landmark,
+          formattedAddress,
+        });
+        state.activeIncidentId = result.incidentId;
+        console.log(`[WEARABLE] Created incident ${result.incidentId} (SMS sent: ${result.smsDispatched})`);
+      } catch (err: any) {
+        console.error('[WEARABLE] Failed to trigger watch incident alert:', err.message);
+      }
+    } else if (state.activeIncidentId) {
+      // Ongoing alert session — update incident with latest GPS / battery
+      try {
+        await handleWatchIncidentUpdate(state.activeIncidentId, event, state.landmark, formattedAddress);
+      } catch (err: any) {
+        console.warn('[WEARABLE] Failed to update ongoing incident:', err.message);
+      }
+    }
+  } else if (event.eventType === 'SOS_CANCEL') {
+    const previousIncidentId = prevState?.activeIncidentId;
+    if (previousIncidentId) {
+      try {
+        await handleWatchAlertCancel(previousIncidentId, event.deviceId);
+        console.log(`[WEARABLE] Resolved watch incident ${previousIncidentId}`);
+      } catch (err: any) {
+        console.error('[WEARABLE] Failed to cancel watch incident:', err.message);
+      }
+    }
+    state.activeIncidentId = null;
+  } else if (event.eventType === 'HEARTBEAT') {
+    if (state.sosActive && state.activeIncidentId) {
+      try {
+        await handleWatchIncidentUpdate(state.activeIncidentId, event, state.landmark, formattedAddress);
+      } catch (err: any) {
+        console.warn('[WEARABLE] Failed to update heartbeat in incident:', err.message);
+      }
+    }
+  }
+
   wearableStates.set(event.deviceId, state);
 
   if (event.eventType !== 'HEARTBEAT') {
     console.log(`[WEARABLE] ${event.eventType} from ${event.deviceId}`, {
-      lat: state.lat, lng: state.lng, heartRate: state.heartRate, battery: state.battery, landmark: state.landmark,
+      lat: state.lat,
+      lng: state.lng,
+      heartRate: state.heartRate,
+      battery: state.battery,
+      landmark: state.landmark,
+      incidentId: state.activeIncidentId,
     });
   }
 
@@ -1730,7 +1766,34 @@ app.post('/api/wearable/event', (req, res) => {
     sosActive: state.sosActive,
     landmark: state.landmark,
     checkInRequested: isCheckInActive(state, Date.now()),
+    incidentId: state.activeIncidentId || undefined,
   });
+});
+
+// Device pairing endpoint (Step 2 & 3: maps watch deviceId to senior profile & caregiver contacts)
+app.post('/api/wearable/pair', async (req, res) => {
+  const { deviceId, uid, elderName, bloodType, medicalNotes, emergencyContacts } = req.body || {};
+  if (typeof deviceId !== 'string' || !deviceId.trim()) {
+    return res.status(400).json({ error: 'deviceId is required.' });
+  }
+
+  const success = await pairWearableDevice({
+    deviceId: deviceId.trim(),
+    uid: typeof uid === 'string' ? uid.trim() : null,
+    elderName: typeof elderName === 'string' ? elderName.trim() : undefined,
+    bloodType: typeof bloodType === 'string' ? bloodType.trim() : undefined,
+    medicalNotes: typeof medicalNotes === 'string' ? medicalNotes.trim() : undefined,
+    emergencyContacts: Array.isArray(emergencyContacts) ? emergencyContacts : undefined,
+  });
+
+  return res.json({ status: success ? 'ok' : 'error', deviceId: deviceId.trim() });
+});
+
+app.get('/api/wearable/pair/:deviceId', async (req, res) => {
+  const deviceId = req.params.deviceId?.trim();
+  if (!deviceId) return res.status(400).json({ error: 'deviceId is required.' });
+  const profile = await getDevicePairedProfile(deviceId);
+  return res.json({ deviceId, profile });
 });
 
 // Caregiver-facing, so it can't use the watch's X-SafeSpot-Token (a browser
@@ -1764,7 +1827,12 @@ app.get('/api/wearable/status', (req, res) => {
   res.json({
     devices: states
       .sort((a, b) => b.lastSeen - a.lastSeen)
-      .map((s) => ({ ...s, checkInRequested: isCheckInActive(s, now), online: isWearableOnline(s, now) })),
+      .map((s) => ({
+        ...s,
+        checkInRequested: isCheckInActive(s, now),
+        online: isWearableOnline(s, now),
+        activeIncidentId: s.activeIncidentId ?? null,
+      })),
     serverTime: now,
   });
 });

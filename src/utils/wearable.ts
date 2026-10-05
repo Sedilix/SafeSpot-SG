@@ -48,6 +48,7 @@ export interface WearableState {
   heartRate: number | null;
   battery: number | null;
   landmark: string | null;
+  activeIncidentId?: string | null;
   checkInRequested?: boolean;
   checkInRequestedAt?: number | null;
   lastCheckInOkAt?: number | null;
@@ -144,6 +145,7 @@ export function applyWearableEvent(
     heartRate: event.heartRate ?? prev?.heartRate ?? null,
     battery: event.battery ?? prev?.battery ?? null,
     landmark: landmark ?? prev?.landmark ?? null,
+    activeIncidentId: sosActive ? (continuing ? prev?.activeIncidentId ?? null : null) : null,
     checkInRequested,
     checkInRequestedAt: checkInRequested ? prev?.checkInRequestedAt ?? null : null,
     lastCheckInOkAt: isCheckInOk ? now : prev?.lastCheckInOkAt ?? null,

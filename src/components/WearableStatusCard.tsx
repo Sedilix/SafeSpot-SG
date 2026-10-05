@@ -82,18 +82,28 @@ export const WearableStatusCard: React.FC<{ lang: Language }> = ({ lang }) => {
   return (
     <section className={`card p-5 ${device.sosActive ? 'border-brick border-2' : ''}`}>
       {device.sosActive && (
-        <div className="bg-brick mb-4 flex items-center gap-2 rounded-xl px-4 py-3 text-lg font-bold text-white">
-          <ShieldAlert className="h-6 w-6 shrink-0" />
-          <span>
-            {t(
-              device.alertReason === 'fall'
-                ? 'wearable.fallDetected'
-                : device.alertReason === 'heartRate'
-                  ? 'wearable.hrAlert'
-                  : 'wearable.sosActive',
-              lang,
-            )}
-          </span>
+        <div className="bg-brick mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-3 text-lg font-bold text-white">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="h-6 w-6 shrink-0" />
+            <span>
+              {t(
+                device.alertReason === 'fall'
+                  ? 'wearable.fallDetected'
+                  : device.alertReason === 'heartRate'
+                    ? 'wearable.hrAlert'
+                    : 'wearable.sosActive',
+                lang,
+              )}
+            </span>
+          </div>
+          {device.activeIncidentId && (
+            <a
+              href={`/track/${device.activeIncidentId}`}
+              className="rounded bg-black/20 px-2.5 py-1 text-xs font-semibold tracking-wide text-white hover:bg-black/30"
+            >
+              Tracking #{device.activeIncidentId.slice(-6)}
+            </a>
+          )}
         </div>
       )}
 
