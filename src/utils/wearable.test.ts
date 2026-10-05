@@ -58,6 +58,17 @@ describe('applyWearableEvent', () => {
     expect(s2.sosSince).toBeNull();
   });
 
+  it('records why the alert was raised and keeps the first reason', () => {
+    const fall = applyWearableEvent(undefined, ev({ eventType: 'FALL_DETECTED' }), 1000, null);
+    expect(fall.alertReason).toBe('fall');
+    const pressed = applyWearableEvent(fall, ev({ eventType: 'SOS_TRIGGER' }), 2000, null);
+    expect(pressed.alertReason).toBe('fall');
+    const cleared = applyWearableEvent(pressed, ev({ eventType: 'SOS_CANCEL' }), 3000, null);
+    expect(cleared.alertReason).toBeNull();
+    const hr = applyWearableEvent(cleared, ev({ eventType: 'HR_ALERT', heartRate: 165 }), 4000, null);
+    expect(hr).toMatchObject({ sosActive: true, alertReason: 'heartRate', heartRate: 165, sosSince: 4000 });
+  });
+
   it('keeps last known readings when the watch omits them', () => {
     const s1 = applyWearableEvent(undefined, ev({ lat: 1.3, lng: 103.8, heartRate: 70, battery: 90 }), 1000, 'Suntec');
     const s2 = applyWearableEvent(s1, ev({ battery: 89 }), 2000, null);

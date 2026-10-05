@@ -449,6 +449,18 @@ export const TRANSLATIONS: Record<string, Partial<Record<Language, string>>> = {
     ms: 'SOS ditekan pada jam — semak keadaan sekarang',
     ta: 'கைக்கடிகாரத்தில் SOS அழுத்தப்பட்டது — உடனே சரிபார்க்கவும்',
   },
+  'wearable.fallDetected': {
+    en: 'Possible fall detected by watch — no response, check on them now',
+    zh: '手表检测到可能跌倒且无回应 — 请立即联系',
+    ms: 'Kemungkinan jatuh dikesan oleh jam — tiada respons, semak keadaan sekarang',
+    ta: 'கைக்கடிகாரம் விழுதலைக் கண்டறிந்தது — பதில் இல்லை, உடனே சரிபார்க்கவும்',
+  },
+  'wearable.hrAlert': {
+    en: 'Abnormal heart rate on watch — no response, check on them now',
+    zh: '手表显示心率异常且无回应 — 请立即联系',
+    ms: 'Kadar denyutan jantung luar biasa pada jam — tiada respons, semak keadaan sekarang',
+    ta: 'கைக்கடிகாரத்தில் அசாதாரண இதயத் துடிப்பு — பதில் இல்லை, உடனே சரிபார்க்கவும்',
+  },
   'wearable.online': {
     en: 'Online',
     zh: '在线',

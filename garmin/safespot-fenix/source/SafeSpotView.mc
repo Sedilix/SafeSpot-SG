@@ -25,13 +25,26 @@ class SafeSpotView extends WatchUi.View {
     private function drawCountdown(dc as Dc) as Void {
         var cx = dc.getWidth() / 2;
         var h = dc.getHeight();
+        var automatic = !_model.alertEvent.equals("SOS_TRIGGER");
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_RED);
         dc.clear();
-        dc.drawText(cx, 38, Graphics.FONT_SMALL, "SOS IN", Graphics.TEXT_JUSTIFY_CENTER);
+        dc.drawText(cx, 38, Graphics.FONT_SMALL, countdownTitle(), Graphics.TEXT_JUSTIFY_CENTER);
         dc.drawText(cx, h / 2, Graphics.FONT_NUMBER_THAI_HOT, _model.countdown.toString(),
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.drawText(cx, h - 76, Graphics.FONT_XTINY, "START: send now", Graphics.TEXT_JUSTIFY_CENTER);
-        dc.drawText(cx, h - 54, Graphics.FONT_XTINY, "BACK: cancel", Graphics.TEXT_JUSTIFY_CENTER);
+        dc.drawText(cx, h - 76, Graphics.FONT_XTINY, automatic ? "Alerting caregiver" : "START: send now",
+            Graphics.TEXT_JUSTIFY_CENTER);
+        dc.drawText(cx, h - 54, Graphics.FONT_XTINY, automatic ? "BACK: I'm OK" : "BACK: cancel",
+            Graphics.TEXT_JUSTIFY_CENTER);
+    }
+
+    private function countdownTitle() as String {
+        if (_model.alertEvent.equals("FALL_DETECTED")) {
+            return "FALL? ARE YOU OK";
+        } else if (_model.alertEvent.equals("HR_ALERT")) {
+            var hr = _model.heartRate;
+            return "HEART RATE " + (hr != null ? hr.toString() : "");
+        }
+        return "SOS IN";
     }
 
     private function drawSos(dc as Dc) as Void {
