@@ -20,6 +20,7 @@ import {
 import { Incident, Language } from '../types';
 import { subscribeToIncident } from '../lib/firebase';
 import { t } from '../locales/translations';
+import { WearableStatusCard } from './WearableStatusCard';
 
 interface CaregiverLiveTrackerProps {
   incidentId: string;
@@ -98,6 +99,9 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
       </header>
 
       <main className="mx-auto max-w-5xl space-y-5 px-4 py-6 sm:px-8">
+        {/* Garmin watch telemetry (independent of the phone incident) */}
+        <WearableStatusCard lang={lang} />
+
         {/* Loading / Not Found states */}
         {!loaded && (
           <div className="card flex items-center justify-center gap-3 p-10 text-lg font-semibold">

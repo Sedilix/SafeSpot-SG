@@ -9,3 +9,7 @@ coverage/
 *.key.json
 .gcp-key.json
 *.pem
+
+# Garmin Connect IQ signing keys & build output
+*.der
+garmin/**/bin/
