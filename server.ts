@@ -29,7 +29,10 @@ import {
   unpairWearableDevice,
   getDevicePairedProfile,
   getActiveIncidentForDevice,
+  getPairingOwner,
+  verifyFirebaseIdToken,
 } from './src/utils/wearableIncidentService';
+import { bearerToken, canManagePairing, checkWearableEventAuth } from './src/utils/wearableAuth';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 9003;
@@ -1672,13 +1675,65 @@ app.post('/api/notify/dispatch-pin', async (req, res) => {
 // instance; fine for a single-watch trial, swap for Firestore before scaling.
 const wearableStates = new Map<string, WearableState>();
 
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
 if (!process.env.WEARABLE_TOKEN) {
-  console.warn('WEARABLE_TOKEN is not set — /api/wearable/event accepts unauthenticated events.');
+  console.warn(IS_PRODUCTION
+    ? 'WEARABLE_TOKEN is not set — /api/wearable/event will reject all watch events until it is.'
+    : 'WEARABLE_TOKEN is not set — /api/wearable/event accepts unauthenticated events (development only).');
+}
+
+/**
+ * Resolves the signed-in Firebase user for a request, or sends 401 and
+ * returns null. Pairing data includes medical notes and emergency contacts,
+ * and controls who receives SOS SMS, so it is never served anonymously.
+ */
+async function requireFirebaseUid(req: express.Request, res: express.Response): Promise<string | null> {
+  const idToken = bearerToken(req.get('Authorization'));
+  if (!idToken) {
+    res.status(401).json({ error: 'Sign-in required.' });
+    return null;
+  }
+  try {
+    return await verifyFirebaseIdToken(idToken);
+  } catch {
+    res.status(401).json({ error: 'Invalid or expired sign-in token.' });
+    return null;
+  }
+}
+
+/**
+ * Sends 403/404/503 and returns false unless `uid` may access this device's
+ * pairing. Writing may claim an unpaired device; reading requires ownership,
+ * since an unpaired device's profile falls back to server-configured contacts.
+ */
+async function requirePairingAccess(
+  deviceId: string,
+  uid: string,
+  res: express.Response,
+  mode: 'read' | 'write',
+): Promise<boolean> {
+  try {
+    const owner = await getPairingOwner(deviceId);
+    if (mode === 'read' && owner === null) {
+      res.status(404).json({ error: 'This watch is not paired.' });
+      return false;
+    }
+    if (canManagePairing(owner, uid)) return true;
+    res.status(403).json({ error: 'This watch is paired to another account.' });
+  } catch (e: any) {
+    console.error('[WEARABLE_PAIR] Ownership lookup failed:', e.message);
+    res.status(503).json({ error: 'Pairing service unavailable.' });
+  }
+  return false;
 }
 
 app.post('/api/wearable/event', async (req, res) => {
-  const expectedToken = process.env.WEARABLE_TOKEN;
-  if (expectedToken && req.get('X-SafeSpot-Token') !== expectedToken) {
+  const auth = checkWearableEventAuth(process.env.WEARABLE_TOKEN, req.get('X-SafeSpot-Token'), IS_PRODUCTION);
+  if (auth === 'unconfigured') {
+    return res.status(503).json({ error: 'Wearable intake is not configured.' });
+  }
+  if (auth === 'invalid') {
     return res.status(401).json({ error: 'Invalid wearable token.' });
   }
 
@@ -1786,15 +1841,19 @@ app.post('/api/wearable/event', async (req, res) => {
 });
 
 // Device pairing endpoint (Step 2 & 3: maps watch deviceId to senior profile & caregiver contacts)
+// The owner uid comes from the verified sign-in token, never the request body.
 app.post('/api/wearable/pair', async (req, res) => {
-  const { deviceId, uid, elderName, bloodType, medicalNotes, emergencyContacts } = req.body || {};
+  const { deviceId, elderName, bloodType, medicalNotes, emergencyContacts } = req.body || {};
   if (typeof deviceId !== 'string' || !deviceId.trim()) {
     return res.status(400).json({ error: 'deviceId is required.' });
   }
 
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid || !(await requirePairingAccess(deviceId.trim(), uid, res, 'write'))) return;
+
   const success = await pairWearableDevice({
     deviceId: deviceId.trim(),
-    uid: typeof uid === 'string' ? uid.trim() : null,
+    uid,
     elderName: typeof elderName === 'string' ? elderName.trim() : undefined,
     bloodType: typeof bloodType === 'string' ? bloodType.trim() : undefined,
     medicalNotes: typeof medicalNotes === 'string' ? medicalNotes.trim() : undefined,
@@ -1807,23 +1866,28 @@ app.post('/api/wearable/pair', async (req, res) => {
 app.get('/api/wearable/pair/:deviceId', async (req, res) => {
   const deviceId = req.params.deviceId?.trim();
   if (!deviceId) return res.status(400).json({ error: 'deviceId is required.' });
+
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid || !(await requirePairingAccess(deviceId, uid, res, 'read'))) return;
+
   const profile = await getDevicePairedProfile(deviceId);
   return res.json({ deviceId, profile });
 });
 
-app.post('/api/wearable/unpair', async (req, res) => {
-  const deviceId = req.body?.deviceId?.trim();
+// Unpairing silently stops SOS alerts reaching caregivers, so it needs the
+// same owner check as pairing. Unpairing an already-unpaired device is a no-op.
+async function handleUnpair(deviceId: string | undefined, req: express.Request, res: express.Response) {
   if (!deviceId) return res.status(400).json({ error: 'deviceId is required.' });
-  const success = await unpairWearableDevice(deviceId);
-  return res.json({ status: success ? 'ok' : 'error', deviceId });
-});
 
-app.delete('/api/wearable/pair/:deviceId', async (req, res) => {
-  const deviceId = req.params.deviceId?.trim();
-  if (!deviceId) return res.status(400).json({ error: 'deviceId is required.' });
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid || !(await requirePairingAccess(deviceId, uid, res, 'write'))) return;
+
   const success = await unpairWearableDevice(deviceId);
   return res.json({ status: success ? 'ok' : 'error', deviceId });
-});
+}
+
+app.post('/api/wearable/unpair', (req, res) => handleUnpair(req.body?.deviceId?.trim(), req, res));
+app.delete('/api/wearable/pair/:deviceId', (req, res) => handleUnpair(req.params.deviceId?.trim(), req, res));
 
 // Caregiver-facing, so it can't use the watch's X-SafeSpot-Token (a browser
 // can't keep a secret). It is therefore limited to devices that already

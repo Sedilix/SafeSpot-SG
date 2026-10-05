@@ -29,6 +29,26 @@ import { saveUserProfile, signOutUser } from '../lib/firebase';
 import { User as FirebaseUser } from 'firebase/auth';
 import { t } from '../locales/translations';
 
+/**
+ * Calls a wearable pairing endpoint as the signed-in user. The server takes
+ * the owner from the ID token, so no uid is sent. Throws with the server's
+ * message on failure (e.g. the watch is paired to another account).
+ */
+async function wearablePairingRequest(user: FirebaseUser, url: string, body: object): Promise<void> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${await user.getIdToken()}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Request failed (${res.status})`);
+  }
+}
+
 interface ProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -248,17 +268,12 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     setWatchFeedback(null);
     setErrorMessage(null);
     try {
-      await fetch('/api/wearable/pair', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceId: id,
-          uid: user.uid,
-          elderName: actualName.trim() || user.displayName || 'Senior',
-          bloodType,
-          medicalNotes: medicalNotes.trim(),
-          emergencyContacts: contacts,
-        }),
+      await wearablePairingRequest(user, '/api/wearable/pair', {
+        deviceId: id,
+        elderName: actualName.trim() || user.displayName || 'Senior',
+        bloodType,
+        medicalNotes: medicalNotes.trim(),
+        emergencyContacts: contacts,
       });
 
       setPairedDeviceId(id);
@@ -295,11 +310,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     setWatchFeedback(null);
     setErrorMessage(null);
     try {
-      await fetch('/api/wearable/unpair', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId: pairedDeviceId }),
-      });
+      await wearablePairingRequest(user, '/api/wearable/unpair', { deviceId: pairedDeviceId });
 
       const updatedProfile: UserProfile = {
         uid: user.uid,
