@@ -173,6 +173,29 @@ export async function pairWearableDevice(doc: PairedWearableDoc): Promise<boolea
 }
 
 /**
+ * UID of the account that owns a device pairing, or null if it is unpaired.
+ * Firestore read errors are thrown (not swallowed) so callers fail closed.
+ */
+export async function getPairingOwner(deviceId: string): Promise<string | null> {
+  const cached = inMemoryPairings.get(deviceId);
+  if (cached) return cached.uid ?? null;
+
+  const db = getFirebaseAdminDb();
+  if (!db) return null;
+  const snap = await db.collection('WearableDevices').doc(deviceId).get();
+  return snap.exists ? ((snap.data() as PairedWearableDoc).uid ?? null) : null;
+}
+
+/** Verifies a Firebase Auth ID token and returns the caller's uid. Throws if invalid. */
+export async function verifyFirebaseIdToken(idToken: string): Promise<string> {
+  if (!getFirebaseAdminDb()) {
+    throw new Error('Firebase Admin is not available.');
+  }
+  const decoded = await admin.auth().verifyIdToken(idToken);
+  return decoded.uid;
+}
+
+/**
  * Maps wearable event types to incidentType enum in Incident schema.
  */
 export function mapEventToIncidentType(
