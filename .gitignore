@@ -17,3 +17,6 @@ garmin/**/bin/
 # Routing & Speedband historical data
 tools/speedbands/data/
 data/graph/
+
+# Route probe output (research data)
+tools/route-probe/out/
