@@ -29,11 +29,13 @@ import {
   unpairWearableDevice,
   getDevicePairedProfile,
   getActiveIncidentForDevice,
+  getIncidentById,
   getPairingOwner,
   verifyFirebaseIdToken,
 } from './src/utils/wearableIncidentService';
 import { bearerToken, canManagePairing, checkWearableEventAuth } from './src/utils/wearableAuth';
 import { classifyAddressQuery, mergeAddressSuggestions } from './src/utils/addressSearch';
+import { findPickupOptions } from './src/utils/pickupService';
 import type { AddressSuggestion } from './src/types';
 
 const app = express();
@@ -80,10 +82,12 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Config endpoint: return public Maps API key for client-side rendering
+// Config endpoint: the browser map key. This is a separate key, restricted to
+// the Maps JavaScript API and to SafeSpot's own web addresses, so copying it
+// from the page is useless. The server key (Places, Routes, Roads...) is
+// never sent to browsers.
 app.get('/api/config/maps-key', (req, res) => {
-  const mapsKey = getGoogleMapsApiKey() || '';
-  res.json({ mapsApiKey: mapsKey });
+  res.json({ mapsApiKey: process.env.MAPS_BROWSER_KEY || '' });
 });
 
 // Helper: Get Speechmatics API Key safely from environment
@@ -232,13 +236,10 @@ app.post('/api/speechmatics/tts', async (req, res) => {
 });
 
 // Helper: Get Google Maps / Places API Key safely from environment
+// Server-side Google key (Places, Geocoding, Roads, Routes, Street View).
+// Never returned to clients; see /api/config/maps-key for the browser key.
 function getGoogleMapsApiKey(): string | undefined {
-  return (
-    process.env.GOOGLE_MAPS_API_KEY ||
-    process.env.PLACES_API_KEY ||
-    process.env.VITE_GOOGLE_MAPS_API_KEY ||
-    undefined
-  );
+  return process.env.MAPS_SERVER_KEY || process.env.GOOGLE_MAPS_API_KEY || process.env.PLACES_API_KEY || undefined;
 }
 
 // Helper for reverse geocoding fallback
@@ -831,18 +832,26 @@ app.get('/api/places/autocomplete', async (req, res) => {
   const fetchGoogle = async (): Promise<Suggestion[]> => {
     if (query.length < 2 || !mapsKey) return [];
     try {
-      const gUrl = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(query)}&components=country:sg&language=en&key=${mapsKey}`;
-      const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(3000) });
+      const gRes = await fetch('https://places.googleapis.com/v1/places:autocomplete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': mapsKey },
+        body: JSON.stringify({ input: query, includedRegionCodes: ['sg'], languageCode: 'en' }),
+        signal: AbortSignal.timeout(3000),
+      });
       if (!gRes.ok) return [];
       const gData = (await gRes.json()) as any;
-      return (Array.isArray(gData.predictions) ? gData.predictions : []).slice(0, 5).map((pred: any) => ({
-        id: `google-${pred.place_id}`,
-        title: pred.structured_formatting?.main_text || pred.description,
-        subtitle: pred.structured_formatting?.secondary_text || 'Singapore',
-        fullAddress: pred.description,
-        source: 'google' as const,
-        category,
-      }));
+      return (Array.isArray(gData.suggestions) ? gData.suggestions : [])
+        .map((s: any) => s.placePrediction)
+        .filter((p: any) => p?.placeId)
+        .slice(0, 5)
+        .map((p: any) => ({
+          id: `google-${p.placeId}`,
+          title: p.structuredFormat?.mainText?.text || p.text?.text,
+          subtitle: p.structuredFormat?.secondaryText?.text || 'Singapore',
+          fullAddress: p.text?.text,
+          source: 'google' as const,
+          category,
+        }));
     } catch (e: any) {
       console.warn('Google Places autocomplete query error:', e.message);
       return [];
@@ -897,15 +906,20 @@ app.get('/api/places/resolve', async (req, res) => {
     return res.status(503).json({ error: 'Place lookup unavailable.' });
   }
   try {
-    const dUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(placeId)}&fields=geometry,formatted_address,address_component,name&key=${mapsKey}`;
-    const dRes = await fetch(dUrl, { signal: AbortSignal.timeout(4000) });
+    const dRes = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+      headers: {
+        'X-Goog-Api-Key': mapsKey,
+        'X-Goog-FieldMask': 'location,formattedAddress,addressComponents,displayName',
+      },
+      signal: AbortSignal.timeout(4000),
+    });
     const d = (await dRes.json()) as any;
-    const loc = d.result?.geometry?.location;
-    if (!dRes.ok || typeof loc?.lat !== 'number') {
+    const loc = { lat: d.location?.latitude, lng: d.location?.longitude };
+    if (!dRes.ok || typeof loc.lat !== 'number') {
       return res.status(404).json({ error: 'Place not found.' });
     }
-    const postalCode: string | undefined = (d.result.address_components || [])
-      .find((c: any) => Array.isArray(c.types) && c.types.includes('postal_code'))?.long_name;
+    const postalCode: string | undefined = (d.addressComponents || [])
+      .find((c: any) => Array.isArray(c.types) && c.types.includes('postal_code'))?.longText;
 
     let officialAddress: string | undefined;
     if (postalCode && /^\d{6}$/.test(postalCode)) {
@@ -926,8 +940,8 @@ app.get('/api/places/resolve', async (req, res) => {
       lat: loc.lat,
       lng: loc.lng,
       postalCode,
-      fullAddress: officialAddress || d.result.formatted_address,
-      name: d.result.name,
+      fullAddress: officialAddress || d.formattedAddress,
+      name: d.displayName?.text,
     });
   } catch (err: any) {
     console.warn('Place resolve error:', err.message);
@@ -1917,6 +1931,61 @@ app.post('/api/wearable/checkin', (req, res) => {
   wearableStates.set(deviceId, result.state);
   console.log(`[WEARABLE] Caregiver requested check-in for ${deviceId}`);
   return res.json({ status: 'ok', checkInRequested: true, deviceId });
+});
+
+// ── Pickup point optimiser ───────────────────────────────────────────────────
+// Ranks nearby taxi stands / kerb points by real walking time for the senior
+// and (if the caregiver shares it) real driving time for the driver. Every
+// call costs Google Routes usage, so it is tied to a real incident (the
+// senior's position comes from the incident record, not the caller), cached
+// briefly, and rate-limited per IP.
+const PICKUP_CACHE_TTL_MS = 60_000;
+const pickupCache = new Map<string, { at: number; body: unknown }>();
+const pickupRate = new Map<string, number[]>();
+const inSingapore = (lat: unknown, lng: unknown): lat is number =>
+  typeof lat === 'number' && typeof lng === 'number' && lat > 1.15 && lat < 1.48 && lng > 103.6 && lng < 104.1;
+
+app.post('/api/pickup/options', async (req, res) => {
+  const ip = String(req.get('x-forwarded-for') || req.ip || '').split(',')[0].trim();
+  const now = Date.now();
+  const recent = (pickupRate.get(ip) || []).filter((t) => now - t < 60_000);
+  if (recent.length >= 20) return res.status(429).json({ error: 'Too many requests.' });
+  recent.push(now);
+  pickupRate.set(ip, recent);
+
+  const { incidentId, driverLat, driverLng } = req.body || {};
+  if (typeof incidentId !== 'string' || !/^[A-Za-z0-9_-]{6,64}$/.test(incidentId)) {
+    return res.status(400).json({ error: 'incidentId is required.' });
+  }
+  const driver = inSingapore(driverLat, driverLng) ? { lat: driverLat as number, lng: driverLng as number } : null;
+  const mapsKey = getGoogleMapsApiKey();
+  if (!mapsKey) return res.status(503).json({ error: 'Pickup planning unavailable.' });
+
+  const incident = await getIncidentById(incidentId).catch(() => null);
+  const gps = incident?.currentGps;
+  if (!incident || incident.status !== 'active' || !gps || !inSingapore(gps.lat, gps.lng)) {
+    return res.status(404).json({ error: 'No active incident with a location.' });
+  }
+
+  const cacheKey = [incidentId, gps.lat.toFixed(4), gps.lng.toFixed(4), driver ? `${driver.lat.toFixed(3)},${driver.lng.toFixed(3)}` : '-'].join('|');
+  const hit = pickupCache.get(cacheKey);
+  if (hit && now - hit.at < PICKUP_CACHE_TTL_MS) return res.json(hit.body);
+
+  try {
+    const result = await findPickupOptions({
+      senior: { lat: gps.lat, lng: gps.lng },
+      driver,
+      mapsKey,
+      ltaKey: process.env.LTA_DATAMALL_KEY,
+    });
+    const body = { ...result, senior: { lat: gps.lat, lng: gps.lng }, computedAt: now };
+    if (pickupCache.size > 500) pickupCache.clear();
+    pickupCache.set(cacheKey, { at: now, body });
+    return res.json(body);
+  } catch (err: any) {
+    console.warn('[PICKUP] Optimiser failed:', err.message);
+    return res.status(502).json({ error: 'Pickup planning failed.' });
+  }
 });
 
 app.get('/api/wearable/status', (req, res) => {

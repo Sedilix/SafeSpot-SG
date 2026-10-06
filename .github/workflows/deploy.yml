@@ -103,7 +103,9 @@ jobs:
       - name: Deploy to Cloud Run
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          MAPS_SERVER_KEY: ${{ secrets.MAPS_SERVER_KEY }}
+          MAPS_BROWSER_KEY: ${{ secrets.MAPS_BROWSER_KEY }}
+          LTA_DATAMALL_KEY: ${{ secrets.LTA_DATAMALL_KEY }}
           SPEECHMATICS_API_KEY: ${{ secrets.SPEECHMATICS_API_KEY }}
           TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
@@ -115,7 +117,9 @@ jobs:
           ENV_FLAGS=()
           VARS=""
           [ -n "$GEMINI_API_KEY" ] && VARS="${VARS:+$VARS,}GEMINI_API_KEY=$GEMINI_API_KEY"
-          [ -n "$GOOGLE_MAPS_API_KEY" ] && VARS="${VARS:+$VARS,}GOOGLE_MAPS_API_KEY=$GOOGLE_MAPS_API_KEY"
+          [ -n "$MAPS_SERVER_KEY" ] && VARS="${VARS:+$VARS,}MAPS_SERVER_KEY=$MAPS_SERVER_KEY"
+          [ -n "$MAPS_BROWSER_KEY" ] && VARS="${VARS:+$VARS,}MAPS_BROWSER_KEY=$MAPS_BROWSER_KEY"
+          [ -n "$LTA_DATAMALL_KEY" ] && VARS="${VARS:+$VARS,}LTA_DATAMALL_KEY=$LTA_DATAMALL_KEY"
           [ -n "$SPEECHMATICS_API_KEY" ] && VARS="${VARS:+$VARS,}SPEECHMATICS_API_KEY=$SPEECHMATICS_API_KEY"
           [ -n "$TWILIO_ACCOUNT_SID" ] && VARS="${VARS:+$VARS,}TWILIO_ACCOUNT_SID=$TWILIO_ACCOUNT_SID"
           [ -n "$TWILIO_AUTH_TOKEN" ] && VARS="${VARS:+$VARS,}TWILIO_AUTH_TOKEN=$TWILIO_AUTH_TOKEN"
