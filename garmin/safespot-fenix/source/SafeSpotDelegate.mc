@@ -16,6 +16,13 @@ class SafeSpotDelegate extends WatchUi.BehaviorDelegate {
         return true;
     }
 
+    // On touchscreen watches an unhandled tap is turned into onSelect, which
+    // would start an SOS countdown from an accidental touch. Swallow taps so
+    // only the physical START button can trigger an SOS.
+    function onTap(clickEvent as WatchUi.ClickEvent) as Boolean {
+        return true;
+    }
+
     function onMenu() as Boolean {
         if (_model.mode == MODE_IDLE) {
             WatchUi.pushView(new PairingInfoView(), new PairingInfoDelegate(), WatchUi.SLIDE_UP);
