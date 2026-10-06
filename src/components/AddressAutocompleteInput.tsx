@@ -113,12 +113,26 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
     }
   };
 
-  const handleSelect = (s: AddressSuggestion) => {
-    const chosenAddress = s.fullAddress || s.title;
+  const handleSelect = async (s: AddressSuggestion) => {
+    let chosen = s;
+    // Google suggestions have no coordinates; look them up (and confirm the
+    // official address via OneMap) so a saved place is always usable.
+    if (s.source === 'google' && (s.lat == null || s.lng == null) && s.id?.startsWith('google-')) {
+      try {
+        const res = await fetch(`/api/places/resolve?placeId=${encodeURIComponent(s.id.slice('google-'.length))}`);
+        if (res.ok) {
+          const r = await res.json();
+          chosen = { ...s, lat: r.lat, lng: r.lng, postalCode: r.postalCode ?? s.postalCode, fullAddress: r.fullAddress || s.fullAddress };
+        }
+      } catch {
+        // keep the unresolved suggestion; it can still be geocoded later
+      }
+    }
+    const chosenAddress = chosen.fullAddress || chosen.title;
     setQuery(chosenAddress);
     setIsOpen(false);
     setSelectedIndex(-1);
-    onChange(chosenAddress, s);
+    onChange(chosenAddress, chosen);
   };
 
   const handleClear = () => {
