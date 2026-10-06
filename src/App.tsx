@@ -76,6 +76,7 @@ import { auth, subscribeToUserProfile, saveUserProfile, createIncident, updateIn
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { AlertCircle, PhoneCall, ShieldAlert, Sparkles, Check, RefreshCw } from 'lucide-react';
 import { t } from './locales/translations';
+import { PrivacyPolicy } from './components/PrivacyPolicy';
 
 export default function App() {
   // Caregiver live tracking route: /track/:incidentId renders the read-only
@@ -85,6 +86,9 @@ export default function App() {
     : null;
   if (trackMatch) {
     return <CaregiverLiveTracker incidentId={trackMatch[1]} />;
+  }
+  if (typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/privacy') {
+    return <PrivacyPolicy />;
   }
   return <SeniorSafeSpotHome />;
 }
@@ -1059,6 +1063,9 @@ function SeniorSafeSpotHome() {
       <footer className="border-line text-ink-soft border-t px-4 py-6 text-center text-sm font-medium sm:text-base">
         <p>
           SafeSpot.SG • Multimodal Location & Pickup Assistant • Powered by Gemini AI, Speechmatics & Firebase
+        </p>
+        <p className="mt-2">
+          <a href="/privacy" className="text-pine font-semibold underline underline-offset-2">Privacy Policy</a>
         </p>
       </footer>
     </div>
