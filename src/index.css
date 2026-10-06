@@ -156,6 +156,11 @@ body.theme-warm-soft {
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
+  /* Lock the page behind any open dialog. */
+  body:has(.modal-backdrop, .voice-backdrop) {
+    overflow: hidden;
+  }
+
   ::selection {
     background: var(--ss-pine-soft);
     color: var(--ss-ink);
@@ -358,10 +363,17 @@ body.theme-warm-soft {
 
   /* ----- Modal ------------------------------------------------------------- */
   .modal-backdrop {
-    @apply fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-ink/50 p-3 backdrop-blur-sm sm:p-5;
+    @apply fixed inset-0 z-50 flex items-center justify-center overflow-y-auto overscroll-contain bg-ink/50 p-3 backdrop-blur-sm sm:p-5;
+  }
+  /* On phones, reaching the end of a dialog's scroll area must not start
+     scrolling the page behind it. */
+  .modal-backdrop .overflow-y-auto {
+    overscroll-behavior: contain;
   }
   .modal-panel {
-    @apply my-auto flex max-h-[92vh] w-full flex-col overflow-hidden rounded-2xl border border-line bg-surface;
+    /* dvh = the height actually visible; 92vh on iOS Safari includes the area
+       behind the browser toolbar and can hide a dialog's footer buttons. */
+    @apply my-auto flex max-h-[92vh] supports-[height:100dvh]:max-h-[92dvh] w-full flex-col overflow-hidden rounded-2xl border border-line bg-surface;
     box-shadow:
       0 1px 2px rgb(39 34 25 / 0.05),
       0 10px 28px -16px rgb(39 34 25 / 0.18);

@@ -70,13 +70,18 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
 
   const lang = settings.language || 'en';
 
+  // Only the brand + SOS row is pinned. The utility controls sit in their own
+  // bar below it that scrolls away and wraps, so on a phone every control is
+  // visible (nothing hidden behind a sideways scroll) and the pinned area
+  // stays one row tall.
   return (
+    <>
     <header
       id="app-header-accessibility"
       className="border-line bg-surface/95 text-ink sticky top-0 z-40 border-b px-3 pb-2.5 pt-[calc(env(safe-area-inset-top,0px)+0.6rem)] backdrop-blur-md transition-colors sm:px-8 sm:py-3.5"
     >
-      <div className="mx-auto flex max-w-7xl flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-6 sm:gap-y-3">
-        {/* Row 1 on mobile: brand and the one action that must never be hunted for */}
+      <div className="mx-auto max-w-7xl">
+        {/* Brand and the one action that must never be hunted for */}
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2.5">
             <AppLogo size={36} className="sm:h-11 sm:w-11" />
@@ -108,12 +113,15 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
           </button>
         </div>
 
-        {/*
-          Row 2 on mobile: the utility controls collapse to icons. Labels return
-          at sm and up, where there is room for them. Tap targets stay at the
-          48px accessible minimum either way — only the labels are dropped.
-        */}
-        <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 sm:mx-0 sm:flex-wrap sm:gap-2.5 sm:px-0">
+      </div>
+    </header>
+
+    {/*
+      Utility controls: icons on mobile, labels from sm up. Tap targets stay at
+      the 48px accessible minimum either way — only the labels are dropped.
+    */}
+    <div className="border-line bg-surface/60 border-b px-3 py-2 sm:px-8 sm:py-2.5">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-1.5 sm:gap-2.5">
           {/* Mobile-Optimized Language Dropdown (EN / 中文 / Melayu / தமிழ்) */}
           <div className="relative inline-flex items-center shrink-0">
             <label htmlFor="select-language-dropdown" className="sr-only">
@@ -253,7 +261,7 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
             </button>
           )}
         </div>
-      </div>
-    </header>
+    </div>
+    </>
   );
 };

@@ -153,7 +153,8 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Full-width, evenly sized buttons on a phone; inline from sm up. */}
+        <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
           <button
             id="btn-alert-family-live-track"
             onClick={onAlertFamily}
@@ -214,8 +215,8 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
                     {contact.emoji}
                   </div>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-ink text-lg leading-tight font-bold sm:text-xl truncate">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="text-ink text-lg leading-tight font-bold break-words sm:text-xl">
                         {contact.name}
                       </span>
                       {contact.isPrimary && !contact.locked && (

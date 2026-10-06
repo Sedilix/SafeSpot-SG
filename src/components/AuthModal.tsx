@@ -22,6 +22,7 @@ import {
 } from '../lib/firebase';
 import { ConfirmationResult, User as FirebaseUser } from 'firebase/auth';
 import { AccessibilitySettings } from '../types';
+import { useEscapeToClose } from '../utils/useEscapeToClose';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -135,10 +136,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
+  useEscapeToClose(isOpen, onClose);
+
   if (!isOpen) return null;
 
   return (
-    <div id="modal-auth-backdrop" className="modal-backdrop">
+    <div id="modal-auth-backdrop" className="modal-backdrop" role="dialog" aria-modal="true">
       <div id="modal-auth-content" className="modal-panel max-w-lg">
         {/* Header */}
         <div className="modal-head">

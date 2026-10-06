@@ -114,10 +114,10 @@ export const TRANSLATIONS: Record<string, Partial<Record<Language, string>>> = {
     ta: 'உங்கள் சூழலை நோக்கி கேமராவை திருப்பி, பெரிய பொத்தானை அழுத்தவும். உங்கள் இடத்தை உறுதிப்படுத்தி குடும்பத்திற்கு அறிவிப்போம்.',
   },
   'hero.pickMeUp': {
-    en: '📸 Pick Me Up Here!',
-    zh: '📸 来这里接我！',
-    ms: '📸 Ambil Saya Di Sini!',
-    ta: '📸 என்னை இங்கு அழைத்துச் செல்லுங்கள்!',
+    en: 'Pick Me Up Here!',
+    zh: '来这里接我！',
+    ms: 'Ambil Saya Di Sini!',
+    ta: 'என்னை இங்கு அழைத்துச் செல்லுங்கள்!',
   },
   'hero.capturing': {
     en: 'Confirming your location...',
@@ -745,6 +745,12 @@ export const TRANSLATIONS: Record<string, Partial<Record<Language, string>>> = {
     ms: 'Suar tidak tersedia di sini',
     ta: 'இங்கு பீக்கான் கிடைக்கவில்லை',
   },
+  'hero.bleNotSupported': {
+    en: "This browser can't scan for Bluetooth beacons (iPhones never can). Nearby venues are still matched by GPS when you tap “Pick Me Up Here!”.",
+    zh: '此浏览器无法扫描蓝牙信标（iPhone 均不支持）。点击“来这里接我”时，仍会通过 GPS 匹配附近地点。',
+    ms: 'Pelayar ini tidak boleh mengimbas suar Bluetooth (iPhone tidak pernah boleh). Tempat berdekatan masih dipadankan melalui GPS apabila anda menekan “Ambil Saya Di Sini!”.',
+    ta: 'இந்த உலாவியால் புளூடூத் பீக்கான்களை ஸ்கேன் செய்ய முடியாது (iPhone-இல் எப்போதும் முடியாது). நீங்கள் அழுத்தும்போது அருகிலுள்ள இடங்கள் GPS மூலம் பொருத்தப்படும்.',
+  },
   'hero.bleOff': {
     en: 'Beacons off',
     zh: '信标已关闭',
@@ -874,6 +880,18 @@ export const TRANSLATIONS: Record<string, Partial<Record<Language, string>>> = {
     zh: '在地图应用中打开',
     ms: 'Buka di Aplikasi Penuh',
     ta: 'முழு செயலியில் திற',
+  },
+  'map.waiting': {
+    en: 'Waiting for your location… Allow location access and tap “Update My Location”.',
+    zh: '正在等待您的位置…请允许位置访问，然后点击“更新我的位置”。',
+    ms: 'Menunggu lokasi anda… Benarkan akses lokasi dan tekan “Kemas Kini Lokasi Saya”.',
+    ta: 'உங்கள் இருப்பிடத்திற்காகக் காத்திருக்கிறது… இருப்பிட அணுகலை அனுமதித்து, “என் இடத்தை புதுப்பி” என்பதை அழுத்தவும்.',
+  },
+  'map.gpsPin': {
+    en: 'Your GPS position:',
+    zh: '您的 GPS 位置：',
+    ms: 'Kedudukan GPS anda:',
+    ta: 'உங்கள் GPS இருப்பிடம்:',
   },
   'map.verifiedPin': {
     en: 'Verified Pin:',

@@ -27,6 +27,7 @@ import {
 } from '../types';
 import { speakSpeechmaticsOrFallback, stopSpeaking } from '../utils/speech';
 import { t } from '../locales/translations';
+import { useEscapeToClose } from '../utils/useEscapeToClose';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -46,6 +47,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
 
   const lang = settings.language || 'en';
+
+  useEscapeToClose(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -79,7 +82,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   ) || SPEECHMATICS_VOICE_OPTIONS[0];
 
   return (
-    <div id="modal-settings-backdrop" className="modal-backdrop">
+    <div id="modal-settings-backdrop" className="modal-backdrop" role="dialog" aria-modal="true">
       <div id="modal-settings-content" className="modal-panel max-w-2xl">
         {/* Header Bar */}
         <div className="modal-head">

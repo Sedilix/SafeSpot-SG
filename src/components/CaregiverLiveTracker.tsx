@@ -120,15 +120,16 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
                 </span>
               )}
             </div>
-            <p className="text-sm font-semibold opacity-90">
-              {!loaded
-                ? t('tracker.connecting', lang)
-                : isActive
-                  ? t('tracker.statusActive', lang)
-                  : incident
-                    ? t('tracker.statusResolved', lang)
-                    : t('tracker.notFound', lang)}
-            </p>
+            {/* A missing incident is explained once, in the card below. */}
+            {(!loaded || incident) && (
+              <p className="text-sm font-semibold opacity-90">
+                {!loaded
+                  ? t('tracker.connecting', lang)
+                  : isActive
+                    ? t('tracker.statusActive', lang)
+                    : t('tracker.statusResolved', lang)}
+              </p>
+            )}
           </div>
         </div>
       </header>

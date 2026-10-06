@@ -29,6 +29,7 @@ import { saveUserProfile, signOutUser, clearWearableDeviceId } from '../lib/fire
 import { User as FirebaseUser } from 'firebase/auth';
 import { t } from '../locales/translations';
 import { normalizeWatchDeviceId, isValidWatchDeviceId } from '../utils/watchDeviceId';
+import { useEscapeToClose } from '../utils/useEscapeToClose';
 
 /**
  * Calls a wearable pairing endpoint as the signed-in user. The server takes
@@ -349,10 +350,12 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     onClose();
   };
 
+  useEscapeToClose(isOpen, onClose);
+
   if (!isOpen) return null;
 
   return (
-    <div id="modal-profile-backdrop" className="modal-backdrop">
+    <div id="modal-profile-backdrop" className="modal-backdrop" role="dialog" aria-modal="true">
       <div id="modal-profile-content" className="modal-panel max-w-2xl">
         {/* Header */}
         <div className="modal-head">
