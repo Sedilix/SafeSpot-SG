@@ -9,7 +9,14 @@ module Config {
     const TOKEN = "";
     // The device ID is per-watch and random; see DeviceId.mc.
     const COUNTDOWN_SECONDS = 10;
-    const HEARTBEAT_SECONDS = 60;
+    // Idle heartbeat; the server treats a watch as offline after 7 minutes.
+    const HEARTBEAT_SECONDS = 120;
+    // While an SOS is active, update location/vitals more often.
+    const SOS_UPDATE_SECONDS = 30;
+    // GPS duty cycle when idle: off this long between fixes...
+    const GPS_IDLE_INTERVAL_SECONDS = 180;
+    // ...and give up on a fix after this long (e.g. indoors).
+    const GPS_FIX_TIMEOUT_SECONDS = 90;
     // While an SOS is active and unacknowledged, retry this often.
     const SOS_RETRY_SECONDS = 5;
     // A request with no callback after this long is treated as lost.
