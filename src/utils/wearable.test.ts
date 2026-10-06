@@ -196,6 +196,14 @@ describe('positionAge', () => {
     expect(parseWearableEvent({ ...base, accuracy: 12.6 })).toMatchObject({ accuracy: 13 });
   });
 
+  it('keeps a floor estimate only while the watch is sending one', () => {
+    const s1 = applyWearableEvent(undefined, ev({ floorsAbove: 9, floorRefAge: 600 }), 1000, null);
+    expect(s1).toMatchObject({ floorsAbove: 9, floorRefAge: 600 });
+    expect(applyWearableEvent(s1, ev({}), 2000, null).floorsAbove).toBeNull();
+    expect(typeof parseWearableEvent({ ...base, floorsAbove: 2.5 })).toBe('string');
+    expect(typeof parseWearableEvent({ ...base, floorsAbove: 500 })).toBe('string');
+  });
+
   it('validates the new fields', () => {
     expect(typeof parseWearableEvent({ ...base, positionAge: -1 })).toBe('string');
     expect(typeof parseWearableEvent({ ...base, isBackground: 'yes' })).toBe('string');

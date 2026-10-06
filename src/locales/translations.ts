@@ -551,6 +551,12 @@ export const TRANSLATIONS: Record<string, Partial<Record<Language, string>>> = {
     ms: 'min',
     ta: 'நிமி',
   },
+  'wearable.floorsAbove': {
+    en: 'floors above street level (barometer estimate)',
+    zh: '层高于街面（气压计估算）',
+    ms: 'tingkat di atas paras jalan (anggaran barometer)',
+    ta: 'மாடிகள் தெரு மட்டத்திற்கு மேல் (காற்றழுத்தமானி மதிப்பீடு)',
+  },
   'wearable.title': {
     en: 'Garmin Watch',
     zh: 'Garmin 手表',

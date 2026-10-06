@@ -161,6 +161,11 @@ export const WearableStatusCard: React.FC<{ lang: Language; deviceId?: string }>
               {t('wearable.near', lang)} {device.landmark}
             </span>
           )}
+          {typeof device.floorsAbove === 'number' && device.floorsAbove >= 1 && (
+            <span className="bg-sky-soft text-sky-deep rounded-md px-2 py-0.5 text-sm font-bold">
+              ≈ {device.floorsAbove} {t('wearable.floorsAbove', lang)}
+            </span>
+          )}
           {locationStale && (
             <span className="text-brick text-sm font-semibold">
               {t('wearable.locationAge', lang)} {locationAgeMin} {t('wearable.minAgo', lang)}
