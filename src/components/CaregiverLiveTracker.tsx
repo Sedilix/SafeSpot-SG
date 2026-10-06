@@ -23,6 +23,7 @@ import { Incident, Language } from '../types';
 import { subscribeToIncident } from '../lib/firebase';
 import { t } from '../locales/translations';
 import { WearableStatusCard } from './WearableStatusCard';
+import { PickupOptionsCard } from './PickupOptionsCard';
 
 interface CaregiverLiveTrackerProps {
   incidentId: string;
@@ -239,6 +240,9 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
                 </div>
               </div>
             </section>
+
+            {/* Best pickup points (real walking/driving times) */}
+            {isActive && <PickupOptionsCard incidentId={incidentId} lang={lang} />}
 
             {/* Vitals & Medical Grid */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
