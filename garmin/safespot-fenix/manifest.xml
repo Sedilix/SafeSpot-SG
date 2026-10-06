@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <iq:manifest version="3" xmlns:iq="http://www.garmin.com/xml/connectiq">
-    <iq:application id="486afa51e4ef491881ce0d81f5413858" type="watch-app" name="@Strings.AppName" entry="SafeSpotApp" launcherIcon="@Drawables.LauncherIcon" minApiLevel="3.4.0" version="0.1.0">
+    <iq:application id="486afa51e4ef491881ce0d81f5413858" type="watch-app" name="@Strings.AppName" entry="SafeSpotApp" launcherIcon="@Drawables.LauncherIcon" minApiLevel="3.4.0" version="0.2.0">
         <iq:products>
             <iq:product id="fenix6spro"/>
         </iq:products>
