@@ -53,14 +53,13 @@ class SafeSpotModel {
     private var _hrAbnormalSeconds as Number = 0;
 
     // Battery: GPS is duty-cycled when nothing is happening (see manageGps),
-    // the screen only redraws when what it shows changes, and the last fix
-    // is persisted at most once a minute instead of on every 1 Hz update.
+    // and the last fix is persisted at most once a minute instead of on every
+    // 1 Hz update. The screen still redraws every second so heart rate stays live.
     private var _gpsOn as Boolean = false;
     private var _gpsOnSinceTick as Number = 0;
     private var _gpsNextTick as Number = 0;
     private var _gotGoodFix as Boolean = false;
     private var _lastPersistTick as Number = -1000;
-    private var _lastDrawKey as String = "";
     private var _hrQuietUntilTick as Number = 0;
 
     function initialize() {
@@ -179,19 +178,13 @@ class SafeSpotModel {
             checkHeartRate();
         }
         manageGps();
-
-        // Redraw only when something on screen changed (a MIP redraw every
-        // second is wasted work while idle).
-        var key = displayKey();
-        if (!key.equals(_lastDrawKey)) {
-            _lastDrawKey = key;
-            WatchUi.requestUpdate();
-        }
+        WatchUi.requestUpdate(); // keeps the heart rate live
     }
 
-    // Continuous GPS while anything time-critical is happening; otherwise one
-    // good fix (or GPS_FIX_TIMEOUT_SECONDS of trying), then off for
-    // GPS_IDLE_INTERVAL_SECONDS. GPS is the largest drain on the watch.
+    // Continuous GPS while anything time-critical is happening; otherwise a
+    // fresh fix every GPS_FIX_PERIOD_SECONDS: on until one good fix (or
+    // GPS_FIX_TIMEOUT_SECONDS of trying), then off until the next period.
+    // GPS is the largest drain on the watch.
     private function manageGps() as Void {
         var urgent = mode != MODE_IDLE || checkInPending || checkInOkPending || cancelPending;
         if (urgent) {
@@ -202,7 +195,10 @@ class SafeSpotModel {
         } else if (_gpsOn) {
             if (_gotGoodFix || _ticks - _gpsOnSinceTick >= Config.GPS_FIX_TIMEOUT_SECONDS) {
                 setGps(false);
-                _gpsNextTick = _ticks + Config.GPS_IDLE_INTERVAL_SECONDS;
+                // Period measured from when this fix started, with a short
+                // minimum rest so a slow fix indoors doesn't leave GPS on.
+                var next = _gpsOnSinceTick + Config.GPS_FIX_PERIOD_SECONDS;
+                _gpsNextTick = next > _ticks + Config.GPS_MIN_OFF_SECONDS ? next : _ticks + Config.GPS_MIN_OFF_SECONDS;
             }
         } else if (_ticks >= _gpsNextTick) {
             setGps(true);
@@ -223,11 +219,6 @@ class SafeSpotModel {
         }
     }
 
-    // Everything the views draw, so onTick can skip identical redraws.
-    private function displayKey() as String {
-        return "" + mode + "|" + countdown + "|" + sosAcked + "|" + checkInPending + "|" + heartRate
-            + "|" + batteryPercent() + "|" + gpsLabel() + "|" + linkLabel() + "|" + landmark;
-    }
 
     function onAccel(data as Sensor.SensorData) as Void {
         var accel = data.accelerometerData;
