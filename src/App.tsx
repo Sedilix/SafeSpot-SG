@@ -514,6 +514,7 @@ function SeniorSafeSpotHome() {
                 lng: dev.lng,
                 timestamp: dev.lastSeen || now,
                 positionAge: dev.positionAge,
+                accuracy: typeof dev.accuracy === 'number' ? dev.accuracy : undefined,
               };
             }
           }

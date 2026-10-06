@@ -6,6 +6,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   fuseLocations,
+  combineAgreeingFixes,
+  ageAdjustedAccuracy,
   MAX_FRESH_AGE_MS,
   WatchLocationInput,
   PhoneLocationInput,
@@ -176,6 +178,36 @@ describe('locationFusion', () => {
 
       expect(result?.source).toBe('watch_gps');
       expect(result?.isStale).toBe(true);
+    });
+  });
+
+  describe('Combining watch and phone fixes', () => {
+    it('combines agreeing fresh fixes, weighted toward the more accurate one', () => {
+      const result = fuseLocations({
+        watchLocation: { lat: 1.30000, lng: 103.80000, timestamp: BASE_TIME - 5_000, positionAge: 0, accuracy: 6 },
+        phoneLocation: { latitude: 1.30008, longitude: 103.80000, accuracy: 18, timestamp: BASE_TIME - 5_000 },
+        now: BASE_TIME,
+      });
+      expect(result?.source).toBe('fused_gps');
+      expect(result?.sourceLabelKey).toBe('fusion.combined');
+      // About 9 m apart; weights 1/36 vs 1/324, so the pin sits 90% of the way to the watch.
+      expect(result!.lat).toBeCloseTo(1.300008, 6);
+      expect(result!.accuracy).toBe(6); // 1/sqrt(1/36 + 1/324) = 5.7, rounded
+    });
+
+    it('does not average fixes that disagree; prefers the fresh watch fix', () => {
+      const result = fuseLocations({ watchLocation: validWatch, phoneLocation: validPhone, now: BASE_TIME });
+      expect(result?.source).toBe('watch_gps'); // about 78 m apart vs 57 m combined uncertainty
+    });
+
+    it('never claims better than 3 m', () => {
+      const c = combineAgreeingFixes({ lat: 1.3, lng: 103.8, accuracy: 3 }, { lat: 1.3, lng: 103.8, accuracy: 3 });
+      expect(c?.accuracy).toBe(3);
+    });
+
+    it('widens an older fix by walking speed after the first 10 s', () => {
+      expect(ageAdjustedAccuracy(10, 5_000)).toBe(10);
+      expect(ageAdjustedAccuracy(10, 40_000)).toBe(40);
     });
   });
 

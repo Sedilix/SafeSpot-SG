@@ -12,7 +12,14 @@ import Toybox.Math;
 // Thresholds are deliberately conservative; tune them from real-world trials.
 class FallDetector {
 
-    const FREEFALL_G = 0.5;
+    // A reading below this counts toward free fall...
+    const FREEFALL_G = 0.6;
+    // ...but only a run lasting this long is a drop. Free fall for t seconds
+    // means the wrist fell h = 1/2 * g * t^2: 0.12 s is ~7 cm, which a seated
+    // arm swing or a knock on a wall doesn't produce (a single 40 ms dip did
+    // trigger a false alarm), while a fall from standing gives ~0.3-0.45 s.
+    // The arm's mass doesn't matter: the accelerometer measures acceleration.
+    const MIN_FREEFALL_SECONDS = 0.12;
     const IMPACT_G = 3.0;
     const FREEFALL_WINDOW_SECONDS = 1;
     const SETTLE_SECONDS = 2;
@@ -35,10 +42,13 @@ class FallDetector {
     private var _phaseSamples as Number = 0;
     private var _activeSamples as Number = 0;
     private var _sinceFreefall as Number;
+    private var _freefallRun as Number = 0;
+    private var _minFreefallSamples as Number;
 
     function initialize(sampleRate as Number) {
         _rate = sampleRate;
         _sinceFreefall = sampleRate * 1000; // "no recent drop"
+        _minFreefallSamples = Math.ceil(sampleRate * MIN_FREEFALL_SECONDS).toNumber();
     }
 
     function reset() as Void {
@@ -46,6 +56,7 @@ class FallDetector {
         _phaseSamples = 0;
         _activeSamples = 0;
         _sinceFreefall = _rate * 1000;
+        _freefallRun = 0;
     }
 
     // Returns true once when a complete fall pattern finishes in this batch.
@@ -64,7 +75,8 @@ class FallDetector {
             }
 
             if (_phase == PHASE_WATCH) {
-                _sinceFreefall = g < FREEFALL_G ? 0 : _sinceFreefall + 1;
+                _freefallRun = g < FREEFALL_G ? _freefallRun + 1 : 0;
+                _sinceFreefall = _freefallRun >= _minFreefallSamples ? 0 : _sinceFreefall + 1;
                 if (g > IMPACT_G && _sinceFreefall <= _rate * FREEFALL_WINDOW_SECONDS) {
                     _phase = PHASE_SETTLE;
                     _phaseSamples = 0;
