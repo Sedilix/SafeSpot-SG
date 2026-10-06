@@ -28,6 +28,7 @@ import { AddressAutocompleteInput } from './AddressAutocompleteInput';
 import { saveUserProfile, signOutUser, clearWearableDeviceId } from '../lib/firebase';
 import { User as FirebaseUser } from 'firebase/auth';
 import { t } from '../locales/translations';
+import { normalizeWatchDeviceId, isValidWatchDeviceId } from '../utils/watchDeviceId';
 
 /**
  * Calls a wearable pairing endpoint as the signed-in user. The server takes
@@ -89,7 +90,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
   // Watch State
   const [pairedDeviceId, setPairedDeviceId] = useState('');
-  const [inputDeviceId, setInputDeviceId] = useState('fenix-6s-solar');
+  const [inputDeviceId, setInputDeviceId] = useState('');
   const [isPairingWatch, setIsPairingWatch] = useState(false);
   const [watchFeedback, setWatchFeedback] = useState<string | null>(null);
   const [watchStatus, setWatchStatus] = useState<{
@@ -262,8 +263,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   };
 
   const handlePairWatch = async () => {
-    const id = inputDeviceId.trim();
-    if (!id || !user) return;
+    const id = normalizeWatchDeviceId(inputDeviceId);
+    if (!isValidWatchDeviceId(id) || !user) return;
     setIsPairingWatch(true);
     setWatchFeedback(null);
     setErrorMessage(null);
@@ -658,15 +659,20 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                       id="watch-device-id"
                       type="text"
                       value={inputDeviceId}
-                      onChange={(e) => setInputDeviceId(e.target.value)}
+                      onChange={(e) => setInputDeviceId(normalizeWatchDeviceId(e.target.value))}
                       placeholder={t('wearable.deviceIdPlaceholder', settings.language)}
-                      className="input font-mono"
+                      className="input font-mono uppercase"
+                      autoCapitalize="characters"
+                      autoCorrect="off"
+                      autoComplete="off"
+                      spellCheck={false}
+                      maxLength={17}
                     />
                   </div>
                   <button
                     type="button"
                     onClick={handlePairWatch}
-                    disabled={isPairingWatch || !inputDeviceId.trim()}
+                    disabled={isPairingWatch || !isValidWatchDeviceId(inputDeviceId)}
                     className="btn btn-md btn-primary shrink-0"
                   >
                     {isPairingWatch ? (

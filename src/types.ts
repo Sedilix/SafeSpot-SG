@@ -216,7 +216,7 @@ export interface UserProfile {
   email?: string;
   authProvider: 'google' | 'phone' | 'anonymous';
   medicalNotes?: string; // Optional allergies or medical conditions (e.g., "Diabetic, Pacemaker")
-  wearableDeviceId?: string; // Paired Garmin device ID (e.g., "fenix-6s-solar")
+  wearableDeviceId?: string; // Paired Garmin watch ID, random per watch (e.g. "SS-7KQ2-M9XD-4TFH")
   createdAt: number;
   updatedAt: number;
 }

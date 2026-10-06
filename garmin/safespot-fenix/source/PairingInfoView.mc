@@ -22,7 +22,7 @@ class PairingInfoView extends WatchUi.View {
         dc.drawText(cx, 62, Graphics.FONT_XTINY, "Watch Device ID:", Graphics.TEXT_JUSTIFY_CENTER);
 
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, 88, Graphics.FONT_SMALL, Config.DEVICE_ID, Graphics.TEXT_JUSTIFY_CENTER);
+        dc.drawText(cx, 88, Graphics.FONT_SMALL, DeviceId.getOrCreate(), Graphics.TEXT_JUSTIFY_CENTER);
 
         dc.setColor(Graphics.COLOR_LT_GRAY, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, 130, Graphics.FONT_XTINY, "Enter in phone app:", Graphics.TEXT_JUSTIFY_CENTER);

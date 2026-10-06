@@ -546,10 +546,10 @@ export const TRANSLATIONS: Record<string, Partial<Record<Language, string>>> = {
     ta: 'கைக்கடிகார சாதன அடையாளம்',
   },
   'wearable.deviceIdPlaceholder': {
-    en: 'e.g. fenix-6s-solar',
-    zh: '例如 fenix-6s-solar',
-    ms: 'cth. fenix-6s-solar',
-    ta: 'எ.கா. fenix-6s-solar',
+    en: 'e.g. SS-7KQ2-M9XD-4TFH',
+    zh: '例如 SS-7KQ2-M9XD-4TFH',
+    ms: 'cth. SS-7KQ2-M9XD-4TFH',
+    ta: 'எ.கா. SS-7KQ2-M9XD-4TFH',
   },
   'wearable.pairButton': {
     en: 'Pair Watch',
