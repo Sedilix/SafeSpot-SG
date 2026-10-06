@@ -34,6 +34,8 @@ export interface WearableEvent {
   timestamp: number; // unix seconds, as reported by the watch
   positionAge?: number; // seconds since GPS fix was captured on device
   accuracy?: number; // estimated radius of the position, metres (watch GPS quality + averaging)
+  floorsAbove?: number; // barometer: floors climbed since the last street-level reference
+  floorRefAge?: number; // seconds since that street-level reference
   isBackground?: boolean; // true if dispatched by Connect IQ background temporal event
   sosActive?: boolean; // true if watch app is currently in active SOS countdown or confirmed state
 }
@@ -57,6 +59,8 @@ export interface WearableState {
   isBackground?: boolean;
   positionAge?: number | null;
   accuracy?: number | null;
+  floorsAbove?: number | null;
+  floorRefAge?: number | null;
 }
 
 // Foreground heartbeat is ~60s but the background service only beats every 5 min
@@ -102,6 +106,12 @@ export function parseWearableEvent(body: unknown): WearableEvent | string {
   if (b.accuracy != null && (!isFiniteNumber(b.accuracy) || b.accuracy <= 0 || b.accuracy > 10_000)) {
     return 'accuracy must be 0-10000 metres.';
   }
+  if (b.floorsAbove != null && (!Number.isInteger(b.floorsAbove) || (b.floorsAbove as number) < -5 || (b.floorsAbove as number) > 100)) {
+    return 'floorsAbove must be an integer from -5 to 100.';
+  }
+  if (b.floorRefAge != null && (!isFiniteNumber(b.floorRefAge) || b.floorRefAge < 0)) {
+    return 'floorRefAge must be non-negative.';
+  }
   if (b.isBackground != null && typeof b.isBackground !== 'boolean') {
     return 'isBackground must be a boolean.';
   }
@@ -119,6 +129,8 @@ export function parseWearableEvent(body: unknown): WearableEvent | string {
     timestamp: isFiniteNumber(b.timestamp) ? b.timestamp : Math.floor(Date.now() / 1000),
     positionAge: isFiniteNumber(b.positionAge) ? Math.round(b.positionAge) : undefined,
     accuracy: isFiniteNumber(b.accuracy) ? Math.round(b.accuracy) : undefined,
+    floorsAbove: Number.isInteger(b.floorsAbove) ? (b.floorsAbove as number) : undefined,
+    floorRefAge: isFiniteNumber(b.floorRefAge) ? Math.round(b.floorRefAge) : undefined,
     isBackground: typeof b.isBackground === 'boolean' ? b.isBackground : undefined,
     sosActive: typeof b.sosActive === 'boolean' ? b.sosActive : undefined,
   };
@@ -172,6 +184,10 @@ export function applyWearableEvent(
     positionAge: event.positionAge ?? (event.lat !== undefined ? null : prev?.positionAge ?? null),
     // Same rule as positionAge: it describes this event's coordinates.
     accuracy: event.accuracy ?? (event.lat !== undefined ? null : prev?.accuracy ?? null),
+    // The watch only sends a floor estimate while its reference is fresh;
+    // an event without one means "unknown now", never the old value.
+    floorsAbove: event.floorsAbove ?? null,
+    floorRefAge: event.floorRefAge ?? null,
   };
 }
 

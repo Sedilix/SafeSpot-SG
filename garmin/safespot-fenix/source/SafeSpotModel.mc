@@ -62,6 +62,8 @@ class SafeSpotModel {
     private var _firstGoodFixTick as Number = 0;
     // Averages fixes while still; reset at the start of each GPS session.
     private var _avg as FixAverager = new FixAverager();
+    // Floors climbed since the last street-level reference (barometer).
+    private var _floors as FloorEstimator = new FloorEstimator();
     // Estimated radius of the reported position, in metres (null = no fix yet).
     var accuracyM as Number? = null;
     private var _lastPersistTick as Number = -1000;
@@ -262,6 +264,11 @@ class SafeSpotModel {
             var base = FixAverager.baseAccuracyMeters(info.accuracy);
             if (info.accuracy == Position.QUALITY_GOOD || info.accuracy == Position.QUALITY_USABLE) {
                 _avg.add(deg[0], deg[1], _fall.moving);
+                // Walking with a good fix means outdoors at street level:
+                // the reference the floor estimate counts up from.
+                if (info.accuracy == Position.QUALITY_GOOD && _fall.moving) {
+                    _floors.markStreetLevel(Time.now().value());
+                }
                 lat = _avg.lat();
                 lng = _avg.lng();
                 accuracyM = FixAverager.averagedAccuracyMeters(base, _avg.count());
@@ -292,6 +299,9 @@ class SafeSpotModel {
 
     function onSensor(info as Sensor.Info) as Void {
         heartRate = info.heartRate;
+        if (info has :pressure && info.pressure != null) {
+            _floors.addPressure((info.pressure as Numeric).toFloat());
+        }
     }
 
     // ── Networking ───────────────────────────────────────────────────────────
@@ -382,6 +392,16 @@ class SafeSpotModel {
             }
             if (_lastFixTime != null) {
                 body["positionAge"] = Time.now().value() - _lastFixTime;
+            }
+        }
+
+        var nowSec = Time.now().value();
+        var floors = _floors.floorsAbove(nowSec);
+        if (floors != null) {
+            body["floorsAbove"] = floors;
+            var refAge = _floors.referenceAge(nowSec);
+            if (refAge != null) {
+                body["floorRefAge"] = refAge;
             }
         }
 
