@@ -20,6 +20,8 @@ module Config {
     const GPS_FIX_TIMEOUT_SECONDS = 45;
     // ...and always resting at least this long between attempts.
     const GPS_MIN_OFF_SECONDS = 15;
+    // After the first good fix, keep GPS on this long to average fixes while still.
+    const GPS_AVERAGE_SECONDS = 5;
     // While an SOS is active and unacknowledged, retry this often.
     const SOS_RETRY_SECONDS = 5;
     // A request with no callback after this long is treated as lost.

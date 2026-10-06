@@ -59,6 +59,11 @@ class SafeSpotModel {
     private var _gpsOnSinceTick as Number = 0;
     private var _gpsNextTick as Number = 0;
     private var _gotGoodFix as Boolean = false;
+    private var _firstGoodFixTick as Number = 0;
+    // Averages fixes while still; reset at the start of each GPS session.
+    private var _avg as FixAverager = new FixAverager();
+    // Estimated radius of the reported position, in metres (null = no fix yet).
+    var accuracyM as Number? = null;
     private var _lastPersistTick as Number = -1000;
     private var _hrQuietUntilTick as Number = 0;
 
@@ -193,7 +198,10 @@ class SafeSpotModel {
             }
             _gpsNextTick = _ticks; // resume duty-cycling from now once it's over
         } else if (_gpsOn) {
-            if (_gotGoodFix || _ticks - _gpsOnSinceTick >= Config.GPS_FIX_TIMEOUT_SECONDS) {
+            // After the first good fix, stay on briefly to average more fixes
+            // if the wearer is still; stop at once if they're moving.
+            var averaged = _gotGoodFix && (_fall.moving || _ticks - _firstGoodFixTick >= Config.GPS_AVERAGE_SECONDS);
+            if (averaged || _ticks - _gpsOnSinceTick >= Config.GPS_FIX_TIMEOUT_SECONDS) {
                 setGps(false);
                 // Period measured from when this fix started, with a short
                 // minimum rest so a slow fix indoors doesn't leave GPS on.
@@ -213,6 +221,7 @@ class SafeSpotModel {
         if (on) {
             _gpsOnSinceTick = _ticks;
             _gotGoodFix = false;
+            _avg.reset(); // the wearer may have moved while GPS was off
             Position.enableLocationEvents(Position.LOCATION_CONTINUOUS, method(:onPosition));
         } else {
             Position.enableLocationEvents(Position.LOCATION_DISABLE, null);
@@ -250,12 +259,25 @@ class SafeSpotModel {
         var loc = info.position;
         if (loc != null && info.accuracy != Position.QUALITY_NOT_AVAILABLE) {
             var deg = loc.toDegrees();
-            lat = deg[0];
-            lng = deg[1];
-            _lastFixTime = Time.now().value();
+            var base = FixAverager.baseAccuracyMeters(info.accuracy);
             if (info.accuracy == Position.QUALITY_GOOD || info.accuracy == Position.QUALITY_USABLE) {
-                _gotGoodFix = true;
+                _avg.add(deg[0], deg[1], _fall.moving);
+                lat = _avg.lat();
+                lng = _avg.lng();
+                accuracyM = FixAverager.averagedAccuracyMeters(base, _avg.count());
+                if (!_gotGoodFix) {
+                    _gotGoodFix = true;
+                    _firstGoodFixTick = _ticks;
+                }
+            } else if (_avg.count() == 0) {
+                // A poor fix only stands in until a good one arrives this session.
+                lat = deg[0];
+                lng = deg[1];
+                accuracyM = base;
+            } else {
+                return;
             }
+            _lastFixTime = Time.now().value();
             // Flash writes are slow and wear the storage; the background
             // service only needs a reasonably recent position.
             if (_ticks - _lastPersistTick >= 60) {
@@ -263,6 +285,7 @@ class SafeSpotModel {
                 Application.Storage.setValue("last_lat", lat);
                 Application.Storage.setValue("last_lng", lng);
                 Application.Storage.setValue("last_pos_time", _lastFixTime);
+                Application.Storage.setValue("last_acc", accuracyM);
             }
         }
     }
@@ -354,6 +377,9 @@ class SafeSpotModel {
         if (lat != null && lng != null) {
             body["lat"] = lat;
             body["lng"] = lng;
+            if (accuracyM != null) {
+                body["accuracy"] = accuracyM;
+            }
             if (_lastFixTime != null) {
                 body["positionAge"] = Time.now().value() - _lastFixTime;
             }

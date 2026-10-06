@@ -306,7 +306,7 @@ export interface AccessibilitySettings {
   crashDetection?: boolean; // High-G vehicle crash impact detection (iOS / Android)
 }
 
-export type LocationSource = 'watch_gps' | 'phone_gps' | 'phone_ble_assisted';
+export type LocationSource = 'watch_gps' | 'phone_gps' | 'phone_ble_assisted' | 'fused_gps';
 
 /**
  * Live incident document stored at Firestore `Incidents/{incidentId}`.
