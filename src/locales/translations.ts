@@ -600,10 +600,16 @@ export const TRANSLATIONS: Record<string, Partial<Record<Language, string>>> = {
     ta: 'இருப்பிட மூலம்',
   },
   'fusion.watchGps': {
-    en: 'Garmin Outdoor GPS (±15m)',
-    zh: 'Garmin 户外卫星 GPS (±15米)',
-    ms: 'GPS Luar Garmin (±15m)',
-    ta: 'Garmin வெளிப்புற ஜிபிஎஸ் (±15மீ)',
+    en: 'Garmin watch GPS',
+    zh: 'Garmin 手表 GPS',
+    ms: 'GPS jam Garmin',
+    ta: 'Garmin கைக்கடிகார ஜிபிஎஸ்',
+  },
+  'fusion.combined': {
+    en: 'Watch + phone GPS combined',
+    zh: '手表与手机 GPS 合并',
+    ms: 'GPS jam + telefon digabungkan',
+    ta: 'கைக்கடிகாரம் + தொலைபேசி ஜிபிஎஸ் இணைக்கப்பட்டது',
   },
   'fusion.phoneBle': {
     en: 'BLE Beacon Micro-Location (Floor Precision • ±3m)',

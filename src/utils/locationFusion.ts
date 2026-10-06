@@ -5,6 +5,7 @@
 
 import { BLEBeaconScan, LocationSource } from '../types';
 import { hasVenueGradePrecision } from './ble';
+import { haversineMeters } from './geo';
 
 export interface WatchLocationInput {
   lat: number | null | undefined;
@@ -27,7 +28,7 @@ export interface FusedLocationResult {
   accuracy: number;
   timestamp: number;
   source: LocationSource;
-  sourceLabelKey: 'fusion.watchGps' | 'fusion.phoneBle' | 'fusion.phoneGps';
+  sourceLabelKey: 'fusion.watchGps' | 'fusion.phoneBle' | 'fusion.phoneGps' | 'fusion.combined';
   isIndoorAssisted: boolean;
   isStale: boolean;
   effectiveAgeSeconds: number;
@@ -44,6 +45,35 @@ export const MAX_BEACON_AGE_MS = 60_000;
 export const VENUE_PRECISION_DISTANCE_M = 5;
 /** Default baseline accuracy for Garmin multi-GNSS outdoor fix */
 export const DEFAULT_WATCH_ACCURACY_M = 15;
+/** Roughly how far an elderly person walks per second; widens an older fix's uncertainty. */
+export const WALKING_SPEED_MPS = 1.0;
+
+/** A fix's uncertainty grows with its age, because the person may have moved since. */
+export function ageAdjustedAccuracy(accuracyM: number, ageMs: number): number {
+  return accuracyM + Math.max(0, ageMs / 1000 - 10) * WALKING_SPEED_MPS;
+}
+
+/**
+ * Combines two fixes that agree, weighting each by 1/accuracy^2 (inverse
+ * variance), which gives a tighter estimate than either alone. Returns null
+ * when they are further apart than their combined uncertainty: then one of
+ * them is wrong (e.g. a reflected signal between towers) and averaging would
+ * just move the pin toward the error.
+ */
+export function combineAgreeingFixes(
+  a: { lat: number; lng: number; accuracy: number },
+  b: { lat: number; lng: number; accuracy: number },
+): { lat: number; lng: number; accuracy: number } | null {
+  const distance = haversineMeters({ lat: a.lat, lng: a.lng }, { lat: b.lat, lng: b.lng });
+  if (distance > a.accuracy + b.accuracy) return null;
+  const wa = 1 / (a.accuracy * a.accuracy);
+  const wb = 1 / (b.accuracy * b.accuracy);
+  return {
+    lat: (a.lat * wa + b.lat * wb) / (wa + wb),
+    lng: (a.lng * wa + b.lng * wb) / (wa + wb),
+    accuracy: Math.max(3, Math.round(1 / Math.sqrt(wa + wb))),
+  };
+}
 
 /**
  * Multi-source location fusion engine for SafeSpot.SG.
@@ -135,7 +165,35 @@ export function fuseLocations(params: {
 
   // ── 4. Decision Matrix: Watch vs Phone ─────────────────────────────────────
   if (hasWatchCoords && hasPhoneCoords) {
-    // Both available: prefer watch outdoors when fresh (<3 min)
+    // Both fresh and in agreement: combine them for a tighter fix.
+    if (isWatchFresh && isPhoneFresh) {
+      const combined = combineAgreeingFixes(
+        {
+          lat: watchLocation!.lat!,
+          lng: watchLocation!.lng!,
+          accuracy: ageAdjustedAccuracy(watchLocation!.accuracy ?? DEFAULT_WATCH_ACCURACY_M, watchAgeMs),
+        },
+        {
+          lat: phoneLocation!.latitude!,
+          lng: phoneLocation!.longitude!,
+          accuracy: ageAdjustedAccuracy(phoneLocation!.accuracy, phoneAgeMs),
+        },
+      );
+      if (combined) {
+        return {
+          ...combined,
+          timestamp: Math.max(watchLocation!.timestamp, phoneLocation!.timestamp),
+          source: 'fused_gps',
+          sourceLabelKey: 'fusion.combined',
+          isIndoorAssisted: false,
+          isStale: false,
+          effectiveAgeSeconds: Math.round(Math.min(watchAgeMs, phoneAgeMs) / 1000),
+        };
+      }
+    }
+
+    // Disagreeing (or only the watch is fresh): prefer the watch outdoors,
+    // which has a clearer view of the sky than a phone in a pocket or bag.
     if (isWatchFresh) {
       return {
         lat: watchLocation!.lat!,

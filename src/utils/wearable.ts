@@ -33,6 +33,7 @@ export interface WearableEvent {
   battery?: number;
   timestamp: number; // unix seconds, as reported by the watch
   positionAge?: number; // seconds since GPS fix was captured on device
+  accuracy?: number; // estimated radius of the position, metres (watch GPS quality + averaging)
   isBackground?: boolean; // true if dispatched by Connect IQ background temporal event
   sosActive?: boolean; // true if watch app is currently in active SOS countdown or confirmed state
 }
@@ -55,6 +56,7 @@ export interface WearableState {
   lastCheckInOkAt?: number | null;
   isBackground?: boolean;
   positionAge?: number | null;
+  accuracy?: number | null;
 }
 
 // Foreground heartbeat is ~60s but the background service only beats every 5 min
@@ -97,6 +99,9 @@ export function parseWearableEvent(body: unknown): WearableEvent | string {
   if (b.positionAge != null && (!isFiniteNumber(b.positionAge) || b.positionAge < 0)) {
     return 'positionAge must be non-negative.';
   }
+  if (b.accuracy != null && (!isFiniteNumber(b.accuracy) || b.accuracy <= 0 || b.accuracy > 10_000)) {
+    return 'accuracy must be 0-10000 metres.';
+  }
   if (b.isBackground != null && typeof b.isBackground !== 'boolean') {
     return 'isBackground must be a boolean.';
   }
@@ -113,6 +118,7 @@ export function parseWearableEvent(body: unknown): WearableEvent | string {
     battery: isFiniteNumber(b.battery) ? Math.round(b.battery) : undefined,
     timestamp: isFiniteNumber(b.timestamp) ? b.timestamp : Math.floor(Date.now() / 1000),
     positionAge: isFiniteNumber(b.positionAge) ? Math.round(b.positionAge) : undefined,
+    accuracy: isFiniteNumber(b.accuracy) ? Math.round(b.accuracy) : undefined,
     isBackground: typeof b.isBackground === 'boolean' ? b.isBackground : undefined,
     sosActive: typeof b.sosActive === 'boolean' ? b.sosActive : undefined,
   };
@@ -164,6 +170,8 @@ export function applyWearableEvent(
     // Age describes the coordinates in this event; if new coordinates arrive
     // without an age (older watch build) it is unknown, never the previous one.
     positionAge: event.positionAge ?? (event.lat !== undefined ? null : prev?.positionAge ?? null),
+    // Same rule as positionAge: it describes this event's coordinates.
+    accuracy: event.accuracy ?? (event.lat !== undefined ? null : prev?.accuracy ?? null),
   };
 }
 
