@@ -33,6 +33,8 @@ import {
   verifyFirebaseIdToken,
 } from './src/utils/wearableIncidentService';
 import { bearerToken, canManagePairing, checkWearableEventAuth } from './src/utils/wearableAuth';
+import { classifyAddressQuery, mergeAddressSuggestions } from './src/utils/addressSearch';
+import type { AddressSuggestion } from './src/types';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 9003;
@@ -82,63 +84,6 @@ app.get('/api/health', (req, res) => {
 app.get('/api/config/maps-key', (req, res) => {
   const mapsKey = getGoogleMapsApiKey() || '';
   res.json({ mapsApiKey: mapsKey });
-});
-
-// ── OneMap SG (Singapore Land Authority) proxy ──────────────────────────────
-// Official SG geospatial API for HDB addresses, building footprints, and
-// sheltered-walkway-aware routing. Proxied server-side so credentials never
-// reach the client. Search is public; routing needs ONE_MAP_EMAIL/PASSWORD.
-
-const ONEMAP_AUTH_URL = 'https://developers.onemap.sg/privateapi/auth/post/sessionToken';
-const ONEMAP_ROUTE_URL = 'https://developers.onemap.sg/privateapi/routesvc/route';
-
-async function getOneMapSessionToken(): Promise<string | null> {
-  const email = process.env.ONE_MAP_EMAIL;
-  const password = process.env.ONE_MAP_PASSWORD;
-  if (!email || !password) return null;
-  try {
-    const res = await fetch(ONEMAP_AUTH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`,
-    });
-    if (!res.ok) return null;
-    const data: any = await res.json();
-    return data.access_token || null;
-  } catch (err) {
-    console.warn('OneMap session token fetch failed:', err);
-    return null;
-  }
-}
-
-// Sheltered walkway / walking route between two SG coordinates (private API)
-app.post('/api/onemap/route', async (req, res) => {
-  const { startLat, startLng, endLat, endLng, routeType = 'walk' } = req.body || {};
-  if ([startLat, startLng, endLat, endLng].some((v) => typeof v !== 'number')) {
-    return res.status(400).json({ success: false, error: 'startLat/startLng/endLat/endLng numbers required' });
-  }
-
-  const token = await getOneMapSessionToken();
-  if (!token) {
-    return res.json({
-      success: false,
-      error: 'OneMap routing requires ONE_MAP_EMAIL and ONE_MAP_PASSWORD env credentials',
-    });
-  }
-
-  try {
-    const url = `${ONEMAP_ROUTE_URL}?start=${startLat},${startLng}&end=${endLat},${endLng}&routeType=${routeType}&token=${token}`;
-    const upstream = await fetch(url);
-    const contentType = upstream.headers.get('content-type') || '';
-    if (!upstream.ok || !contentType.includes('application/json')) {
-      return res.json({ success: false, error: `OneMap routing upstream returned ${upstream.status}` });
-    }
-    const data = await upstream.json();
-    res.json({ success: true, ...data });
-  } catch (err) {
-    console.warn('OneMap route error:', err);
-    res.status(502).json({ success: false, error: 'OneMap routing unavailable' });
-  }
 });
 
 // Helper: Get Speechmatics API Key safely from environment
@@ -802,6 +747,26 @@ app.get('/api/onemap/search', async (req, res) => {
 });
 
 // Endpoint: Multi-Engine Intelligent Address Autocomplete (Google Maps + OneMap + Preset Landmarks)
+// OneMap rate-limits quickly (429 after a short burst) and every user searches
+// through this one server, so successful OneMap answers are cached briefly.
+const ONEMAP_CACHE_TTL_MS = 10 * 60 * 1000;
+const ONEMAP_CACHE_MAX = 500;
+const oneMapCache = new Map<string, { at: number; results: any[] }>();
+
+async function oneMapSearch(query: string): Promise<any[]> {
+  const key = query.trim().toLowerCase();
+  const hit = oneMapCache.get(key);
+  if (hit && Date.now() - hit.at < ONEMAP_CACHE_TTL_MS) return hit.results;
+  const url = `https://www.onemap.gov.sg/api/common/elastic/search?searchVal=${encodeURIComponent(query)}&returnGeom=Y&getAddrDetails=Y&pageNum=1`;
+  const oRes = await fetch(url, { headers: { 'User-Agent': 'SafeSpot-SG/1.0' }, signal: AbortSignal.timeout(3000) });
+  if (!oRes.ok) return []; // includes 429: don't cache failures
+  const data = (await oRes.json()) as any;
+  const results = Array.isArray(data.results) ? data.results : [];
+  if (oneMapCache.size >= ONEMAP_CACHE_MAX) oneMapCache.delete(oneMapCache.keys().next().value as string);
+  oneMapCache.set(key, { at: Date.now(), results });
+  return results;
+}
+
 app.get('/api/places/autocomplete', async (req, res) => {
   const query = String(req.query.q || req.query.input || '').trim();
   const category = String(req.query.category || 'general').toLowerCase(); // 'home' | 'work' | 'healthcare' | 'general'
@@ -859,72 +824,115 @@ app.get('/api/places/autocomplete', async (req, res) => {
     });
   }
 
-  // 2. Google Places Autocomplete API (if API Key is configured)
-  if (query.length >= 2 && mapsKey) {
+  // 2 + 3. Google Places and OneMap, queried in parallel (each capped at 3 s
+  // so one slow provider can't stall the list), then merged by query type:
+  // OneMap first for postal codes / HDB blocks, Google first for named places.
+  type Suggestion = typeof results[0];
+  const fetchGoogle = async (): Promise<Suggestion[]> => {
+    if (query.length < 2 || !mapsKey) return [];
     try {
       const gUrl = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(query)}&components=country:sg&language=en&key=${mapsKey}`;
-      const gRes = await fetch(gUrl);
-      if (gRes.ok) {
-        const gData = (await gRes.json()) as any;
-        if (gData.predictions && Array.isArray(gData.predictions)) {
-          for (const pred of gData.predictions.slice(0, 5)) {
-            const mainText = pred.structured_formatting?.main_text || pred.description;
-            const secondaryText = pred.structured_formatting?.secondary_text || 'Singapore';
-            addSuggestion({
-              id: `google-${pred.place_id}`,
-              title: mainText,
-              subtitle: secondaryText,
-              fullAddress: pred.description,
-              source: 'google',
-              category,
-            });
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Google Places autocomplete query error:', e);
+      const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(3000) });
+      if (!gRes.ok) return [];
+      const gData = (await gRes.json()) as any;
+      return (Array.isArray(gData.predictions) ? gData.predictions : []).slice(0, 5).map((pred: any) => ({
+        id: `google-${pred.place_id}`,
+        title: pred.structured_formatting?.main_text || pred.description,
+        subtitle: pred.structured_formatting?.secondary_text || 'Singapore',
+        fullAddress: pred.description,
+        source: 'google' as const,
+        category,
+      }));
+    } catch (e: any) {
+      console.warn('Google Places autocomplete query error:', e.message);
+      return [];
     }
-  }
-
-  // 3. Singapore OneMap Elastic Search API (Understands HDB Blocks, Road Names, Postal Codes)
-  if (query.length >= 2) {
+  };
+  const fetchOneMap = async (): Promise<Suggestion[]> => {
+    if (query.length < 2) return [];
     try {
-      const onemapUrl = `https://www.onemap.gov.sg/api/common/elastic/search?searchVal=${encodeURIComponent(query)}&returnGeom=Y&getAddrDetails=Y&pageNum=1`;
-      const oRes = await fetch(onemapUrl, {
-        headers: { 'User-Agent': 'SafeSpot-SG/1.0' },
+      return (await oneMapSearch(query)).slice(0, 6).map((r: any) => {
+        const building = r.BUILDING && r.BUILDING !== 'NIL' ? r.BUILDING : null;
+        const blk = r.BLK_NO && r.BLK_NO !== 'NIL' ? `Blk ${r.BLK_NO} ` : '';
+        const road = r.ROAD_NAME && r.ROAD_NAME !== 'NIL' ? r.ROAD_NAME : '';
+        const postal = r.POSTAL && r.POSTAL !== 'NIL' ? r.POSTAL : '';
+        const title = building || (blk || road ? `${blk}${road}`.trim() : r.ADDRESS);
+        return {
+          id: `onemap-${postal || ''}-${r.X || ''}-${r.Y || ''}`,
+          title,
+          subtitle: postal ? `Singapore ${postal}` : road || 'Singapore',
+          fullAddress: r.ADDRESS || `${title}, Singapore ${postal}`.trim(),
+          postalCode: postal || undefined,
+          lat: Number(r.LATITUDE) || undefined,
+          lng: Number(r.LONGITUDE) || undefined,
+          source: 'onemap' as const,
+          category,
+        };
       });
-      if (oRes.ok) {
-        const oData = (await oRes.json()) as any;
-        if (oData.results && Array.isArray(oData.results)) {
-          for (const r of oData.results.slice(0, 6)) {
-            const building = r.BUILDING && r.BUILDING !== 'NIL' ? r.BUILDING : null;
-            const blk = r.BLK_NO && r.BLK_NO !== 'NIL' ? `Blk ${r.BLK_NO} ` : '';
-            const road = r.ROAD_NAME && r.ROAD_NAME !== 'NIL' ? r.ROAD_NAME : '';
-            const postal = r.POSTAL && r.POSTAL !== 'NIL' ? r.POSTAL : '';
-
-            const title = building || (blk || road ? `${blk}${road}`.trim() : r.ADDRESS);
-            const subtitle = postal ? `Singapore ${postal}` : road || 'Singapore';
-
-            addSuggestion({
-              id: `onemap-${postal || ''}-${r.X || ''}-${r.Y || ''}`,
-              title,
-              subtitle,
-              fullAddress: r.ADDRESS || `${title}, Singapore ${postal}`.trim(),
-              postalCode: postal || undefined,
-              lat: Number(r.LATITUDE) || undefined,
-              lng: Number(r.LONGITUDE) || undefined,
-              source: 'onemap',
-              category,
-            });
-          }
-        }
-      }
     } catch (err: any) {
       console.warn('OneMap autocomplete query error:', err.message);
+      return [];
     }
-  }
+  };
 
-  return res.json({ suggestions: results.slice(0, 8) });
+  const [google, onemap] = await Promise.all([fetchGoogle(), fetchOneMap()]);
+  const suggestions = mergeAddressSuggestions(classifyAddressQuery(query), {
+    landmarks: results as AddressSuggestion[],
+    onemap: onemap as AddressSuggestion[],
+    google: google as AddressSuggestion[],
+  });
+  return res.json({ suggestions });
+});
+
+// Google autocomplete results carry no coordinates. When one is picked, look
+// up its position and postal code (Google Place Details), then confirm the
+// official Singapore address for that postal code with OneMap.
+app.get('/api/places/resolve', async (req, res) => {
+  const placeId = String(req.query.placeId || '').trim();
+  const mapsKey = getGoogleMapsApiKey();
+  if (!/^[A-Za-z0-9_-]{10,300}$/.test(placeId)) {
+    return res.status(400).json({ error: 'placeId is required.' });
+  }
+  if (!mapsKey) {
+    return res.status(503).json({ error: 'Place lookup unavailable.' });
+  }
+  try {
+    const dUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(placeId)}&fields=geometry,formatted_address,address_component,name&key=${mapsKey}`;
+    const dRes = await fetch(dUrl, { signal: AbortSignal.timeout(4000) });
+    const d = (await dRes.json()) as any;
+    const loc = d.result?.geometry?.location;
+    if (!dRes.ok || typeof loc?.lat !== 'number') {
+      return res.status(404).json({ error: 'Place not found.' });
+    }
+    const postalCode: string | undefined = (d.result.address_components || [])
+      .find((c: any) => Array.isArray(c.types) && c.types.includes('postal_code'))?.long_name;
+
+    let officialAddress: string | undefined;
+    if (postalCode && /^\d{6}$/.test(postalCode)) {
+      try {
+        const oRes = await fetch(
+          `https://www.onemap.gov.sg/api/common/elastic/search?searchVal=${postalCode}&returnGeom=N&getAddrDetails=Y&pageNum=1`,
+          { headers: { 'User-Agent': 'SafeSpot-SG/1.0' }, signal: AbortSignal.timeout(3000) },
+        );
+        const o = (await oRes.json()) as any;
+        const match = (o.results || []).find((r: any) => r.POSTAL === postalCode);
+        if (match?.ADDRESS) officialAddress = match.ADDRESS;
+      } catch {
+        // OneMap is a refinement; Google's address still stands.
+      }
+    }
+
+    return res.json({
+      lat: loc.lat,
+      lng: loc.lng,
+      postalCode,
+      fullAddress: officialAddress || d.result.formatted_address,
+      name: d.result.name,
+    });
+  } catch (err: any) {
+    console.warn('Place resolve error:', err.message);
+    return res.status(502).json({ error: 'Place lookup failed.' });
+  }
 });
 
 // ── Phase 2: Street View candidate retrieval inside the GPS accuracy box ──
