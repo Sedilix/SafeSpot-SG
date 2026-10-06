@@ -51,6 +51,15 @@ class SafeSpotModel {
 
     private var _fall as FallDetector;
     private var _hrAbnormalSeconds as Number = 0;
+
+    // Battery: GPS is duty-cycled when nothing is happening (see manageGps),
+    // and the last fix is persisted at most once a minute instead of on every
+    // 1 Hz update. The screen still redraws every second so heart rate stays live.
+    private var _gpsOn as Boolean = false;
+    private var _gpsOnSinceTick as Number = 0;
+    private var _gpsNextTick as Number = 0;
+    private var _gotGoodFix as Boolean = false;
+    private var _lastPersistTick as Number = -1000;
     private var _hrQuietUntilTick as Number = 0;
 
     function initialize() {
@@ -60,7 +69,7 @@ class SafeSpotModel {
     }
 
     function start() as Void {
-        Position.enableLocationEvents(Position.LOCATION_CONTINUOUS, method(:onPosition));
+        setGps(true); // get a first fix straight away
         Sensor.setEnabledSensors([Sensor.SENSOR_HEARTRATE]);
         Sensor.enableSensorEvents(method(:onSensor));
         Sensor.registerSensorDataListener(method(:onAccel), {
@@ -76,7 +85,7 @@ class SafeSpotModel {
 
     function stop() as Void {
         _timer.stop();
-        Position.enableLocationEvents(Position.LOCATION_DISABLE, null);
+        setGps(false);
         Sensor.enableSensorEvents(null);
         Sensor.unregisterSensorDataListener();
     }
@@ -162,14 +171,54 @@ class SafeSpotModel {
             if (_ticks % Config.SOS_RETRY_SECONDS == 0) {
                 send("CHECK_IN_OK");
             }
-        } else if (_ticks % Config.HEARTBEAT_SECONDS == 0) {
+        } else if (_ticks % (mode == MODE_SOS ? Config.SOS_UPDATE_SECONDS : Config.HEARTBEAT_SECONDS) == 0) {
             send("HEARTBEAT");
         }
         if (mode == MODE_IDLE) {
             checkHeartRate();
         }
-        WatchUi.requestUpdate();
+        manageGps();
+        WatchUi.requestUpdate(); // keeps the heart rate live
     }
+
+    // Continuous GPS while anything time-critical is happening; otherwise a
+    // fresh fix every GPS_FIX_PERIOD_SECONDS: on until one good fix (or
+    // GPS_FIX_TIMEOUT_SECONDS of trying), then off until the next period.
+    // GPS is the largest drain on the watch.
+    private function manageGps() as Void {
+        var urgent = mode != MODE_IDLE || checkInPending || checkInOkPending || cancelPending;
+        if (urgent) {
+            if (!_gpsOn) {
+                setGps(true);
+            }
+            _gpsNextTick = _ticks; // resume duty-cycling from now once it's over
+        } else if (_gpsOn) {
+            if (_gotGoodFix || _ticks - _gpsOnSinceTick >= Config.GPS_FIX_TIMEOUT_SECONDS) {
+                setGps(false);
+                // Period measured from when this fix started, with a short
+                // minimum rest so a slow fix indoors doesn't leave GPS on.
+                var next = _gpsOnSinceTick + Config.GPS_FIX_PERIOD_SECONDS;
+                _gpsNextTick = next > _ticks + Config.GPS_MIN_OFF_SECONDS ? next : _ticks + Config.GPS_MIN_OFF_SECONDS;
+            }
+        } else if (_ticks >= _gpsNextTick) {
+            setGps(true);
+        }
+    }
+
+    private function setGps(on as Boolean) as Void {
+        if (on == _gpsOn) {
+            return;
+        }
+        _gpsOn = on;
+        if (on) {
+            _gpsOnSinceTick = _ticks;
+            _gotGoodFix = false;
+            Position.enableLocationEvents(Position.LOCATION_CONTINUOUS, method(:onPosition));
+        } else {
+            Position.enableLocationEvents(Position.LOCATION_DISABLE, null);
+        }
+    }
+
 
     function onAccel(data as Sensor.SensorData) as Void {
         var accel = data.accelerometerData;
@@ -203,12 +252,19 @@ class SafeSpotModel {
             var deg = loc.toDegrees();
             lat = deg[0];
             lng = deg[1];
-            Application.Storage.setValue("last_lat", lat);
-            Application.Storage.setValue("last_lng", lng);
-            Application.Storage.setValue("last_pos_time", Time.now().value());
             _lastFixTime = Time.now().value();
+            if (info.accuracy == Position.QUALITY_GOOD || info.accuracy == Position.QUALITY_USABLE) {
+                _gotGoodFix = true;
+            }
+            // Flash writes are slow and wear the storage; the background
+            // service only needs a reasonably recent position.
+            if (_ticks - _lastPersistTick >= 60) {
+                _lastPersistTick = _ticks;
+                Application.Storage.setValue("last_lat", lat);
+                Application.Storage.setValue("last_lng", lng);
+                Application.Storage.setValue("last_pos_time", _lastFixTime);
+            }
         }
-        WatchUi.requestUpdate();
     }
 
     function onSensor(info as Sensor.Info) as Void {
