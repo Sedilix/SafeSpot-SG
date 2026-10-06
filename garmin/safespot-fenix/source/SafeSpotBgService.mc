@@ -45,6 +45,10 @@ class SafeSpotBgService extends System.ServiceDelegate {
         if (lat != null && lng != null) {
             params.put("lat", lat);
             params.put("lng", lng);
+            var acc = Application.Storage.getValue("last_acc");
+            if (acc instanceof Number) {
+                params.put("accuracy", acc);
+            }
             if (lastTime != null && lastTime instanceof Number) {
                 var age = Time.now().value() - (lastTime as Number);
                 params.put("positionAge", age >= 0 ? age : 0);

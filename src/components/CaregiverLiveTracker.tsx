@@ -190,6 +190,11 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
                           <Radio className="h-3 w-3 animate-pulse text-sky" />
                           <span>{t('fusion.phoneBle', lang)}</span>
                         </span>
+                      ) : incident.locationSource === 'fused_gps' ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-pine-soft text-pine-deep border border-pine/30 px-2.5 py-0.5 text-xs font-bold">
+                          <Watch className="h-3 w-3 text-pine" />
+                          <span>{t('fusion.combined', lang)}</span>
+                        </span>
                       ) : incident.locationSource === 'watch_gps' ? (
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-pine-soft text-pine-deep border border-pine/30 px-2.5 py-0.5 text-xs font-bold">
                           <Watch className="h-3 w-3 text-pine" />

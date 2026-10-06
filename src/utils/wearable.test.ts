@@ -186,6 +186,16 @@ describe('positionAge', () => {
     expect(noCoords.positionAge).toBe(2);
   });
 
+  it('records watch accuracy with the coordinates it describes', () => {
+    const s1 = applyWearableEvent(undefined, ev({ lat: 1.3, lng: 103.8, accuracy: 13 }), 1000, null);
+    expect(s1.accuracy).toBe(13);
+    expect(applyWearableEvent(s1, ev({}), 2000, null).accuracy).toBe(13); // no new coords: keep
+    expect(applyWearableEvent(s1, ev({ lat: 1.31, lng: 103.81 }), 3000, null).accuracy).toBeNull(); // new coords, unknown accuracy
+    expect(typeof parseWearableEvent({ ...base, accuracy: 0 })).toBe('string');
+    expect(typeof parseWearableEvent({ ...base, accuracy: 'good' })).toBe('string');
+    expect(parseWearableEvent({ ...base, accuracy: 12.6 })).toMatchObject({ accuracy: 13 });
+  });
+
   it('validates the new fields', () => {
     expect(typeof parseWearableEvent({ ...base, positionAge: -1 })).toBe('string');
     expect(typeof parseWearableEvent({ ...base, isBackground: 'yes' })).toBe('string');
