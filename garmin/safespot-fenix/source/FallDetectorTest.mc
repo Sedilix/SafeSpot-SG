@@ -76,3 +76,39 @@ function reportsMovingForActiveSecond(logger as Logger) as Boolean {
     FallTrace.feedDetector(det, FallTrace.repeatSamples(1000, 25, [] as Array<Number>));
     return wasMoving && !det.moving;
 }
+
+(:test)
+function ignoresSeatedKnockAgainstWall(logger as Logger) as Boolean {
+    // Field false alarm: sitting, swinging the arm into a wall (one 40 ms
+    // "light" reading), a hard knock, then resting the arm on a chair.
+    var z = FallTrace.repeatSamples(1000, 25, [] as Array<Number>);
+    FallTrace.repeatSamples(1400, 3, z);   // arm swings out
+    FallTrace.repeatSamples(450, 1, z);    // single dip below the free-fall threshold
+    FallTrace.repeatSamples(1200, 2, z);
+    FallTrace.repeatSamples(5000, 2, z);   // knock: 5 G
+    FallTrace.repeatSamples(1300, 50, z);  // settle
+    FallTrace.repeatSamples(1010, 25 * 12, z); // arm resting still
+    return !FallTrace.feedDetector(new FallDetector(25), z);
+}
+
+(:test)
+function ignoresTwoReadingDip(logger as Logger) as Boolean {
+    // 80 ms below 0.6 G is still too short to be a drop (~3 cm).
+    var z = FallTrace.repeatSamples(1000, 25, [] as Array<Number>);
+    FallTrace.repeatSamples(400, 2, z);
+    FallTrace.repeatSamples(4500, 2, z);
+    FallTrace.repeatSamples(1300, 50, z);
+    FallTrace.repeatSamples(1010, 25 * 12, z);
+    return !FallTrace.feedDetector(new FallDetector(25), z);
+}
+
+(:test)
+function detectsShortestRealDrop(logger as Logger) as Boolean {
+    // Exactly 3 readings (120 ms) below 0.6 G, then impact and stillness.
+    var z = FallTrace.repeatSamples(1000, 25, [] as Array<Number>);
+    FallTrace.repeatSamples(550, 3, z);
+    FallTrace.repeatSamples(4000, 2, z);
+    FallTrace.repeatSamples(1300, 50, z);
+    FallTrace.repeatSamples(1020, 25 * 11, z);
+    return FallTrace.feedDetector(new FallDetector(25), z);
+}
