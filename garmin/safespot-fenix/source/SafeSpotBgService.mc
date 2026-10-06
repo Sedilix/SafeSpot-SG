@@ -14,8 +14,16 @@ class SafeSpotBgService extends System.ServiceDelegate {
     }
 
     function onTemporalEvent() as Void {
+        // The foreground app creates the ID on first launch; until then there
+        // is nothing to report as.
+        var deviceId = DeviceId.get();
+        if (deviceId == null) {
+            Background.exit({ "checkInRequested" => false } as Dictionary<Application.PropertyKeyType, Application.PropertyValueType>);
+            return;
+        }
+
         var params = {
-            "deviceId" => Config.DEVICE_ID,
+            "deviceId" => deviceId,
             "eventType" => "HEARTBEAT",
             "timestamp" => Time.now().value(),
             "isBackground" => true

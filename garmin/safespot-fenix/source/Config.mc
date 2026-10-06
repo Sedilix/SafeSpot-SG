@@ -7,7 +7,7 @@ module Config {
     // Must match the server's WEARABLE_TOKEN env var. Leave empty if the server has none.
     // Set it locally before building; don't commit a real value.
     const TOKEN = "";
-    const DEVICE_ID = "fenix-6s-solar";
+    // The device ID is per-watch and random; see DeviceId.mc.
     const COUNTDOWN_SECONDS = 10;
     const HEARTBEAT_SECONDS = 60;
     // While an SOS is active and unacknowledged, retry this often.

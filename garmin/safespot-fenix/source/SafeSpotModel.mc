@@ -47,12 +47,14 @@ class SafeSpotModel {
     // can't block every later send (including SOS).
     private var _inFlightType as String? = null;
     private var _inFlightSinceTick as Number = 0;
+    private var _deviceId as String;
 
     private var _fall as FallDetector;
     private var _hrAbnormalSeconds as Number = 0;
     private var _hrQuietUntilTick as Number = 0;
 
     function initialize() {
+        _deviceId = DeviceId.getOrCreate();
         _timer = new Timer.Timer();
         _fall = new FallDetector(Config.ACCEL_SAMPLE_RATE);
     }
@@ -284,7 +286,7 @@ class SafeSpotModel {
         }
 
         var body = {
-            "deviceId" => Config.DEVICE_ID,
+            "deviceId" => _deviceId,
             "eventType" => eventType,
             "timestamp" => Time.now().value(),
             "battery" => System.getSystemStats().battery.toNumber(),

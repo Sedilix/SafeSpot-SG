@@ -15,17 +15,10 @@ class SafeSpotApp extends Application.AppBase {
         AppBase.initialize();
     }
 
-    (:typecheck(false))
+    // onStart also runs in the background process, where SafeSpotModel (not
+    // annotated :background) can't be loaded. Starting it here crashed every
+    // background check-in, so all foreground setup lives in getInitialView.
     function onStart(state as Dictionary?) as Void {
-        if (Toybox.System has :ServiceDelegate) {
-            try {
-                // Register 5-minute periodic background check-in (300 seconds)
-                Background.registerForTemporalEvent(new Time.Duration(5 * 60));
-            } catch (e) {
-                // Ignore if temporal event cannot be registered
-            }
-        }
-        getModel().start();
     }
 
     (:typecheck(false))
@@ -35,9 +28,19 @@ class SafeSpotApp extends Application.AppBase {
         }
     }
 
+    // Foreground only.
     (:typecheck(false))
     function getInitialView() as [Views] or [Views, InputDelegates] {
+        if (Toybox.System has :ServiceDelegate) {
+            try {
+                // Register 5-minute periodic background check-in (300 seconds)
+                Background.registerForTemporalEvent(new Time.Duration(5 * 60));
+            } catch (e) {
+                // Ignore if temporal event cannot be registered
+            }
+        }
         var m = getModel();
+        m.start();
         return [ new SafeSpotView(m), new SafeSpotDelegate(m) ];
     }
 
