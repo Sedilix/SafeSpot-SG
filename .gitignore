@@ -13,3 +13,7 @@ coverage/
 # Garmin Connect IQ signing keys & build output
 *.der
 garmin/**/bin/
+
+# Routing & Speedband historical data
+tools/speedbands/data/
+data/graph/
