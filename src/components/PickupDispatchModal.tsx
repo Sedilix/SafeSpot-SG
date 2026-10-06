@@ -22,6 +22,7 @@ import {
 import { EmergencyContact, LocationVerificationResult, AccessibilitySettings } from '../types';
 import { buildPickupSharePayload } from '../utils/contacts';
 import { t } from '../locales/translations';
+import { useEscapeToClose } from '../utils/useEscapeToClose';
 
 interface PickupDispatchModalProps {
   isOpen: boolean;
@@ -45,6 +46,8 @@ export const PickupDispatchModal: React.FC<PickupDispatchModalProps> = ({
   const [isSent, setIsSent] = useState(false);
 
   const lang = settings.language || 'en';
+
+  useEscapeToClose(isOpen, onClose);
 
   if (!isOpen || !verification) return null;
 

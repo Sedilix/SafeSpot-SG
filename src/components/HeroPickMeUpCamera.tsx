@@ -255,7 +255,7 @@ export const HeroPickMeUpCamera: React.FC<HeroPickMeUpCameraProps> = ({
     <section id="hero-pick-me-up-section" className="card overflow-hidden">
       {/* Status strip — sensor lock: compass heading, GPS accuracy, fix state */}
       <div className="border-line bg-well/70 flex items-center justify-between gap-2 border-b px-3 py-2 sm:px-4">
-        <span className="section-kicker truncate">{t('hero.statusStrip', lang)}</span>
+        <span className="section-kicker min-w-0 leading-snug">{t('hero.statusStrip', lang)}</span>
         <span className="text-ink-soft flex shrink-0 items-center gap-2 text-xs font-bold">
           <span className="flex items-center gap-1" title="Compass heading (sensor lock)">
             <Compass className={`h-3.5 w-3.5 ${liveOrientation?.heading != null ? 'text-sky' : 'text-ink-faint'}`} />
@@ -459,21 +459,31 @@ export const HeroPickMeUpCamera: React.FC<HeroPickMeUpCameraProps> = ({
                   ? `${bleBeacons[0].source === 'geofence' ? t('hero.nearbyVenue', lang) : t('hero.bleActive', lang)} • ${bleBeacons[0].locationName} · ≈${bleBeacons[0].estimatedDistanceMeters}m`
                   : t('hero.bleScanning', lang)
                 : bleState.status === 'unavailable'
-                  ? (bleUnsupportedReason || bleState.error ? t('hero.bleUnavailable', lang) : t('hero.bleUnavailable', lang))
+                  ? t('hero.bleUnavailable', lang)
                   : t('hero.bleOff', lang)}
             </span>
           </div>
 
-          <button
-            type="button"
-            onClick={handleToggleBeacons}
-            disabled={bleState.status === 'requesting'}
-            className="text-pine hover:text-pine-deep font-bold underline underline-offset-2 disabled:opacity-50"
-            title={bleState.error || bleUnsupportedReason || undefined}
-          >
-            {bleState.status === 'requesting' ? t('hero.starting', lang) : bleState.status === 'scanning' ? t('hero.turnOff', lang) : t('hero.turnOn', lang)}
-          </button>
+          {/* No toggle where scanning can never work (e.g. every iPhone browser);
+              the explanation below is shown instead of a dead button. */}
+          {!bleUnsupportedReason && (
+            <button
+              type="button"
+              onClick={handleToggleBeacons}
+              disabled={bleState.status === 'requesting'}
+              className="text-pine hover:text-pine-deep -my-2 inline-flex min-h-[44px] items-center px-2 font-bold underline underline-offset-2 disabled:opacity-50"
+            >
+              {bleState.status === 'requesting' ? t('hero.starting', lang) : bleState.status === 'scanning' ? t('hero.turnOff', lang) : t('hero.turnOn', lang)}
+            </button>
+          )}
         </div>
+
+        {/* Reasons are shown on screen: a hover tooltip never appears on a phone. */}
+        {bleUnsupportedReason ? (
+          <p className="text-ink-soft text-xs leading-snug">{t('hero.bleNotSupported', lang)}</p>
+        ) : bleState.status === 'unavailable' && bleState.error ? (
+          <p className="text-ink-soft text-xs leading-snug">{bleState.error}</p>
+        ) : null}
 
         {/* Nearest beacons, only once something is actually detected */}
         {bleBeacons.length > 0 && bleState.status === 'scanning' && (

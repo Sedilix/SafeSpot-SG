@@ -9,6 +9,7 @@ import { EmergencyContact, AccessibilitySettings } from '../types';
 import { ensureEmergency995 } from '../data/defaultContacts';
 import { importContactsFromPhone, isContactPickerSupported, setPreferredContact, normalisePhone } from '../utils/contacts';
 import { t } from '../locales/translations';
+import { useEscapeToClose } from '../utils/useEscapeToClose';
 
 interface ManageContactsModalProps {
   isOpen: boolean;
@@ -33,6 +34,8 @@ export const ManageContactsModal: React.FC<ManageContactsModalProps> = ({
   const [newEmoji, setNewEmoji] = useState('👩💼');
 
   const lang = settings.language || 'en';
+
+  useEscapeToClose(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -95,7 +98,7 @@ export const ManageContactsModal: React.FC<ManageContactsModalProps> = ({
   };
 
   return (
-    <div id="modal-manage-contacts" className="modal-backdrop">
+    <div id="modal-manage-contacts" className="modal-backdrop" role="dialog" aria-modal="true">
       <div className="modal-panel max-w-xl overflow-y-auto p-6 sm:p-8">
         <div className="border-line mb-5 flex items-center justify-between border-b pb-4">
           <div className="flex items-center gap-3">

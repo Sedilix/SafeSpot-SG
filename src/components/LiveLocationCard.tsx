@@ -155,26 +155,31 @@ export const LiveLocationCard: React.FC<LiveLocationCardProps> = ({
           </div>
         )}
 
-        <div className="text-ink-soft flex flex-wrap items-center gap-2 pt-1 text-xs font-semibold sm:text-sm">
-          <span className="chip border-line bg-well text-ink-soft">
-            <span className="bg-pine h-2 w-2 rounded-full"></span>
-            Places API: {verification?.nearbyPlaces?.length ? `${verification.nearbyPlaces.length} ${t('live.landmarks', lang)}` : 'Nearby POIs'}
-          </span>
-          <span className="chip border-line bg-well text-ink-soft">
-            <span className="bg-sky h-2 w-2 rounded-full"></span>
-            Roads API: {verification?.roadSnapping?.snapped ? t('live.curbsideSnapped', lang) : t('live.roadAligned', lang)}
-          </span>
-          <span className="chip border-line bg-well text-ink-soft">
-            <span className="bg-ochre h-2 w-2 rounded-full"></span>
-            {t('live.routesNavigation', lang)}
-          </span>
-          {verification?.bleBeacons && verification.bleBeacons.length > 0 && (
-            <span className="chip border-sky-400 bg-sky-50 text-sky-900 font-bold">
-              <span className="bg-sky-600 h-2 w-2 rounded-full animate-ping"></span>
-              BLE: {verification.bleBeacons[0].name} (±{verification.bleBeacons[0].estimatedDistanceMeters}m)
-            </span>
-          )}
-        </div>
+        {/* Only facts this verification actually produced, in plain language:
+            no API names, and no "road aligned"/"navigation" claims when
+            nothing was checked yet. */}
+        {(verification?.nearbyPlaces?.length || verification?.roadSnapping?.snapped || verification?.bleBeacons?.length) ? (
+          <div className="text-ink-soft flex flex-wrap items-center gap-2 pt-1 text-xs font-semibold sm:text-sm">
+            {verification?.nearbyPlaces?.length ? (
+              <span className="chip border-line bg-well text-ink-soft">
+                <span className="bg-pine h-2 w-2 rounded-full"></span>
+                {verification.nearbyPlaces.length} {t('live.landmarks', lang)}
+              </span>
+            ) : null}
+            {verification?.roadSnapping?.snapped ? (
+              <span className="chip border-line bg-well text-ink-soft">
+                <span className="bg-sky h-2 w-2 rounded-full"></span>
+                {t('live.curbsideSnapped', lang)}
+              </span>
+            ) : null}
+            {verification?.bleBeacons?.length ? (
+              <span className="chip border-sky-400 bg-sky-50 text-sky-900 font-bold">
+                <span className="bg-sky-600 h-2 w-2 rounded-full"></span>
+                {verification.bleBeacons[0].name} (±{verification.bleBeacons[0].estimatedDistanceMeters}m)
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </section>
   );

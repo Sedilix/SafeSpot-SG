@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { LocationVerificationResult, AccessibilitySettings } from '../types';
 import { t } from '../locales/translations';
+import { useEscapeToClose } from '../utils/useEscapeToClose';
 
 interface CaregiverPreviewModalProps {
   isOpen: boolean;
@@ -51,6 +52,8 @@ export const CaregiverPreviewModal: React.FC<CaregiverPreviewModalProps> = ({
     ? verification?.shareUrls?.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${coords.lat},${coords.lng}`
     : null;
 
+  useEscapeToClose(isOpen, onClose);
+
   if (!isOpen) return null;
 
   const seniorSnapshot = photoBase64 || verification?.photoUrl || null;
@@ -58,7 +61,7 @@ export const CaregiverPreviewModal: React.FC<CaregiverPreviewModalProps> = ({
   const showStreetView = Boolean(streetViewUrl) && !streetViewFailed;
 
   return (
-    <div id="modal-caregiver-preview" className="modal-backdrop">
+    <div id="modal-caregiver-preview" className="modal-backdrop" role="dialog" aria-modal="true">
       <div className="modal-panel max-w-2xl overflow-y-auto p-6 sm:p-8 animate-in fade-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="border-line mb-6 flex items-start justify-between border-b pb-4">

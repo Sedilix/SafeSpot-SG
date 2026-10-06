@@ -44,9 +44,12 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
     }
   }, [dynamicKey]);
 
-  const lat = verification?.verifiedCoordinates?.lat ?? gps?.latitude ?? 1.3327;
-  const lng = verification?.verifiedCoordinates?.lng ?? gps?.longitude ?? 103.8479;
-  const address = verification?.formattedAddress || 'Locating current spot in Singapore...';
+  // Never show a made-up position: with no fix, the card says it is waiting
+  // instead of pinning (and offering to navigate to) a default location.
+  const lat = verification?.verifiedCoordinates?.lat ?? gps?.latitude ?? null;
+  const lng = verification?.verifiedCoordinates?.lng ?? gps?.longitude ?? null;
+  const isVerified = Boolean(verification?.verifiedCoordinates);
+  const address = verification?.formattedAddress || (lat !== null && lng !== null ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : '');
   const accuracyMeters =
     verification?.originalCoordinates?.accuracyMeters ?? gps?.accuracy ?? null;
 
@@ -56,6 +59,23 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
   const openInGoogleMaps = () => {
     window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank');
   };
+
+  if (lat === null || lng === null) {
+    return (
+      <section id="card-interactive-map" className="card p-6 sm:p-7">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="icon-tile">
+            <Navigation className="h-5 w-5" />
+          </div>
+          <h3 className="font-display text-2xl leading-none font-bold tracking-tight">{t('map.title', lang)}</h3>
+        </div>
+        <div className="border-line text-ink-soft flex h-40 items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 text-center text-base font-semibold">
+          <MapPin className="h-5 w-5 shrink-0" />
+          <span>{t('map.waiting', lang)}</span>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section id="card-interactive-map" className="card p-6 sm:p-7">
@@ -141,9 +161,16 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
 
             {/* In-Map Info Overlay Pill */}
             <div className="absolute top-3 left-3 right-3 flex items-center gap-2 rounded-xl border border-white/20 bg-black/85 px-3.5 py-2 text-sm font-semibold text-white shadow-md backdrop-blur-md sm:right-auto">
-              <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-400" />
+              {isVerified ? (
+                <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-400" />
+              ) : (
+                <MapPin className="h-5 w-5 shrink-0 text-sky-300" />
+              )}
               <div className="truncate">
-                <span className="text-emerald-400">{t('map.verifiedPin', lang)}</span> {address}
+                <span className={isVerified ? 'text-emerald-400' : 'text-sky-300'}>
+                  {t(isVerified ? 'map.verifiedPin' : 'map.gpsPin', lang)}
+                </span>{' '}
+                {address}
               </div>
             </div>
 

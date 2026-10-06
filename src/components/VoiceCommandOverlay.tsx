@@ -22,6 +22,7 @@ import {
   stopSpeaking 
 } from '../utils/speech';
 import { t } from '../locales/translations';
+import { useEscapeToClose } from '../utils/useEscapeToClose';
 
 interface VoiceCommandOverlayProps {
   isOpen: boolean;
@@ -349,12 +350,16 @@ export const VoiceCommandOverlay: React.FC<VoiceCommandOverlayProps> = ({
     }
   };
 
+  useEscapeToClose(isOpen, onClose);
+
   if (!isOpen) return null;
 
   return (
     <div
       id="modal-voice-command-overlay"
       className="voice-backdrop"
+      role="dialog"
+      aria-modal="true"
     >
       <div className="voice-panel">
         {/* Top bar */}
