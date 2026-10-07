@@ -2,19 +2,21 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * router.ts: A* over an edge-based graph (state = directed edge) with turn
- * restrictions and turn delays. Free-flow time only (Phase 1): edge cost is
- * length / maxspeed; time-dependent speeds arrive in Phase 2.
- *
- * Assumptions (UNVERIFIED against Singapore ground truth; calibrate in Phase 2):
- *  - Turn delays apply only at junctions (3+ neighbouring nodes), never along
- *    a bend: left 5 s, straight 2 s, right (crosses opposing traffic) 18 s.
- *  - A U-turn (reversing onto the previous node) is only legal at a dead end.
- *    OSM has ~100k no_u_turn relations in Singapore and no data on permitted
- *    U-turn openings, so mid-road U-turns are never offered.
+ * router.ts: Time-dependent A* over an edge-based graph (state = directed edge)
+ * with turn restrictions, turn delays, dynamic speed profiles, live incident
+ * closures, and ERP toll evaluation (Phase 2).
  */
 
 import { RoadGraph, CompactEdge, haversineMeters, bearingDegrees } from './graph';
+import { SpeedProfileEngine } from './speedProfiles';
+import { IncidentLayer } from './incidents';
+import { ErpEngine } from './erp';
+
+export interface RouteToll {
+  gantryName: string;
+  chargeSgd: number;
+  arrivalTime: Date;
+}
 
 export interface RouteResult {
   distanceMeters: number;
@@ -25,6 +27,16 @@ export interface RouteResult {
   edges: CompactEdge[];
   snapStartMeters: number;
   snapDestMeters: number;
+  totalTollSgd?: number;
+  tolls?: RouteToll[];
+  incidentsEncountered?: string[];
+}
+
+export interface RoutingOptions {
+  departureTime?: Date;
+  speedProfiles?: SpeedProfileEngine;
+  incidents?: IncidentLayer;
+  erp?: ErpEngine;
 }
 
 interface HeapItem { edgeId: number; elapsed: number; priority: number }
@@ -120,7 +132,11 @@ export class Router {
     return { allowed: true, delaySec: Router.DELAY_STRAIGHT_SEC };
   }
 
-  public findRoute(origin: { lat: number; lng: number }, dest: { lat: number; lng: number }): RouteResult | null {
+  public findRoute(
+    origin: { lat: number; lng: number },
+    dest: { lat: number; lng: number },
+    options?: RoutingOptions
+  ): RouteResult | null {
     const s = this.graph.findNearestSegment(origin.lat, origin.lng);
     const t = this.graph.findNearestSegment(dest.lat, dest.lng);
     if (!s || !t) return null;
@@ -133,9 +149,21 @@ export class Router {
     const h = (edge: CompactEdge) =>
       Math.max(0, haversineMeters(nodes[edge.to].lat, nodes[edge.to].lng, dest.lat, dest.lng) - Router.HEURISTIC_SLACK_M) / Router.MAX_SPEED_MS;
 
+    const departureTime = options?.departureTime || new Date();
+    const speedProfiles = options?.speedProfiles;
+    const incidents = options?.incidents;
+    const erp = options?.erp;
+    const encounteredIncidents = new Set<string>();
+
     // Start mid-segment: either direction, half the segment still to travel.
     for (const e of s.edges) {
-      const c = e.seconds * 0.5;
+      if (incidents) {
+        const a = nodes[e.from], b = nodes[e.to];
+        const impact = incidents.evaluateEdgeImpact(a.lat, a.lng, b.lat, b.lng, departureTime);
+        if (impact.impassable) continue;
+      }
+      const initialSeconds = speedProfiles ? speedProfiles.calculateEdgeSeconds(e, departureTime) : e.seconds;
+      const c = initialSeconds * 0.5;
       best[e.id] = c;
       heap.push({ edgeId: e.id, elapsed: c, priority: c + h(e) });
     }
@@ -146,11 +174,38 @@ export class Router {
       if (top.elapsed > best[top.edgeId]) continue; // stale entry (Float64: exact comparison is safe)
       if (targetIds.has(top.edgeId)) { reached = top.edgeId; break; }
       const cur = edges[top.edgeId];
+
       for (const nid of this.graph.outgoingEdges[cur.to]) {
         const next = edges[nid];
         const turn = this.evaluateTurn(cur, next);
         if (!turn.allowed) continue;
-        const cost = top.elapsed + turn.delaySec + next.seconds;
+
+        const arrivalMs = departureTime.getTime() + (top.elapsed + turn.delaySec) * 1000;
+        const arrivalTime = new Date(arrivalMs);
+
+        // 1. Live Incidents: impassable closures and decay delays
+        let incidentDelay = 0;
+        if (incidents) {
+          const a = nodes[next.from], b = nodes[next.to];
+          const impact = incidents.evaluateEdgeImpact(a.lat, a.lng, b.lat, b.lng, arrivalTime);
+          if (impact.impassable) {
+            continue; // Closed edge is strictly avoided
+          }
+          if (impact.delaySec > 0) {
+            incidentDelay = impact.delaySec;
+            if (impact.reason) encounteredIncidents.add(impact.reason);
+          }
+        }
+
+        // 2. Time-dependent speed profile at arrival time
+        let nextSeconds = next.seconds;
+        if (speedProfiles) {
+          const a = nodes[next.from], b = nodes[next.to];
+          const bearing = bearingDegrees(a.lat, a.lng, b.lat, b.lng);
+          nextSeconds = speedProfiles.calculateEdgeSeconds(next, arrivalTime, bearing);
+        }
+
+        const cost = top.elapsed + turn.delaySec + incidentDelay + nextSeconds;
         if (cost < best[nid]) {
           best[nid] = cost;
           prev[nid] = top.edgeId;
@@ -165,10 +220,36 @@ export class Router {
     path.reverse();
 
     // We entered the last edge to detect arrival but the target is mid-segment: refund half of it.
-    const seconds = best[reached] - edges[reached].seconds * 0.5;
+    const lastEdgeSeconds = speedProfiles
+      ? speedProfiles.calculateEdgeSeconds(edges[reached], new Date(departureTime.getTime() + best[reached] * 1000))
+      : edges[reached].seconds;
+    const seconds = best[reached] - lastEdgeSeconds * 0.5;
+
     let metres = path.reduce((sum, e) => sum + e.length, 0);
     metres -= path[0].length * 0.5 + (path.length > 1 ? path[path.length - 1].length * 0.5 : 0);
     metres = Math.max(0, metres);
+
+    // 3. Evaluate ERP tolls along the route
+    let totalTollSgd = 0;
+    const tolls: RouteToll[] = [];
+    if (erp) {
+      let cumulativeSec = 0;
+      for (const edge of path) {
+        const arrivalAtEdge = new Date(departureTime.getTime() + cumulativeSec * 1000);
+        const a = nodes[edge.from], b = nodes[edge.to];
+        const toll = erp.evaluateSegmentToll(a.lat, a.lng, b.lat, b.lng, arrivalAtEdge);
+        if (toll.chargeSgd > 0) {
+          totalTollSgd += toll.chargeSgd;
+          tolls.push({
+            gantryName: toll.gantryName || 'ERP Gantry',
+            chargeSgd: toll.chargeSgd,
+            arrivalTime: arrivalAtEdge,
+          });
+        }
+        const edgeSec = speedProfiles ? speedProfiles.calculateEdgeSeconds(edge, arrivalAtEdge) : edge.seconds;
+        cumulativeSec += edgeSec;
+      }
+    }
 
     return {
       distanceMeters: Math.round(metres),
@@ -179,6 +260,9 @@ export class Router {
       edges: path,
       snapStartMeters: Math.round(s.distanceMeters),
       snapDestMeters: Math.round(t.distanceMeters),
+      totalTollSgd: erp ? Number(totalTollSgd.toFixed(2)) : undefined,
+      tolls: erp ? tolls : undefined,
+      incidentsEncountered: incidents ? Array.from(encounteredIncidents) : undefined,
     };
   }
 }
