@@ -28,6 +28,7 @@ import { AddressAutocompleteInput } from './AddressAutocompleteInput';
 import { saveUserProfile, signOutUser, clearWearableDeviceId } from '../lib/firebase';
 import { User as FirebaseUser } from 'firebase/auth';
 import { t } from '../locales/translations';
+import { AlertChannelsPanel } from './AlertChannelsPanel';
 import { normalizeWatchDeviceId, isValidWatchDeviceId } from '../utils/watchDeviceId';
 import { useEscapeToClose } from '../utils/useEscapeToClose';
 
@@ -592,6 +593,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               Edit Contacts →
             </button>
           </div>
+
+          {/* Alert channels: SMS status + Telegram chats */}
+          <AlertChannelsPanel user={user} lang={settings.language} />
 
           {/* Section 6: Garmin Watch Pairing */}
           <div className="border-line bg-well/60 space-y-3 rounded-xl border p-4">

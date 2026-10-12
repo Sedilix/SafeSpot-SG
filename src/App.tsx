@@ -73,6 +73,7 @@ import { fuseLocations, WatchLocationInput } from './utils/locationFusion';
 import { getPreferredContact } from './utils/contacts';
 import { resolveSavedPlace } from './utils/places';
 import { auth, subscribeToUserProfile, saveUserProfile, createIncident, updateIncident } from './lib/firebase';
+import { authFetch } from './lib/authFetch';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { AlertCircle, PhoneCall, ShieldAlert, Sparkles, Check, RefreshCw } from 'lucide-react';
 import { t } from './locales/translations';
@@ -584,6 +585,21 @@ function SeniorSafeSpotHome() {
       const incidentId = await createLiveIncident();
       if (!incidentId) return;
       const trackUrl = `${window.location.origin}/track/${incidentId}`;
+      // Also post to any linked Telegram chats (family groups). Best effort:
+      // the SMS composer below opens regardless.
+      if (auth.currentUser) {
+        void authFetch('/api/notify/telegram-pin', {
+          method: 'POST',
+          body: JSON.stringify({
+            emergency: true,
+            incidentId,
+            seniorName: userProfile?.actualName,
+            address: verification?.formattedAddress,
+            lat: verification?.verifiedCoordinates?.lat,
+            lng: verification?.verifiedCoordinates?.lng,
+          }),
+        }).catch(() => {});
+      }
       const primary = contacts.find((c) => c.isPrimary) || contacts[0];
       const batteryText = battery.level !== null ? ` Battery: ${battery.level}%.` : '';
       const message = encodeURIComponent(

@@ -20,7 +20,28 @@ import {
   MAX_WEARABLE_DEVICES,
   WearableState,
 } from './src/utils/wearable';
-import { sendTwilioSms } from './src/utils/notifications';
+import { sendTwilioSms, smsConfigured } from './src/utils/notifications';
+import {
+  answerTelegramCallback,
+  ensureTelegramWebhook,
+  escapeHtml,
+  getBotUsername,
+  parseLinkCommand,
+  RESPOND_CALLBACK_PREFIX,
+  sendTelegramText,
+  telegramConfigured,
+  webhookSecretMatches,
+} from './src/utils/telegram';
+import {
+  createTelegramLinkCode,
+  getTelegramChats,
+  migrateTelegramChat,
+  recordTelegramResponder,
+  redeemTelegramLinkCode,
+  removeTelegramChat,
+  removeTelegramChatEverywhere,
+  sendTelegramPin,
+} from './src/utils/alertChannels';
 import {
   handleWatchAlertTrigger,
   handleWatchIncidentUpdate,
@@ -1638,58 +1659,232 @@ Instructions for generation:
   }
 });
 
-// API endpoint: Direct 1-Tap Location Pin & SMS/Live Alert Dispatch
+// Per-account limit on messages the phone app can send (SMS costs money and
+// must not become an open relay), plus a server-wide ceiling.
+const notifyRate = new Map<string, number[]>();
+let notifyGlobal: number[] = [];
+function allowNotify(uid: string, now = Date.now()): boolean {
+  notifyGlobal = notifyGlobal.filter((t) => now - t < 60 * 60_000);
+  const recent = (notifyRate.get(uid) || []).filter((t) => now - t < 60 * 60_000);
+  if (recent.length >= 15 || notifyGlobal.length >= 300) return false;
+  recent.push(now);
+  notifyGlobal.push(now);
+  notifyRate.set(uid, recent);
+  return true;
+}
+
+const clipText = (v: unknown, n: number) => (typeof v === 'string' ? v.slice(0, n) : '');
+const inSingaporeBounds = (lat: unknown, lng: unknown): boolean =>
+  typeof lat === 'number' && typeof lng === 'number' && lat > 1.15 && lat < 1.48 && lng > 103.6 && lng < 104.1;
+
+// API endpoint: Direct 1-Tap Location Pin SMS. Requires sign-in (a guest
+// account is fine) so it can't be used to send SMS to arbitrary numbers.
 app.post('/api/notify/dispatch-pin', async (req, res) => {
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid) return;
+  if (!allowNotify(uid)) return res.status(429).json({ error: 'Too many messages sent. Please wait a while.' });
   try {
-    const { 
-      contactId,
-      contactName, 
-      phone, 
-      address, 
-      googleMapsUrl, 
-      driverHint, 
+    const {
+      contactName,
+      phone,
+      address,
+      googleMapsUrl,
+      driverHint,
       blePrecision,
       incidentId,
       seniorName = 'Senior'
-    } = req.body;
+    } = req.body || {};
 
-    if (!phone && !contactName) {
-      return res.status(400).json({ error: 'Phone number or contact name is required.' });
+    if (typeof phone !== 'string' || !phone.trim()) {
+      return res.status(400).json({ error: 'Phone number is required.' });
     }
 
-    const cleanPhone = (phone || '').replace(/[^0-9+]/g, '');
-    const timestamp = Date.now();
-    const messageId = `disp_${timestamp}_${Math.random().toString(36).slice(2, 7)}`;
+    const cleanPhone = phone.replace(/[^0-9+]/g, '');
+    const mapsUrl = typeof googleMapsUrl === 'string' && /^https:\/\/(www\.)?google\.[a-z.]+\/maps|^https:\/\/maps\.google\.[a-z.]+\//.test(googleMapsUrl)
+      ? googleMapsUrl.slice(0, 300)
+      : 'https://maps.google.com';
+    const baseUrl = process.env.APP_BASE_URL || 'https://safespot-sg-258662267000.asia-southeast1.run.app';
 
-    const messageBody = `📍 SafeSpot.SG Pick-Up Request for ${seniorName}:\n` +
-      `🏠 Location: ${address || 'Verified Curbside'}\n` +
-      (blePrecision ? `📶 Precision: ${blePrecision}\n` : '') +
-      (driverHint ? `🚗 Driver Note: ${driverHint}\n` : '') +
-      `🗺️ Google Maps Pin: ${googleMapsUrl || 'https://maps.google.com'}\n` +
-      (incidentId ? `⚡ Live Tracking: https://safespot-sg-258662267000.asia-southeast1.run.app/track/${incidentId}` : '');
+    const messageBody = `📍 SafeSpot.SG Pick-Up Request for ${clipText(seniorName, 60) || 'Senior'}:\n` +
+      `🏠 Location: ${clipText(address, 200) || 'Verified Curbside'}\n` +
+      (blePrecision ? `📶 Precision: ${clipText(blePrecision, 100)}\n` : '') +
+      (driverHint ? `🚗 Driver Note: ${clipText(driverHint, 300)}\n` : '') +
+      `🗺️ Google Maps Pin: ${mapsUrl}\n` +
+      (typeof incidentId === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(incidentId) ? `⚡ Live Tracking: ${baseUrl}/track/${incidentId}` : '');
 
     const twilioResult = await sendTwilioSms({ to: cleanPhone, body: messageBody });
+    console.log(`[DISPATCH_PIN] ${twilioResult.success ? 'Sent' : 'FAILED'} location pin to ${clipText(contactName, 60) || 'contact'}: ${twilioResult.carrierStatus}`);
 
-    console.log(`[DISPATCH_PIN] Successfully sent location pin to ${contactName} (${cleanPhone}):`, {
-      messageId: twilioResult.messageId || messageId,
-      carrierStatus: twilioResult.carrierStatus,
-      address,
-      googleMapsUrl,
-    });
+    if (!twilioResult.success) {
+      const unconfigured = twilioResult.carrierStatus === 'SMS_NOT_CONFIGURED';
+      return res.status(unconfigured ? 503 : 502).json({
+        success: false,
+        error: unconfigured ? 'SMS sending is not set up yet.' : 'The SMS could not be sent.',
+        carrierStatus: twilioResult.carrierStatus,
+      });
+    }
 
     return res.json({
       success: true,
-      messageId: twilioResult.messageId || messageId,
+      messageId: twilioResult.messageId,
       carrierStatus: twilioResult.carrierStatus,
-      recipient: contactName || 'Caregiver',
-      phone: cleanPhone,
-      timestamp,
+      recipient: clipText(contactName, 60) || 'Caregiver',
+      phone: twilioResult.recipient,
+      timestamp: Date.now(),
       messagePreview: messageBody,
     });
   } catch (error: any) {
     console.error('Error in /api/notify/dispatch-pin:', error);
-    return res.status(500).json({ error: 'Failed to dispatch location pin', details: error.message });
+    return res.status(500).json({ error: 'Failed to dispatch location pin' });
   }
+});
+
+// ── Alert channels (SMS + Telegram) ──────────────────────────────────────────
+
+// Which channels can actually deliver. No secrets, safe to show anyone.
+app.get('/api/alerts/channels', async (_req, res) => {
+  res.json({
+    sms: smsConfigured(),
+    telegram: telegramConfigured(),
+    telegramBot: telegramConfigured() ? await getBotUsername().catch(() => null) : null,
+  });
+});
+
+// Start linking a Telegram chat: returns a one-time code and t.me links that
+// open Telegram with the code pre-filled (for a group, or a private chat).
+app.post('/api/alerts/telegram/link', async (req, res) => {
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid) return;
+  if (!telegramConfigured()) return res.status(503).json({ error: 'Telegram alerts are not set up yet.' });
+  const bot = await getBotUsername().catch(() => null);
+  if (!bot) return res.status(503).json({ error: 'Telegram is unreachable right now.' });
+  try {
+    const { code, expiresAt } = await createTelegramLinkCode(uid);
+    return res.json({
+      code,
+      expiresAt,
+      botUsername: bot,
+      groupUrl: `https://t.me/${bot}?startgroup=${code}`,
+      privateUrl: `https://t.me/${bot}?start=${code}`,
+    });
+  } catch (e: any) {
+    console.error('[TELEGRAM] Could not create link code:', e.message);
+    return res.status(503).json({ error: 'Could not start linking. Please try again.' });
+  }
+});
+
+app.get('/api/alerts/telegram/chats', async (req, res) => {
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid) return;
+  try {
+    const chats = await getTelegramChats(uid);
+    return res.json({ chats: chats.map(({ chatId, title, type, linkedAt }) => ({ chatId, title, type, linkedAt })) });
+  } catch (e: any) {
+    console.error('[TELEGRAM] Could not list chats:', e.message);
+    return res.status(503).json({ error: 'Could not load linked chats.' });
+  }
+});
+
+app.post('/api/alerts/telegram/unlink', async (req, res) => {
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid) return;
+  const chatId = typeof req.body?.chatId === 'string' ? req.body.chatId : '';
+  if (!/^-?\d{1,20}$/.test(chatId)) return res.status(400).json({ error: 'chatId is required.' });
+  try {
+    const removed = await removeTelegramChat(uid, chatId);
+    if (removed) {
+      await sendTelegramText(chatId, 'SafeSpot alerts will no longer be posted in this chat.').catch(() => {});
+    }
+    return res.json({ status: 'ok', removed });
+  } catch (e: any) {
+    console.error('[TELEGRAM] Could not unlink chat:', e.message);
+    return res.status(503).json({ error: 'Could not unlink. Please try again.' });
+  }
+});
+
+// Phone app: send the current location to every linked Telegram chat.
+app.post('/api/notify/telegram-pin', async (req, res) => {
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid) return;
+  if (!telegramConfigured()) return res.status(503).json({ error: 'Telegram alerts are not set up yet.' });
+  if (!allowNotify(uid)) return res.status(429).json({ error: 'Too many messages sent. Please wait a while.' });
+  const { address, lat, lng, driverHint, seniorName, incidentId, emergency } = req.body || {};
+  const hasPos = inSingaporeBounds(lat, lng);
+  const name = escapeHtml(clipText(seniorName, 60) || 'Senior');
+  const baseUrl = process.env.APP_BASE_URL || 'https://safespot-sg-258662267000.asia-southeast1.run.app';
+  const text =
+    (emergency === true
+      ? `🚨 <b>${name} needs help</b>\nSent from the SafeSpot app.\n`
+      : `📍 <b>Pick-up location for ${name}</b>\n`) +
+    `🏠 ${escapeHtml(clipText(address, 200) || 'See the map pin below')}` +
+    (driverHint ? `\n🚗 ${escapeHtml(clipText(driverHint, 300))}` : '') +
+    (typeof incidentId === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(incidentId)
+      ? `\n⚡ Live tracking: ${baseUrl}/track/${incidentId}`
+      : '');
+  try {
+    const sent = await sendTelegramPin(uid, {
+      text,
+      lat: hasPos ? (lat as number) : undefined,
+      lng: hasPos ? (lng as number) : undefined,
+    });
+    if (sent === 0) return res.status(404).json({ error: 'No Telegram chat is linked yet.' });
+    return res.json({ success: true, chatsNotified: sent });
+  } catch (e: any) {
+    console.error('[TELEGRAM] telegram-pin failed:', e.message);
+    return res.status(502).json({ error: 'Could not send to Telegram.' });
+  }
+});
+
+// Telegram webhook. Telegram signs each call with our secret header; anything
+// else is rejected. Always answers 200 once verified so Telegram doesn't retry.
+app.post('/api/telegram/webhook', async (req, res) => {
+  if (!webhookSecretMatches(req.get('X-Telegram-Bot-Api-Secret-Token'))) {
+    return res.status(401).end();
+  }
+  const update = req.body || {};
+  try {
+    const msg = update.message;
+    if (msg?.chat?.id !== undefined) {
+      const chatId = String(msg.chat.id);
+      if (msg.migrate_to_chat_id !== undefined) {
+        await migrateTelegramChat(chatId, String(msg.migrate_to_chat_id));
+      } else {
+        const code = parseLinkCommand(msg.text);
+        if (code) {
+          const linked = await redeemTelegramLinkCode(code, msg.chat);
+          await sendTelegramText(
+            chatId,
+            linked
+              ? '✅ <b>Linked to SafeSpot.</b>\nEmergency alerts (SOS, falls, heart rate) will be posted here with a live map pin. ' +
+                  'To stop, unlink this chat in the SafeSpot app or remove the bot.'
+              : 'That code is wrong or has expired. In the SafeSpot app, open Profile → Telegram alerts to get a new one.',
+          );
+        } else if (/^\/start(@\w+)?\s*$/.test(String(msg.text || '').trim())) {
+          await sendTelegramText(
+            chatId,
+            'Hi! I post SafeSpot emergency alerts. To link this chat, open the SafeSpot app → Profile → Telegram alerts.',
+          );
+        }
+      }
+    }
+
+    const member = update.my_chat_member;
+    if (member?.chat?.id !== undefined && ['left', 'kicked'].includes(member.new_chat_member?.status)) {
+      await removeTelegramChatEverywhere(String(member.chat.id));
+    }
+
+    const cq = update.callback_query;
+    if (cq?.id && typeof cq.data === 'string' && cq.data.startsWith(RESPOND_CALLBACK_PREFIX)) {
+      const incidentId = cq.data.slice(RESPOND_CALLBACK_PREFIX.length);
+      const name = [cq.from?.first_name, cq.from?.last_name].filter(Boolean).join(' ') || 'Someone';
+      const ok = cq.message?.chat?.id !== undefined &&
+        (await recordTelegramResponder(incidentId, String(cq.message.chat.id), name));
+      await answerTelegramCallback(cq.id, ok ? "Thanks, everyone has been told you're responding." : 'This alert is no longer active.');
+    }
+  } catch (e: any) {
+    console.error('[TELEGRAM] Webhook handling failed:', e.message);
+  }
+  return res.status(200).end();
 });
 
 // ── Wearable (Garmin Connect IQ) intake ─────────────────────────────────────
@@ -2040,6 +2235,15 @@ async function startServer() {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.sendFile(path.join(distPath, 'index.html'));
     });
+  }
+
+  if (!smsConfigured()) {
+    console.warn(IS_PRODUCTION
+      ? 'TWILIO_* is not set: SMS alerts will NOT be sent.'
+      : 'TWILIO_* is not set: SMS alerts are simulated (development only).');
+  }
+  if (telegramConfigured() && process.env.APP_BASE_URL) {
+    ensureTelegramWebhook(process.env.APP_BASE_URL).catch(() => {});
   }
 
   app.listen(PORT, '0.0.0.0', () => {

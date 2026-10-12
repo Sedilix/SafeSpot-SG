@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { normalizePhoneNumber, sendTwilioSms } from './notifications';
+import { normalizePhoneNumber, sendTwilioSms, smsConfigured } from './notifications';
 
 describe('normalizePhoneNumber', () => {
   it('formats Singapore 8-digit numbers with +65', () => {
@@ -54,6 +54,22 @@ describe('sendTwilioSms', () => {
     expect(res.carrierStatus).toBe('DISPATCHED_DIRECT_GATEWAY');
     expect(res.recipient).toBe('+6591234567');
     expect(res.messageId).toMatch(/^disp_/);
+  });
+
+  it('fails (never pretends) in production when Twilio credentials are missing', async () => {
+    process.env.NODE_ENV = 'production';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await sendTwilioSms({ to: '91234567', body: 'Emergency alert!' });
+    expect(res.success).toBe(false);
+    expect(res.carrierStatus).toBe('SMS_NOT_CONFIGURED');
+    expect(smsConfigured()).toBe(false);
+  });
+
+  it('reports SMS as configured when all three Twilio settings are present', () => {
+    process.env.TWILIO_ACCOUNT_SID = 'AC1';
+    process.env.TWILIO_AUTH_TOKEN = 't';
+    process.env.TWILIO_PHONE_NUMBER = '+15550000000';
+    expect(smsConfigured()).toBe(true);
   });
 
   it('dispatches to Twilio REST API when credentials are present and handles success', async () => {

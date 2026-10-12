@@ -6,6 +6,8 @@
 import admin from 'firebase-admin';
 import type { Incident, EmergencyContact } from '../types';
 import { sendTwilioSms } from './notifications';
+import { notifyTelegramAlert, resolveTelegramIncident, updateTelegramIncidentLocation } from './alertChannels';
+import { formatTelegramAlert, formatTelegramResolved } from './telegram';
 import { WearableEvent } from './wearable';
 
 export interface PairedWearableDoc {
@@ -23,6 +25,7 @@ export interface IncidentDispatchResult {
   incidentId: string;
   smsDispatched: boolean;
   contactsNotified: number;
+  telegramChatsNotified: number;
 }
 
 let adminDb: admin.firestore.Firestore | null = null;
@@ -368,23 +371,57 @@ export async function handleWatchAlertTrigger(params: {
       ? profile.emergencyContacts.filter((c) => c.isPrimary && c.phone)
       : profile.emergencyContacts.filter((c) => Boolean(c.phone));
 
-  let sentCount = 0;
-  for (const contact of contactsToNotify) {
-    try {
-      const res = await sendTwilioSms({ to: contact.phone, body: smsBody });
-      if (res.success) {
-        sentCount++;
-        console.log(`[WEARABLE_INCIDENT] Dispatched SOS alert to ${contact.name} (${res.recipient})`);
+  // Every channel is sent at once, so one slow or failing channel never
+  // delays or blocks the others.
+  const smsTask = Promise.all(
+    contactsToNotify.map(async (contact) => {
+      try {
+        const res = await sendTwilioSms({ to: contact.phone, body: smsBody });
+        if (res.success) {
+          console.log(`[WEARABLE_INCIDENT] Dispatched SOS alert to ${contact.name} (${res.recipient})`);
+          return 1;
+        }
+        console.warn(`[WEARABLE_INCIDENT] SMS to ${contact.name} not sent: ${res.carrierStatus}`);
+      } catch (err: any) {
+        console.warn(`[WEARABLE_INCIDENT] Failed to notify ${contact.name}:`, err.message);
       }
-    } catch (err: any) {
-      console.warn(`[WEARABLE_INCIDENT] Failed to notify ${contact.name}:`, err.message);
-    }
+      return 0;
+    }),
+  ).then((r) => r.reduce((a: number, b) => a + b, 0));
+
+  const telegramTask = notifyTelegramAlert({
+    uid: profile.uid,
+    elderName: profile.elderName,
+    incidentId,
+    text: formatTelegramAlert({
+      elderName: profile.elderName,
+      eventType: event.eventType,
+      incidentId,
+      serverBaseUrl,
+      locationText: formattedAddress || landmark || null,
+      heartRate: event.heartRate,
+      battery: event.battery,
+      bloodType: profile.bloodType,
+      medicalNotes: profile.medicalNotes,
+    }),
+    lat: event.lat,
+    lng: event.lng,
+    now,
+  }).catch((err: any) => {
+    console.warn('[WEARABLE_INCIDENT] Telegram alert failed:', err.message);
+    return 0;
+  });
+
+  const [sentCount, telegramCount] = await Promise.all([smsTask, telegramTask]);
+  if (sentCount + telegramCount === 0) {
+    console.error(`[WEARABLE_INCIDENT] ALERT ${incidentId} REACHED NOBODY: no SMS sent and no Telegram chat linked.`);
   }
 
   return {
     incidentId,
     smsDispatched: sentCount > 0,
     contactsNotified: sentCount,
+    telegramChatsNotified: telegramCount,
   };
 }
 
@@ -435,6 +472,12 @@ export async function handleWatchIncidentUpdate(
       console.warn(`[WEARABLE_INCIDENT] Failed to update Incidents/${incidentId}:`, e.message);
     }
   }
+
+  if (event.lat !== undefined && event.lng !== undefined) {
+    await updateTelegramIncidentLocation(incidentId, event.lat, event.lng, now).catch((e: any) =>
+      console.warn('[WEARABLE_INCIDENT] Telegram live location update failed:', e.message),
+    );
+  }
 }
 
 /**
@@ -483,13 +526,18 @@ export async function handleWatchAlertCancel(
       ? profile.emergencyContacts.filter((c) => c.isPrimary && c.phone)
       : profile.emergencyContacts.filter((c) => Boolean(c.phone));
 
-  for (const contact of contactsToNotify) {
-    try {
-      await sendTwilioSms({ to: contact.phone, body: resolvedBody });
-    } catch (err: any) {
-      console.warn(`[WEARABLE_INCIDENT] Failed to notify ${contact.name} of cancel:`, err.message);
-    }
-  }
+  await Promise.all([
+    ...contactsToNotify.map(async (contact) => {
+      try {
+        await sendTwilioSms({ to: contact.phone, body: resolvedBody });
+      } catch (err: any) {
+        console.warn(`[WEARABLE_INCIDENT] Failed to notify ${contact.name} of cancel:`, err.message);
+      }
+    }),
+    resolveTelegramIncident(incidentId, formatTelegramResolved(profile.elderName)).catch((e: any) =>
+      console.warn('[WEARABLE_INCIDENT] Telegram resolve failed:', e.message),
+    ),
+  ]);
 }
 
 /**

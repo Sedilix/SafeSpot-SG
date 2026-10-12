@@ -22,6 +22,7 @@ import {
 import { EmergencyContact, LocationVerificationResult, AccessibilitySettings } from '../types';
 import { buildPickupSharePayload } from '../utils/contacts';
 import { t } from '../locales/translations';
+import { authFetch, responseError } from '../lib/authFetch';
 import { useEscapeToClose } from '../utils/useEscapeToClose';
 
 interface PickupDispatchModalProps {
@@ -44,6 +45,7 @@ export const PickupDispatchModal: React.FC<PickupDispatchModalProps> = ({
   const [copied, setCopied] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isSent, setIsSent] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const lang = settings.language || 'en';
 
@@ -72,9 +74,9 @@ export const PickupDispatchModal: React.FC<PickupDispatchModalProps> = ({
         ? `${verification.bleBeacons[0].locationName} (≈${verification.bleBeacons[0].estimatedDistanceMeters}m)`
         : undefined;
 
-      const res = await fetch('/api/notify/dispatch-pin', {
+      setSendError(null);
+      const res = await authFetch('/api/notify/dispatch-pin', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contactId: targetContact.id,
           contactName: targetContact.name,
@@ -99,9 +101,12 @@ export const PickupDispatchModal: React.FC<PickupDispatchModalProps> = ({
         setTimeout(() => {
           onClose();
         }, 2200);
+      } else {
+        setSendError(await responseError(res, t('share.smsFailed', lang)));
       }
     } catch (err) {
       console.warn('Direct dispatch error:', err);
+      setSendError(t('share.smsFailed', lang));
     } finally {
       setIsSending(false);
     }
@@ -230,6 +235,12 @@ export const PickupDispatchModal: React.FC<PickupDispatchModalProps> = ({
                 : `${t('dispatch.sendPin', lang)} ${targetContact.name.split(' ')[0]}`}
             </span>
           </button>
+
+          {sendError && (
+            <p role="alert" className="text-brick-deep text-center text-sm font-bold">
+              {sendError}
+            </p>
+          )}
 
           {/* Secondary Quick Messaging Channels */}
           <div className="grid grid-cols-2 gap-2.5">

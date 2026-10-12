@@ -60,6 +60,17 @@ export async function sendTwilioSms(params: TwilioSendParams): Promise<TwilioSen
   const twilioFrom = process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER;
 
   if (!twilioAccountSid || !twilioAuthToken || !twilioFrom) {
+    // In production an unconfigured gateway is a failure, never a pretend
+    // success: callers must know the alert did not go out.
+    if (process.env.NODE_ENV === 'production') {
+      console.error(`[TWILIO] SMS NOT SENT to ${cleanPhone}: Twilio is not configured (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER).`);
+      return {
+        success: false,
+        carrierStatus: 'SMS_NOT_CONFIGURED',
+        recipient: cleanPhone,
+        error: 'SMS is not configured on this server.',
+      };
+    }
     console.log(`[TWILIO] Gateway unconfigured (dev/test), simulated SMS to ${cleanPhone}:`, {
       messagePreview: body.slice(0, 100) + (body.length > 100 ? '...' : ''),
     });
@@ -85,6 +96,7 @@ export async function sendTwilioSms(params: TwilioSendParams): Promise<TwilioSen
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: formParams.toString(),
+      signal: AbortSignal.timeout(10000),
     });
 
     if (twilioRes.ok) {
@@ -116,4 +128,13 @@ export async function sendTwilioSms(params: TwilioSendParams): Promise<TwilioSen
       error: err.message,
     };
   }
+}
+
+/** True when the server has Twilio credentials (SMS can actually be sent). */
+export function smsConfigured(): boolean {
+  return Boolean(
+    process.env.TWILIO_ACCOUNT_SID &&
+      process.env.TWILIO_AUTH_TOKEN &&
+      (process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER),
+  );
 }
