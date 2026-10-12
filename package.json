@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild tools/speedbands/logger.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/speedbands-logger.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.22.0",
     "@google/genai": "^2.4.0",
     "@googlemaps/js-api-loader": "^2.1.1",
     "@speechmatics/real-time-client": "^8.5.1",
