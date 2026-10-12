@@ -38,6 +38,14 @@ export interface RoutingOptions {
   speedProfiles?: SpeedProfileEngine;
   incidents?: IncidentLayer;
   erp?: ErpEngine;
+  edgePenalties?: Map<number, number>;
+}
+
+export interface AlternativeRoutingOptions extends RoutingOptions {
+  maxRoutes?: number;          // Default 3
+  penaltyMultiplier?: number;  // Default 1.35 (penalty method)
+  maxOverlap?: number;         // Default 0.65 (accept if overlap < 65%)
+  maxIterations?: number;      // Default 8
 }
 
 interface HeapItem { edgeId: number; elapsed: number; priority: number }
@@ -164,7 +172,8 @@ export class Router {
         if (impact.impassable) continue;
       }
       const initialSeconds = speedProfiles ? speedProfiles.calculateEdgeSeconds(e, departureTime) : e.seconds;
-      const c = initialSeconds * 0.5;
+      const penalty = options?.edgePenalties?.get(e.id) ?? 1.0;
+      const c = initialSeconds * 0.5 * penalty;
       best[e.id] = c;
       heap.push({ edgeId: e.id, elapsed: c, priority: c + h(e) });
     }
@@ -206,7 +215,8 @@ export class Router {
           nextSeconds = speedProfiles.calculateEdgeSeconds(next, arrivalTime, bearing);
         }
 
-        const cost = top.elapsed + turn.delaySec + incidentDelay + nextSeconds;
+        const penalty = options?.edgePenalties?.get(next.id) ?? 1.0;
+        const cost = top.elapsed + turn.delaySec + incidentDelay + nextSeconds * penalty;
         if (cost < best[nid]) {
           best[nid] = cost;
           prev[nid] = top.edgeId;
@@ -220,11 +230,39 @@ export class Router {
     for (let c = reached; c !== -1; c = prev[c]) path.push(edges[c]);
     path.reverse();
 
-    // We entered the last edge to detect arrival but the target is mid-segment: refund half of it.
-    const lastEdgeSeconds = speedProfiles
-      ? speedProfiles.calculateEdgeSeconds(edges[reached], new Date(departureTime.getTime() + best[reached] * 1000))
-      : edges[reached].seconds;
-    const seconds = best[reached] - lastEdgeSeconds * 0.5;
+    // Calculate real unpenalized travel duration
+    let seconds: number;
+    if (options?.edgePenalties && options.edgePenalties.size > 0) {
+      let unpenalizedSeconds = 0;
+      let cumulativeSec = 0;
+      for (let i = 0; i < path.length; i++) {
+        const edge = path[i];
+        const arrivalAtEdge = new Date(departureTime.getTime() + cumulativeSec * 1000);
+        const a = nodes[edge.from], b = nodes[edge.to];
+        const bearing = bearingDegrees(a.lat, a.lng, b.lat, b.lng);
+        const edgeSec = speedProfiles ? speedProfiles.calculateEdgeSeconds(edge, arrivalAtEdge, bearing) : edge.seconds;
+        let turnDelay = 0;
+        if (i > 0) {
+          turnDelay = this.evaluateTurn(path[i - 1], edge).delaySec;
+        }
+        let incidentDelay = 0;
+        if (incidents) {
+          const impact = incidents.evaluateEdgeImpact(a.lat, a.lng, b.lat, b.lng, arrivalAtEdge);
+          incidentDelay = impact.delaySec;
+        }
+        const fullEdgeSec = edgeSec + turnDelay + incidentDelay;
+        const edgeFraction = (i === 0 || (path.length > 1 && i === path.length - 1)) ? 0.5 : 1.0;
+        unpenalizedSeconds += edgeSec * edgeFraction + turnDelay + incidentDelay;
+        cumulativeSec += fullEdgeSec;
+      }
+      seconds = unpenalizedSeconds;
+    } else {
+      // We entered the last edge to detect arrival but the target is mid-segment: refund half of it.
+      const lastEdgeSeconds = speedProfiles
+        ? speedProfiles.calculateEdgeSeconds(edges[reached], new Date(departureTime.getTime() + best[reached] * 1000))
+        : edges[reached].seconds;
+      seconds = best[reached] - lastEdgeSeconds * 0.5;
+    }
 
     let metres = path.reduce((sum, e) => sum + e.length, 0);
     metres -= path[0].length * 0.5 + (path.length > 1 ? path[path.length - 1].length * 0.5 : 0);
@@ -267,4 +305,96 @@ export class Router {
       incidentsEncountered: incidents ? Array.from(encounteredIncidents) : undefined,
     };
   }
+
+  /**
+   * Generates alternative routes using the edge penalty method (Phase 4).
+   * Traversed edges in accepted routes are penalized by penaltyMultiplier (default 1.35x).
+   * A candidate alternative is accepted only if its spatial length overlap with each
+   * already-accepted route is below maxOverlap (default 65%).
+   * Returns up to maxRoutes (default 3) spatially distinct routes.
+   */
+  public findAlternatives(
+    origin: { lat: number; lng: number },
+    dest: { lat: number; lng: number },
+    options?: AlternativeRoutingOptions
+  ): RouteResult[] {
+    const maxRoutes = options?.maxRoutes ?? 3;
+    const penaltyMultiplier = options?.penaltyMultiplier ?? 1.35;
+    const maxOverlap = options?.maxOverlap ?? 0.65;
+    const maxIterations = options?.maxIterations ?? 8;
+
+    const primary = this.findRoute(origin, dest, options);
+    if (!primary) return [];
+
+    const accepted: RouteResult[] = [primary];
+    if (maxRoutes <= 1) return accepted;
+
+    const edgePenalties = new Map<number, number>();
+    for (const e of primary.edges) {
+      edgePenalties.set(e.id, (edgePenalties.get(e.id) ?? 1.0) * penaltyMultiplier);
+      for (const outId of this.graph.outgoingEdges[e.from]) {
+        if (this.graph.edges[outId].to === e.to) {
+          edgePenalties.set(outId, (edgePenalties.get(outId) ?? 1.0) * penaltyMultiplier);
+        }
+      }
+    }
+
+    let iteration = 0;
+    while (accepted.length < maxRoutes && iteration < maxIterations) {
+      iteration++;
+      const candidate = this.findRoute(origin, dest, {
+        ...options,
+        edgePenalties,
+      });
+      if (!candidate) break;
+
+      let maxOverlapFound = 0;
+      for (const acc of accepted) {
+        const ov = calculateRouteOverlap(candidate, acc);
+        if (ov > maxOverlapFound) maxOverlapFound = ov;
+      }
+
+      // Penalize candidate edges to discourage repeating identical segments in further iterations
+      for (const e of candidate.edges) {
+        edgePenalties.set(e.id, (edgePenalties.get(e.id) ?? 1.0) * penaltyMultiplier);
+        for (const outId of this.graph.outgoingEdges[e.from]) {
+          if (this.graph.edges[outId].to === e.to) {
+            edgePenalties.set(outId, (edgePenalties.get(outId) ?? 1.0) * penaltyMultiplier);
+          }
+        }
+      }
+
+      if (maxOverlapFound < maxOverlap) {
+        accepted.push(candidate);
+      }
+    }
+
+    return accepted;
+  }
+}
+
+/**
+ * Calculates the spatial length overlap ratio between two routes.
+ * Returns the maximum fraction of shared edge distance relative to either route.
+ */
+export function calculateRouteOverlap(routeA: RouteResult, routeB: RouteResult): number {
+  if (!routeA.edges.length || !routeB.edges.length) return 0;
+  const edgeIdsB = new Set(routeB.edges.map((e) => e.id));
+  const nodePairsB = new Set(routeB.edges.map((e) => `${e.from}->${e.to}`));
+  let sharedMeters = 0;
+  let totalMetersA = 0;
+  let totalMetersB = 0;
+
+  for (const e of routeA.edges) {
+    totalMetersA += e.length;
+    if (edgeIdsB.has(e.id) || nodePairsB.has(`${e.from}->${e.to}`)) {
+      sharedMeters += e.length;
+    }
+  }
+  for (const e of routeB.edges) {
+    totalMetersB += e.length;
+  }
+
+  if (totalMetersA === 0 || totalMetersB === 0) return 0;
+  return Math.max(sharedMeters / totalMetersA, sharedMeters / totalMetersB);
 }

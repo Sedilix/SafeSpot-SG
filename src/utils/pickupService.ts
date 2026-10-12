@@ -10,6 +10,8 @@
 import { ringSamplePoints, GeoPoint } from './geo';
 import { PickupCandidate, RouteLeg, dedupeCandidates, nearbyCandidates, rankPickups, ScoredPickup, SENIOR_WALK_FACTOR } from './pickupOptimizer';
 import { PedestrianRouter } from '../routing/pedestrianRouter';
+import { RoadGraph } from '../routing/graph';
+import { Router } from '../routing/router';
 
 const STANDS_TTL_MS = 24 * 60 * 60 * 1000;
 let standsCache: { at: number; stands: PickupCandidate[] } | null = null;
@@ -20,6 +22,14 @@ export function getPedestrianRouter(): PedestrianRouter {
     pedestrianRouterInstance = new PedestrianRouter();
   }
   return pedestrianRouterInstance;
+}
+
+let roadRouterInstance: Router | null = null;
+export function getRoadRouter(): Router {
+  if (!roadRouterInstance) {
+    roadRouterInstance = new Router(RoadGraph.loadDefault());
+  }
+  return roadRouterInstance;
 }
 
 /** All LTA taxi stands/stops (DataMall), cached for a day. */
@@ -68,38 +78,14 @@ export async function kerbsideCandidates(origin: GeoPoint, mapsKey: string): Pro
   }));
 }
 
-/** One origin to many destinations; null where no route exists. */
-export async function routeMatrix(
+/** Helper to query Google Routes matrix. */
+async function fetchGoogleRouteMatrix(
   origin: GeoPoint,
   destinations: PickupCandidate[],
   mode: 'WALK' | 'DRIVE',
-  mapsKey?: string,
-  customPedestrianRouter?: PedestrianRouter,
+  mapsKey: string
 ): Promise<Map<string, RouteLeg | null>> {
   const result = new Map<string, RouteLeg | null>(destinations.map((d) => [d.id, null]));
-  if (destinations.length === 0) return result;
-
-  // Phase 3: Senior walking route using local pedestrian engine behind feature flag
-  if (mode === 'WALK' && (process.env.ROUTING_ENGINE === 'local' || customPedestrianRouter)) {
-    try {
-      const router = customPedestrianRouter ?? getPedestrianRouter();
-      for (const d of destinations) {
-        const leg = await router.findRoute(origin, { lat: d.lat, lng: d.lng });
-        if (leg) {
-          result.set(d.id, {
-            seconds: Math.round(leg.durationSeconds / SENIOR_WALK_FACTOR),
-            meters: leg.distanceMeters,
-          });
-        }
-      }
-      return result;
-    } catch (e: any) {
-      console.warn('[PICKUP] Local pedestrian router error, falling back to Google:', e.message);
-    }
-  }
-
-  if (!mapsKey) return result;
-
   const body: any = {
     origins: [{ waypoint: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } } }],
     destinations: destinations.map((d) => ({ waypoint: { location: { latLng: { latitude: d.lat, longitude: d.lng } } } })),
@@ -127,6 +113,83 @@ export async function routeMatrix(
   return result;
 }
 
+/** One origin to many destinations; null where no route exists. */
+export async function routeMatrix(
+  origin: GeoPoint,
+  destinations: PickupCandidate[],
+  mode: 'WALK' | 'DRIVE',
+  mapsKey?: string,
+  customPedestrianRouter?: PedestrianRouter,
+  customRoadRouter?: Router,
+): Promise<Map<string, RouteLeg | null>> {
+  const result = new Map<string, RouteLeg | null>(destinations.map((d) => [d.id, null]));
+  if (destinations.length === 0) return result;
+
+  // Phase 3: Senior walking route using local pedestrian engine behind feature flag
+  if (mode === 'WALK' && (process.env.ROUTING_ENGINE === 'local' || customPedestrianRouter)) {
+    try {
+      const router = customPedestrianRouter ?? getPedestrianRouter();
+      for (const d of destinations) {
+        const leg = await router.findRoute(origin, { lat: d.lat, lng: d.lng });
+        if (leg) {
+          result.set(d.id, {
+            seconds: Math.round(leg.durationSeconds / SENIOR_WALK_FACTOR),
+            meters: leg.distanceMeters,
+          });
+        }
+      }
+      return result;
+    } catch (e: any) {
+      console.warn('[PICKUP] Local pedestrian router error, falling back to Google:', e.message);
+    }
+  }
+
+  // Phase 4: Driver routing using SafeSpot local road engine behind feature flag
+  if (mode === 'DRIVE' && (process.env.ROUTING_ENGINE === 'local' || customRoadRouter)) {
+    try {
+      const router = customRoadRouter ?? getRoadRouter();
+      for (const d of destinations) {
+        const leg = router.findRoute(origin, { lat: d.lat, lng: d.lng }, { departureTime: new Date() });
+        if (leg) {
+          result.set(d.id, {
+            seconds: leg.durationSeconds,
+            meters: leg.distanceMeters,
+          });
+        }
+      }
+
+      // Shadow comparison logging if Google Maps key is also configured
+      if (mapsKey) {
+        fetchGoogleRouteMatrix(origin, destinations, mode, mapsKey)
+          .then((googleLegs) => {
+            for (const d of destinations) {
+              const localLeg = result.get(d.id);
+              const googleLeg = googleLegs.get(d.id);
+              if (localLeg && googleLeg) {
+                const diffSec = localLeg.seconds - googleLeg.seconds;
+                const diffPct = ((diffSec / googleLeg.seconds) * 100).toFixed(1);
+                console.log(
+                  `[PICKUP_DRIVE_EVAL] id=${d.id} local=${localLeg.seconds}s (${localLeg.meters}m) google=${googleLeg.seconds}s (${googleLeg.meters}m) diff=${diffSec}s (${diffPct}%)`
+                );
+              }
+            }
+          })
+          .catch((err) => {
+            console.warn('[PICKUP_DRIVE_EVAL] Shadow Google comparison failed:', err.message);
+          });
+      }
+
+      return result;
+    } catch (e: any) {
+      console.warn('[PICKUP] Local road router error, falling back to Google:', e.message);
+    }
+  }
+
+  if (!mapsKey) return result;
+
+  return fetchGoogleRouteMatrix(origin, destinations, mode, mapsKey);
+}
+
 export interface PickupOptionsResult {
   options: ScoredPickup[];
   usedTaxiStands: boolean;
@@ -140,8 +203,9 @@ export async function findPickupOptions(params: {
   mapsKey?: string;
   ltaKey?: string;
   customPedestrianRouter?: PedestrianRouter;
+  customRoadRouter?: Router;
 }): Promise<PickupOptionsResult> {
-  const { senior, driver, mapsKey = '', ltaKey, customPedestrianRouter } = params;
+  const { senior, driver, mapsKey = '', ltaKey, customPedestrianRouter, customRoadRouter } = params;
 
   let stands: PickupCandidate[] = [];
   if (ltaKey) {
@@ -154,9 +218,10 @@ export async function findPickupOptions(params: {
   const kerbs = mapsKey ? await kerbsideCandidates(senior, mapsKey).catch(() => [] as PickupCandidate[]) : [];
   const candidates = dedupeCandidates([...stands, ...kerbs]).slice(0, 14);
 
+  const canDrive = Boolean(driver && (mapsKey || process.env.ROUTING_ENGINE === 'local' || customRoadRouter));
   const [walk, drive] = await Promise.all([
-    routeMatrix(senior, candidates, 'WALK', mapsKey, customPedestrianRouter),
-    driver && mapsKey ? routeMatrix(driver, candidates, 'DRIVE', mapsKey) : Promise.resolve(undefined),
+    routeMatrix(senior, candidates, 'WALK', mapsKey, customPedestrianRouter, customRoadRouter),
+    canDrive && driver ? routeMatrix(driver, candidates, 'DRIVE', mapsKey, customPedestrianRouter, customRoadRouter) : Promise.resolve(undefined),
   ]);
 
   return {
