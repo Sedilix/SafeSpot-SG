@@ -8,6 +8,7 @@ import {
   getAuth, 
   GoogleAuthProvider, 
   signInWithPopup, 
+  linkWithPopup,
   signInWithPhoneNumber, 
   RecaptchaVerifier, 
   signInAnonymously, 
@@ -101,6 +102,24 @@ export const googleProvider = new GoogleAuthProvider();
 export async function signInWithGoogle(): Promise<FirebaseUser> {
   const result = await signInWithPopup(auth, googleProvider);
   return result.user;
+}
+
+/**
+ * Turns a guest account into a Google account in place: same uid, so the
+ * profile, contacts, watch pairing and Telegram links are all kept.
+ */
+export async function upgradeGuestToGoogle(): Promise<FirebaseUser> {
+  const current = auth.currentUser;
+  if (!current || !current.isAnonymous) return signInWithGoogle();
+  try {
+    const result = await linkWithPopup(current, googleProvider);
+    return result.user;
+  } catch (err: any) {
+    if (err?.code === 'auth/credential-already-in-use') {
+      throw new Error('That Google account already has a SafeSpot profile. Sign out, then sign in with Google to use it.');
+    }
+    throw err;
+  }
 }
 
 // Anonymous Sign-In
