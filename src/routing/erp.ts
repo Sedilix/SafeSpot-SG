@@ -4,11 +4,11 @@
  *
  * erp.ts: Singapore Electronic Road Pricing (ERP) tariff engine.
  *
- * Ground truth (LTA DataMall & PTC static schedules as of 2026):
- * - Dynamic ERPRates endpoint was deprecated 30 Sep 2024.
- * - Only ~22 expressway gantries are actively charging (CTE, PIE, AYE, KPE).
- *   CBD cordon gantries remain switched off.
- * - Tariffs are time-dependent (15/30-minute rate slots) and directional.
+ * Current status (per ROUTING_PLAN.md §7 Fix A):
+ * - Dynamic ERPRates endpoint was removed on 30 Sep 2024 (source: LTA DataMall Dynamic Datasets notice).
+ * - Machine-readable tariffs are not published as open JSON/CSV by LTA (only quarterly static PDF tables on DataMall).
+ * - ACTIVE_ERP_GANTRIES is empty by default until an official machine-readable dataset is ingested.
+ * - ERP_SAMPLE_TARIFFS provides an unverified sample schedule used only in unit tests.
  */
 
 import { haversineMeters, bearingDegrees } from './graph';
@@ -30,8 +30,8 @@ export interface ErpGantry {
   tariffs: ErpTariffSlot[];
 }
 
-// Active Singapore expressway gantries with official charging schedules (LTA 2026)
-export const ACTIVE_ERP_GANTRIES: ErpGantry[] = [
+// UNVERIFIED: Sample tariff schedule for unit testing only. Not verified against official LTA data.
+export const ERP_SAMPLE_TARIFFS: ErpGantry[] = [
   {
     id: 'CTE-1',
     name: 'CTE Southbound before Braddell Road',
@@ -134,8 +134,22 @@ export const ACTIVE_ERP_GANTRIES: ErpGantry[] = [
   },
 ];
 
+/**
+ * Production active ERP gantries list.
+ * Set to empty by default per ROUTING_PLAN.md §7 Fix A until official machine-readable
+ * LTA tariff dataset is ingested.
+ */
+export const ACTIVE_ERP_GANTRIES: ErpGantry[] = [];
+
 export class ErpEngine {
   constructor(private gantries: ErpGantry[] = ACTIVE_ERP_GANTRIES) {}
+
+  /**
+   * Returns true if active ERP gantries are configured with verified tariff schedules.
+   */
+  public isConfigured(): boolean {
+    return this.gantries.length > 0;
+  }
 
   /**
    * Evaluates the ERP charge for passing a specific gantry at a given arrival time and bearing.
@@ -169,8 +183,8 @@ export class ErpEngine {
   }
 
   /**
-   * Checks whether a road segment passes any active ERP gantry within 25m,
-   * and returns the toll incurred if any.
+   * Checks whether a road segment passes any active ERP gantry within 35m,
+   * and returns the toll incurred if any, along with whether the toll status is known.
    */
   public evaluateSegmentToll(
     startLat: number,
@@ -178,7 +192,11 @@ export class ErpEngine {
     endLat: number,
     endLng: number,
     arrivalTime: Date
-  ): { gantryName?: string; chargeSgd: number } {
+  ): { gantryName?: string; chargeSgd: number; isKnown: boolean } {
+    if (!this.isConfigured()) {
+      return { chargeSgd: 0.0, isKnown: false };
+    }
+
     const bearing = bearingDegrees(startLat, startLng, endLat, endLng);
     const midLat = (startLat + endLat) / 2;
     const midLng = (startLng + endLng) / 2;
@@ -188,10 +206,10 @@ export class ErpEngine {
       if (dist <= 35) { // Gantry spatial proximity threshold
         const charge = this.evaluateGantryCharge(g, arrivalTime, bearing);
         if (charge > 0) {
-          return { gantryName: g.name, chargeSgd: charge };
+          return { gantryName: g.name, chargeSgd: charge, isKnown: true };
         }
       }
     }
-    return { chargeSgd: 0.0 };
+    return { chargeSgd: 0.0, isKnown: true };
   }
 }

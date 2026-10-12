@@ -44,7 +44,7 @@ interface BenchmarkRow {
   googleKm: number;
   absDiffMin: number;
   percentError: number;
-  totalTollSgd: number;
+  totalToll: string;
   latencyMs: number;
 }
 
@@ -131,7 +131,7 @@ async function runBenchmark() {
       googleKm: row.km,
       absDiffMin: Number(absDiff.toFixed(2)),
       percentError: Number(pctErr.toFixed(1)),
-      totalTollSgd: route.totalTollSgd ?? 0,
+      totalToll: route.totalTollSgd !== undefined ? `S$${route.totalTollSgd.toFixed(2)}` : 'ERP: unknown',
       latencyMs: Number(latency.toFixed(1)),
     });
   }
@@ -176,7 +176,7 @@ async function runBenchmark() {
   md += '| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n';
 
   for (const r of results) {
-    md += `| ${r.trip} | ${r.direction} | ${r.departure} | ${r.googleTrafficMin}m | ${r.engineMin}m | ${r.absDiffMin >= 0 ? '+' : ''}${r.absDiffMin}m | ${r.percentError}% | S$${r.totalTollSgd} | ${r.engineKm}km | ${r.latencyMs}ms |\n`;
+    md += `| ${r.trip} | ${r.direction} | ${r.departure} | ${r.googleTrafficMin}m | ${r.engineMin}m | ${r.absDiffMin >= 0 ? '+' : ''}${r.absDiffMin}m | ${r.percentError}% | ${r.totalToll} | ${r.engineKm}km | ${r.latencyMs}ms |\n`;
   }
 
   writeFileSync(reportPath, md, 'utf8');

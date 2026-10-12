@@ -28,6 +28,7 @@ export interface RouteResult {
   snapStartMeters: number;
   snapDestMeters: number;
   totalTollSgd?: number;
+  tollStatus?: 'known' | 'unknown';
   tolls?: RouteToll[];
   incidentsEncountered?: string[];
 }
@@ -260,8 +261,9 @@ export class Router {
       edges: path,
       snapStartMeters: Math.round(s.distanceMeters),
       snapDestMeters: Math.round(t.distanceMeters),
-      totalTollSgd: erp ? Number(totalTollSgd.toFixed(2)) : undefined,
-      tolls: erp ? tolls : undefined,
+      totalTollSgd: erp && erp.isConfigured() ? Number(totalTollSgd.toFixed(2)) : undefined,
+      tollStatus: erp ? (erp.isConfigured() ? 'known' : 'unknown') : undefined,
+      tolls: erp && erp.isConfigured() ? tolls : undefined,
       incidentsEncountered: incidents ? Array.from(encounteredIncidents) : undefined,
     };
   }
