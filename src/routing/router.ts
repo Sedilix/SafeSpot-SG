@@ -226,13 +226,42 @@ export class Router {
     }
     if (reached < 0) return null;
 
+    return this.reconstructRoute(
+      reached,
+      prev,
+      best,
+      departureTime,
+      s.distanceMeters,
+      t.distanceMeters,
+      speedProfiles,
+      incidents,
+      erp,
+      encounteredIncidents,
+      options?.edgePenalties
+    );
+  }
+
+  private reconstructRoute(
+    reached: number,
+    prev: Int32Array,
+    best: Float64Array,
+    departureTime: Date,
+    snapStartMeters: number,
+    snapDestMeters: number,
+    speedProfiles?: SpeedProfileEngine,
+    incidents?: IncidentLayer,
+    erp?: ErpEngine,
+    encounteredIncidents?: Set<string>,
+    edgePenalties?: Map<number, number>
+  ): RouteResult {
+    const { edges, nodes } = this.graph;
     const path: CompactEdge[] = [];
     for (let c = reached; c !== -1; c = prev[c]) path.push(edges[c]);
     path.reverse();
 
     // Calculate real unpenalized travel duration
     let seconds: number;
-    if (options?.edgePenalties && options.edgePenalties.size > 0) {
+    if (edgePenalties && edgePenalties.size > 0) {
       let unpenalizedSeconds = 0;
       let cumulativeSec = 0;
       for (let i = 0; i < path.length; i++) {
@@ -297,13 +326,147 @@ export class Router {
       minutes: Number((seconds / 60).toFixed(1)),
       edgeCount: path.length,
       edges: path,
-      snapStartMeters: Math.round(s.distanceMeters),
-      snapDestMeters: Math.round(t.distanceMeters),
+      snapStartMeters: Math.round(snapStartMeters),
+      snapDestMeters: Math.round(snapDestMeters),
       totalTollSgd: erp && erp.isConfigured() ? Number(totalTollSgd.toFixed(2)) : undefined,
       tollStatus: erp ? (erp.isConfigured() ? 'known' : 'unknown') : undefined,
       tolls: erp && erp.isConfigured() ? tolls : undefined,
-      incidentsEncountered: incidents ? Array.from(encounteredIncidents) : undefined,
+      incidentsEncountered: incidents && encounteredIncidents ? Array.from(encounteredIncidents) : undefined,
     };
+  }
+
+  /**
+   * One-to-many search from origin to multiple targets using single Dijkstra exploration.
+   * Settles targets as their shortest path edges are expanded or until a 3,600s cap is reached.
+   * Runs in O(V log V + E) for all N targets combined rather than N separate searches.
+   */
+  public findRoutesToMany(
+    origin: { lat: number; lng: number },
+    targets: Array<{ id: string; lat: number; lng: number }>,
+    options?: RoutingOptions
+  ): Map<string, RouteResult | null> {
+    const results = new Map<string, RouteResult | null>();
+    for (const t of targets) {
+      results.set(t.id, null);
+    }
+    if (targets.length === 0) return results;
+
+    const s = this.graph.findNearestSegment(origin.lat, origin.lng);
+    if (!s) return results;
+
+    const { edges, nodes } = this.graph;
+    const edgeToTargets = new Map<number, Array<{ id: string; snapMeters: number }>>();
+    const unsettledTargets = new Set<string>();
+
+    for (const t of targets) {
+      const seg = this.graph.findNearestSegment(t.lat, t.lng);
+      if (!seg) continue;
+      unsettledTargets.add(t.id);
+      for (const e of seg.edges) {
+        let list = edgeToTargets.get(e.id);
+        if (!list) {
+          list = [];
+          edgeToTargets.set(e.id, list);
+        }
+        list.push({ id: t.id, snapMeters: seg.distanceMeters });
+      }
+    }
+
+    if (unsettledTargets.size === 0) return results;
+
+    const best = new Float64Array(edges.length).fill(Infinity);
+    const prev = new Int32Array(edges.length).fill(-1);
+    const heap = new MinHeap();
+
+    const departureTime = options?.departureTime || new Date();
+    const speedProfiles = options?.speedProfiles;
+    const incidents = options?.incidents;
+    const erp = options?.erp;
+    const encounteredIncidents = new Set<string>();
+    const MAX_ELAPSED_CAP_SEC = 3600; // 3,600 s cap per §8 E3
+
+    // Start mid-segment: either direction, half the segment still to travel.
+    for (const e of s.edges) {
+      if (incidents) {
+        const a = nodes[e.from], b = nodes[e.to];
+        const impact = incidents.evaluateEdgeImpact(a.lat, a.lng, b.lat, b.lng, departureTime);
+        if (impact.impassable) continue;
+      }
+      const initialSeconds = speedProfiles ? speedProfiles.calculateEdgeSeconds(e, departureTime) : e.seconds;
+      const penalty = options?.edgePenalties?.get(e.id) ?? 1.0;
+      const c = initialSeconds * 0.5 * penalty;
+      best[e.id] = c;
+      heap.push({ edgeId: e.id, elapsed: c, priority: c });
+    }
+
+    while (heap.size > 0 && unsettledTargets.size > 0) {
+      const top = heap.pop()!;
+      if (top.elapsed > best[top.edgeId]) continue; // Stale entry
+      if (top.elapsed > MAX_ELAPSED_CAP_SEC) break; // Reached cap
+
+      // Check if this edge settles any target
+      const matchingTargets = edgeToTargets.get(top.edgeId);
+      if (matchingTargets) {
+        for (const mt of matchingTargets) {
+          if (unsettledTargets.has(mt.id)) {
+            const route = this.reconstructRoute(
+              top.edgeId,
+              prev,
+              best,
+              departureTime,
+              s.distanceMeters,
+              mt.snapMeters,
+              speedProfiles,
+              incidents,
+              erp,
+              encounteredIncidents,
+              options?.edgePenalties
+            );
+            results.set(mt.id, route);
+            unsettledTargets.delete(mt.id);
+          }
+        }
+        if (unsettledTargets.size === 0) break;
+      }
+
+      const cur = edges[top.edgeId];
+      for (const nid of this.graph.outgoingEdges[cur.to]) {
+        const next = edges[nid];
+        const turn = this.evaluateTurn(cur, next);
+        if (!turn.allowed) continue;
+
+        const arrivalMs = departureTime.getTime() + (top.elapsed + turn.delaySec) * 1000;
+        const arrivalTime = new Date(arrivalMs);
+
+        let incidentDelay = 0;
+        if (incidents) {
+          const a = nodes[next.from], b = nodes[next.to];
+          const impact = incidents.evaluateEdgeImpact(a.lat, a.lng, b.lat, b.lng, arrivalTime);
+          if (impact.impassable) continue;
+          if (impact.delaySec > 0) {
+            incidentDelay = impact.delaySec;
+            if (impact.reason) encounteredIncidents.add(impact.reason);
+          }
+        }
+
+        let nextSeconds = next.seconds;
+        if (speedProfiles) {
+          const a = nodes[next.from], b = nodes[next.to];
+          const bearing = bearingDegrees(a.lat, a.lng, b.lat, b.lng);
+          nextSeconds = speedProfiles.calculateEdgeSeconds(next, arrivalTime, bearing);
+        }
+
+        const penalty = options?.edgePenalties?.get(next.id) ?? 1.0;
+        const cost = top.elapsed + turn.delaySec + incidentDelay + nextSeconds * penalty;
+        if (cost < best[nid]) {
+          best[nid] = cost;
+          prev[nid] = top.edgeId;
+          heap.push({ edgeId: nid, elapsed: cost, priority: cost });
+        }
+      }
+    }
+
+    return results;
   }
 
   /**
@@ -347,6 +510,11 @@ export class Router {
         edgePenalties,
       });
       if (!candidate) break;
+
+      // Reject detours exceeding 1.5x of the primary route's duration per §8 E5
+      if (candidate.durationSeconds > primary.durationSeconds * 1.5) {
+        continue;
+      }
 
       let maxOverlapFound = 0;
       for (const acc of accepted) {

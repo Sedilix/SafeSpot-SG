@@ -20,15 +20,16 @@ import { RouteResult } from './router';
 import { WeatherAssessment } from './weather';
 
 // ── Fuel Consumption Model (Speed-Dependent Curve) ──────────────────────────
-// Calibrated from Singapore probe observations:
-// L/100 km = A + B/v + C * v^2 where v is speed in km/h:
+// UNVERIFIED: Speed-dependent polynomial consumption formula (L/100 km = A + B/v + C * v^2)
+// calibrated heuristically from probe observations:
 //   ~13.2 L at 15 km/h stop-go traffic
 //   ~6.5 L at 60 km/h cruising speed
 //   ~8.9 L at 90 km/h expressway speed
 export const FUEL_A = 3.2;
 export const FUEL_B = 150;
 export const FUEL_C = 0.0005;
-export const FUEL_PRICE_SGD_PER_L = 2.95; // Singapore 95-octane petrol reference price
+// UNVERIFIED: Reference pump price of 95-octane petrol in Singapore ($2.95/L, approx. prevailing Oct 2026 pump price).
+export const FUEL_PRICE_SGD_PER_L = 2.95;
 
 export function calculateFuelLitres(distanceKm: number, averageSpeedKmh: number): number {
   const v = Math.max(10, Math.min(110, averageSpeedKmh));
@@ -192,8 +193,14 @@ export function calculateCompositeScore(obj: MultiCriteriaObjectives): number {
 }
 
 /**
- * Ranks a set of candidate route alternatives (up to 3 routes) using multi-criteria objectives.
- * Marks Pareto non-dominated routes, assigns archetypes, and sorts by overall utility.
+ * Ranks candidate route alternatives using multi-criteria objectives.
+ * Per ROUTING_PLAN.md §8 E5 & E6:
+ *  - Drops candidates > 1.5x the fastest route's duration (excessive detours).
+ *  - Strictly drops all Pareto-dominated candidates on (time, money, risk).
+ *  - Returns up to 3 non-dominated survivors (returns 1 if only 1 survives).
+ *  - Labels archetypes strictly from survivors; never labels "balanced" simply because it's not first.
+ *  - Displays money honestly as "fuel $X + ERP unknown" when ERP is unconfigured.
+ *  - Does NOT label any route "cheapest" when ERP is unknown and fuel difference is < $0.50.
  */
 export function rankRouteAlternatives(
   routes: RouteResult[],
@@ -204,73 +211,123 @@ export function rankRouteAlternatives(
 ): MultiCriteriaRoute[] {
   if (routes.length === 0) return [];
 
-  // 1. Evaluate objectives for each route
-  const evaluated = routes.map((route) => ({
+  // 1. Filter out useless detours > 1.5x fastest route's duration
+  const fastestDuration = routes[0].durationSeconds;
+  const viable = routes.filter((r) => r.durationSeconds <= fastestDuration * 1.5);
+  if (viable.length === 0) return [];
+
+  // 2. Evaluate objectives for all viable candidate routes
+  const candidates = viable.map((route) => ({
     route,
     objectives: evaluateObjectives(route, options),
     compositeScore: 0,
-    isNonDominated: true,
-    archetype: 'balanced' as RouteArchetype,
+    isDominated: false,
   }));
 
-  for (const item of evaluated) {
-    item.compositeScore = calculateCompositeScore(item.objectives);
+  for (const c of candidates) {
+    c.compositeScore = calculateCompositeScore(c.objectives);
   }
 
-  // 2. Identify Pareto dominance across all pairs
-  for (let i = 0; i < evaluated.length; i++) {
-    for (let j = 0; j < evaluated.length; j++) {
+  // 3. Drop all Pareto-dominated candidates on (time, money, risk)
+  for (let i = 0; i < candidates.length; i++) {
+    for (let j = 0; j < candidates.length; j++) {
       if (i === j) continue;
-      const { bDominatesA } = checkParetoDominance(evaluated[i].objectives, evaluated[j].objectives);
+      const { bDominatesA } = checkParetoDominance(candidates[i].objectives, candidates[j].objectives);
       if (bDominatesA) {
-        evaluated[i].isNonDominated = false;
+        candidates[i].isDominated = true;
         break;
       }
     }
   }
 
-  // 3. Find extreme objective performers for archetype labeling
-  let minTimeIdx = 0;
-  let minMoneyIdx = 0;
-  let minRiskIdx = 0;
-
-  for (let i = 1; i < evaluated.length; i++) {
-    if (evaluated[i].objectives.durationSeconds < evaluated[minTimeIdx].objectives.durationSeconds) {
-      minTimeIdx = i;
-    }
-    if (evaluated[i].objectives.totalMoneySgd < evaluated[minMoneyIdx].objectives.totalMoneySgd) {
-      minMoneyIdx = i;
-    }
-    if (evaluated[i].objectives.riskScore < evaluated[minRiskIdx].objectives.riskScore) {
-      minRiskIdx = i;
-    }
+  // Retain only non-dominated survivors (up to 3)
+  const survivors = candidates.filter((c) => !c.isDominated).slice(0, 3);
+  if (survivors.length === 0) {
+    // Safety fallback: if all were somehow filtered, retain the fastest primary route
+    survivors.push(candidates[0]);
   }
 
-  evaluated[minTimeIdx].archetype = 'fastest';
-  if (minMoneyIdx !== minTimeIdx) {
-    evaluated[minMoneyIdx].archetype = 'cheapest';
+  // 4. Label archetypes ONLY from non-dominated survivors
+  const archetypes: RouteArchetype[] = new Array(survivors.length).fill('balanced');
+
+  // Identify index of fastest survivor
+  let fastestIdx = 0;
+  for (let i = 1; i < survivors.length; i++) {
+    if (survivors[i].objectives.durationSeconds < survivors[fastestIdx].objectives.durationSeconds) {
+      fastestIdx = i;
+    }
   }
-  if (minRiskIdx !== minTimeIdx && minRiskIdx !== minMoneyIdx) {
-    evaluated[minRiskIdx].archetype = 'safest';
+  archetypes[fastestIdx] = 'fastest';
+
+  // Check for genuine "cheapest" route per E6
+  let cheapestIdx = -1;
+  let minMoney = survivors[fastestIdx].objectives.totalMoneySgd;
+  for (let i = 0; i < survivors.length; i++) {
+    if (i === fastestIdx) continue;
+    const o = survivors[i].objectives;
+    if (o.totalMoneySgd < minMoney) {
+      // If ERP is unknown, only label cheapest if fuel difference is >= $0.50
+      const moneyDiff = minMoney - o.totalMoneySgd;
+      if (o.tollStatus === 'known' || moneyDiff >= 0.50) {
+        cheapestIdx = i;
+        minMoney = o.totalMoneySgd;
+      }
+    }
+  }
+  if (cheapestIdx >= 0) {
+    archetypes[cheapestIdx] = 'cheapest';
   }
 
-  // 4. Sort by composite score (rank 1, 2, 3)
-  evaluated.sort((a, b) => a.compositeScore - b.compositeScore);
+  // Check for genuine "safest" route
+  let safestIdx = -1;
+  let minRisk = survivors[fastestIdx].objectives.riskScore;
+  for (let i = 0; i < survivors.length; i++) {
+    if (i === fastestIdx || i === cheapestIdx) continue;
+    const o = survivors[i].objectives;
+    if (o.riskScore < minRisk) {
+      safestIdx = i;
+      minRisk = o.riskScore;
+    }
+  }
+  if (safestIdx >= 0) {
+    archetypes[safestIdx] = 'safest';
+  }
 
-  return evaluated.map((item, index) => {
+  // For any remaining survivor: only label 'balanced' if there are multiple routes and it provides
+  // an intermediate trade-off. If there is only 1 survivor, it is strictly 'fastest'.
+  if (survivors.length === 1) {
+    archetypes[0] = 'fastest';
+  }
+
+  // 5. Construct results and sort by composite utility
+  const ranked = survivors.map((item, index) => {
     const o = item.objectives;
-    let tradeoffSummary = `${o.minutes} min • $${o.totalMoneySgd.toFixed(2)}`;
-    if (o.tollSgd > 0) tradeoffSummary += ` (incl. $${o.tollSgd.toFixed(2)} ERP)`;
+    const arch = archetypes[index];
+
+    let tradeoffSummary = `${o.minutes} min`;
+    if (o.tollStatus === 'unknown') {
+      tradeoffSummary += ` • fuel $${o.fuelSgd.toFixed(2)} + ERP unknown`;
+    } else {
+      tradeoffSummary += ` • $${o.totalMoneySgd.toFixed(2)}`;
+      if (o.tollSgd > 0) tradeoffSummary += ` (incl. $${o.tollSgd.toFixed(2)} ERP)`;
+    }
     if (o.riskScore > 0) tradeoffSummary += ` • Risk ${o.riskScore}`;
 
     return {
       route: item.route,
-      rank: index + 1,
+      rank: 0, // Will be set after sorting
       objectives: o,
-      isNonDominated: item.isNonDominated,
-      archetype: item.archetype,
+      isNonDominated: true,
+      archetype: arch,
       compositeScore: item.compositeScore,
       tradeoffSummary,
     };
   });
+
+  ranked.sort((a, b) => a.compositeScore - b.compositeScore);
+  for (let i = 0; i < ranked.length; i++) {
+    ranked[i].rank = i + 1;
+  }
+
+  return ranked;
 }

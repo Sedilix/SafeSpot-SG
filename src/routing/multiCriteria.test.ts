@@ -156,4 +156,40 @@ describe('Phase 4: Objective Evaluation & Multi-Criteria Ranking', () => {
     expect(ranked[0].compositeScore).toBeLessThanOrEqual(ranked[1].compositeScore);
     expect(ranked[1].compositeScore).toBeLessThanOrEqual(ranked[2].compositeScore);
   });
+
+  it('strictly filters out Pareto-dominated candidates', () => {
+    // Route 1 (Fast, cheap, safe): 600s, 10km (~$2.36 fuel), 0 toll, 0 risk
+    const r1 = dummyRoute(600, 10000, 0, []);
+    // Route 2 (Slower, dearer, higher risk): 800s, 14km (~$3.30 fuel), 0 toll, 1 accident (dominated by r1)
+    const r2 = dummyRoute(800, 14000, 0, ['Accident']);
+
+    const ranked = rankRouteAlternatives([r1, r2]);
+    expect(ranked).toHaveLength(1);
+    expect(ranked[0].route.durationSeconds).toBe(600);
+    expect(ranked[0].archetype).toBe('fastest');
+  });
+
+  it('rejects candidate detours exceeding 1.5x of the fastest route time', () => {
+    // Route 1: 600s (10 min)
+    const r1 = dummyRoute(600, 10000, 0, []);
+    // Route 2: 950s (> 1.5 * 600 = 900s)
+    const r2 = dummyRoute(950, 15000, 0, []);
+
+    const ranked = rankRouteAlternatives([r1, r2]);
+    expect(ranked).toHaveLength(1);
+    expect(ranked[0].route.durationSeconds).toBe(600);
+  });
+
+  it('handles unknown ERP honesty without falsely labeling cheapest for <$0.50 fuel differences', () => {
+    const r1 = dummyRoute(600, 10000); // ~10km, fuel ~$2.36
+    r1.tollStatus = 'unknown';
+    const r2 = dummyRoute(700, 9800); // ~9.8km, fuel ~$2.31, diff ~$0.05
+    r2.tollStatus = 'unknown';
+
+    const ranked = rankRouteAlternatives([r1, r2]);
+    for (const r of ranked) {
+      expect(r.tradeoffSummary).toContain('ERP unknown');
+      expect(r.archetype).not.toBe('cheapest');
+    }
+  });
 });

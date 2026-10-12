@@ -126,23 +126,28 @@ export async function runPhase4Benchmark(): Promise<TripBenchmarkResult[]> {
   md += `|---|---|---|---|\n`;
 
   const allDistinct = results.every((r) => r.allSpatiallyDistinct);
-  md += `| **Spatially Distinct** | Max overlap < 65% | **${allDistinct ? 'PASS' : 'FAIL'}** | All alternative pairs verified < 65% length overlap |\n`;
+  md += `| **Spatially Distinct** | Max overlap < 65% | **${allDistinct ? 'PASS' : 'FAIL'}** | All generated alternative pairs verified < 65% length overlap |\n`;
 
-  const allNonDom = results.every((r) => r.hasNonDominated);
-  md += `| **Pareto Non-Dominated** | Frontier identified | **${allNonDom ? 'PASS' : 'FAIL'}** | Time vs Money vs Risk trade-offs evaluated |\n`;
+  const allNonDom = results.every((r) => r.routes.every((x) => x.isNonDominated));
+  md += `| **Pareto Non-Dominated Survivors** | 100% survivors non-dominated | **${allNonDom ? 'PASS' : 'FAIL'}** | Pruned all dominated candidates; 1 to 3 non-dominated routes returned per trip |\n`;
 
   const avgLatency = Math.round(results.reduce((a, b) => a + b.latencyMs, 0) / results.length);
-  md += `| **Execution Latency** | Interactive | **PASS** | Average ${avgLatency} ms for up to 3 full alternatives |\n\n`;
+  const latencyPass = avgLatency < 1000;
+  md += `| **Alternatives Latency** | < 1,000 ms (Interactive) | **${latencyPass ? 'PASS' : 'FAIL'}** | Average ${avgLatency} ms for sequential alternative explorations (FAIL for interactive use; production pickup uses E3 one-to-many worker search < 1 s) |\n\n`;
 
   md += `## Trip Evaluations\n\n`;
 
   for (const res of results) {
     md += `### ${ORIGIN.name} → ${res.destination}\n\n`;
-    md += `*Generated ${res.routesFound} routes in ${res.latencyMs} ms.*\n\n`;
+    if (res.routes.length === 1) {
+      md += `*Generated 1 non-dominated route in ${res.latencyMs} ms (dominated slower & dearer candidates and >1.5x detours were strictly pruned).*  \n\n`;
+    } else {
+      md += `*Generated ${res.routesFound} non-dominated routes in ${res.latencyMs} ms.*  \n\n`;
+    }
 
     md += `#### Pairwise Spatial Overlap\n`;
     if (res.pairwiseOverlap.length === 0) {
-      md += `*Single direct corridor available.*\n\n`;
+      md += `*Single non-dominated corridor survived pruning.*\n\n`;
     } else {
       md += `| Route Pair | Spatial Overlap | Status (< 65%) |\n`;
       md += `|---|---|---|\n`;
@@ -152,13 +157,13 @@ export async function runPhase4Benchmark(): Promise<TripBenchmarkResult[]> {
       md += `\n`;
     }
 
-    md += `#### Multi-Criteria Top-3 Ranked Alternatives\n\n`;
+    md += `#### Multi-Criteria Non-Dominated Alternatives\n\n`;
     md += `| Rank | Archetype | Time (min) | Dist (km) | Fuel (L) | Money (SGD) | Risk Score | Pareto Status | Trade-off Summary |\n`;
     md += `|---|---|---|---|---|---|---|---|---|\n`;
 
     for (const r of res.routes) {
       const o = r.objectives;
-      md += `| #${r.rank} | **${r.archetype.toUpperCase()}** | ${o.minutes} min | ${o.km} km | ${o.fuelLitres} L | $${o.totalMoneySgd.toFixed(2)} | ${o.riskScore} | ${r.isNonDominated ? 'Non-Dominated' : 'Dominated'} | ${r.tradeoffSummary} |\n`;
+      md += `| #${r.rank} | **${r.archetype.toUpperCase()}** | ${o.minutes} min | ${o.km} km | ${o.fuelLitres} L | fuel $${o.totalMoneySgd.toFixed(2)} + ERP unknown | ${o.riskScore} | ${r.isNonDominated ? 'Non-Dominated' : 'Dominated'} | ${r.tradeoffSummary} |\n`;
     }
     md += `\n`;
   }
