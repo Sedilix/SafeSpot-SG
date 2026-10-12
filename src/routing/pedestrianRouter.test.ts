@@ -14,7 +14,7 @@
 
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
 import { PedestrianGraph, PedestrianGraphData } from './pedestrianGraph';
 import { PedestrianRouter } from './pedestrianRouter';
 import { WeatherService } from './weather';
@@ -157,9 +157,9 @@ const realGraphExists = existsSync(realGraphPath);
 describe.skipIf(!realGraphExists)('PedestrianRouter on Real Singapore Network', () => {
   let router: PedestrianRouter;
 
-  beforeEach(() => {
+  beforeAll(() => {
     router = new PedestrianRouter();
-  });
+  }, 30000);
 
   it('finds connected walking route in Toa Payoh estate', async () => {
     const origin = { lat: 1.332756, lng: 103.847798 }; // Blk 480

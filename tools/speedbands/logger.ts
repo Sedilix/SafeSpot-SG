@@ -259,7 +259,12 @@ export async function startLoggerDaemon(options: LoggerOptions = {}): Promise<vo
   }, intervalSec * 1000);
 }
 
-const isMain = process.argv[1] && (process.argv[1].endsWith('logger.ts') || process.argv[1].endsWith('logger.js'));
+const isMain = !process.env.VITEST && process.argv[1] && (
+  process.argv[1].endsWith('logger.ts') ||
+  process.argv[1].endsWith('logger.js') ||
+  process.argv[1].endsWith('logger.cjs') ||
+  process.argv[1].includes('speedbands-logger')
+);
 if (isMain) {
   const args = process.argv.slice(2);
   const once = args.includes('--once');

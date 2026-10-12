@@ -135,3 +135,64 @@ describe('regressions found in the Phase 1 audit', () => {
     expect(snap.edges.every((e) => e.highway === 'residential')).toBe(true);
   });
 });
+
+describe('findRoutesToMany (one-to-many search optimization)', () => {
+  it('returns identical duration and distance to individual findRoute calls', () => {
+    // Branching graph: origin at (0,0), target1 at (2,0), target2 at (1,1)
+    const { r } = make([
+      way(1, [[0, 0], [1, 0], [2, 0]]),
+      way(2, [[1, 0], [1, 1]]),
+    ]);
+    const origin = at(0.1, 0);
+    const target1 = { id: 'dest-east', ...at(1.9, 0) };
+    const target2 = { id: 'dest-north', ...at(1, 0.9) };
+
+    const single1 = r.findRoute(origin, target1)!;
+    const single2 = r.findRoute(origin, target2)!;
+
+    const many = r.findRoutesToMany(origin, [target1, target2]);
+
+    const many1 = many.get('dest-east')!;
+    const many2 = many.get('dest-north')!;
+
+    expect(many1).not.toBeNull();
+    expect(many2).not.toBeNull();
+    expect(many1.durationSeconds).toBeCloseTo(single1.durationSeconds, 2);
+    expect(many1.distanceMeters).toBeCloseTo(single1.distanceMeters, 2);
+    expect(many2.durationSeconds).toBeCloseTo(single2.durationSeconds, 2);
+    expect(many2.distanceMeters).toBeCloseTo(single2.distanceMeters, 2);
+  });
+});
+
+describe('traffic-aware routing (E2)', () => {
+  it('gives longer ETA at weekday peak hour (08:30) than at 03:00 on the same graph', async () => {
+    const { SpeedProfileEngine } = await import('./speedProfiles');
+    const profiles = new SpeedProfileEngine();
+    const { r } = make([
+      way(1, [[0, 0], [1, 0], [2, 0]], { highway: 'primary', maxspeed: '70' }),
+    ]);
+
+    const origin = at(0.1, 0);
+    const dest = at(1.9, 0);
+
+    // 2026-10-14 is a Wednesday (Weekday)
+    // 08:30 SGT is 00:30 UTC
+    const peakTime = new Date('2026-10-14T00:30:00.000Z');
+    // 03:00 SGT is 19:00 UTC (previous day)
+    const offPeakTime = new Date('2026-10-13T19:00:00.000Z');
+
+    const peakRoute = r.findRoute(origin, dest, {
+      departureTime: peakTime,
+      speedProfiles: profiles,
+    })!;
+
+    const offPeakRoute = r.findRoute(origin, dest, {
+      departureTime: offPeakTime,
+      speedProfiles: profiles,
+    })!;
+
+    expect(peakRoute).not.toBeNull();
+    expect(offPeakRoute).not.toBeNull();
+    expect(peakRoute.durationSeconds).toBeGreaterThan(offPeakRoute.durationSeconds);
+  });
+});
