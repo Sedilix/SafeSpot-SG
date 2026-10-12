@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { normalizePhoneNumber, sendTwilioSms, smsConfigured } from './notifications';
+import { normalizePhoneNumber, sendTwilioSms, smsConfigured, smsAlertRecipients } from './notifications';
 
 describe('normalizePhoneNumber', () => {
   it('formats Singapore 8-digit numbers with +65', () => {
@@ -24,6 +24,21 @@ describe('normalizePhoneNumber', () => {
 
   it('handles empty or blank phone strings', () => {
     expect(normalizePhoneNumber('')).toBe('+65');
+  });
+});
+
+describe('smsAlertRecipients', () => {
+  const scdf = { id: 'contact-emergency', phone: '995', isPrimary: false, locked: true };
+  const mei = { id: 'mei', phone: '9123 4567', isPrimary: false };
+  const tan = { id: 'tan', phone: '+65 8765 4321', isPrimary: true };
+
+  it('never texts 995 or other short codes, even with no primary contact', () => {
+    expect(smsAlertRecipients([scdf, mei])).toEqual([mei]);
+    expect(smsAlertRecipients([scdf, { id: 'x', phone: '995' }, { id: 'y', phone: '1777' }])).toEqual([]);
+  });
+
+  it('prefers primary contacts', () => {
+    expect(smsAlertRecipients([scdf, mei, tan])).toEqual([tan]);
   });
 });
 

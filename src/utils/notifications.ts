@@ -138,3 +138,19 @@ export function smsConfigured(): boolean {
       (process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER),
   );
 }
+
+/**
+ * Family contacts who should get alert SMS: primary contacts if any are
+ * marked, otherwise everyone. Never emergency-service numbers (995/999/993,
+ * the locked SCDF entry) or other short codes: an automated text there could
+ * not be read and would waste emergency capacity.
+ */
+export function smsAlertRecipients<C extends { phone?: string; isPrimary?: boolean; locked?: boolean }>(contacts: C[]): C[] {
+  const textable = contacts.filter((c) => {
+    if (c.locked || !c.phone) return false;
+    const digits = normalizePhoneNumber(c.phone).replace(/\D/g, '');
+    return digits.length >= 10; // country code + subscriber number; rejects 995, 1777, etc.
+  });
+  const primary = textable.filter((c) => c.isPrimary);
+  return primary.length > 0 ? primary : textable;
+}

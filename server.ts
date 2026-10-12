@@ -20,7 +20,7 @@ import {
   MAX_WEARABLE_DEVICES,
   WearableState,
 } from './src/utils/wearable';
-import { sendTwilioSms, smsConfigured } from './src/utils/notifications';
+import { sendTwilioSms, smsAlertRecipients, smsConfigured } from './src/utils/notifications';
 import {
   answerTelegramCallback,
   ensureTelegramWebhook,
@@ -1700,6 +1700,9 @@ app.post('/api/notify/dispatch-pin', async (req, res) => {
     }
 
     const cleanPhone = phone.replace(/[^0-9+]/g, '');
+    if (smsAlertRecipients([{ phone: cleanPhone }]).length === 0) {
+      return res.status(400).json({ error: 'Messages can only be sent to mobile numbers. Call 995 directly in an emergency.' });
+    }
     const mapsUrl = typeof googleMapsUrl === 'string' && /^https:\/\/(www\.)?google\.[a-z.]+\/maps|^https:\/\/maps\.google\.[a-z.]+\//.test(googleMapsUrl)
       ? googleMapsUrl.slice(0, 300)
       : 'https://maps.google.com';

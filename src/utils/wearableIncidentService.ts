@@ -5,7 +5,7 @@
 
 import admin from 'firebase-admin';
 import type { Incident, EmergencyContact } from '../types';
-import { sendTwilioSms } from './notifications';
+import { sendTwilioSms, smsAlertRecipients } from './notifications';
 import { notifyTelegramAlert, resolveTelegramIncident, updateTelegramIncidentLocation } from './alertChannels';
 import { formatTelegramAlert, formatTelegramResolved } from './telegram';
 import { WearableEvent } from './wearable';
@@ -366,10 +366,7 @@ export async function handleWatchAlertTrigger(params: {
     battery: event.battery,
   });
 
-  const contactsToNotify =
-    profile.emergencyContacts.filter((c) => c.isPrimary && c.phone) .length > 0
-      ? profile.emergencyContacts.filter((c) => c.isPrimary && c.phone)
-      : profile.emergencyContacts.filter((c) => Boolean(c.phone));
+  const contactsToNotify = smsAlertRecipients(profile.emergencyContacts);
 
   // Every channel is sent at once, so one slow or failing channel never
   // delays or blocks the others.
@@ -521,10 +518,7 @@ export async function handleWatchAlertCancel(
     serverBaseUrl: baseUrl,
   });
 
-  const contactsToNotify =
-    profile.emergencyContacts.filter((c) => c.isPrimary && c.phone).length > 0
-      ? profile.emergencyContacts.filter((c) => c.isPrimary && c.phone)
-      : profile.emergencyContacts.filter((c) => Boolean(c.phone));
+  const contactsToNotify = smsAlertRecipients(profile.emergencyContacts);
 
   await Promise.all([
     ...contactsToNotify.map(async (contact) => {
