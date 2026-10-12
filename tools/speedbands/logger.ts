@@ -25,6 +25,7 @@ export interface CompactSpeedRecord {
 
 export interface LoggerOptions {
   dataDir?: string;
+  bucket?: string;
   intervalSeconds?: number;
   once?: boolean;
   apiKey?: string;
@@ -158,21 +159,80 @@ export function appendSnapshotToGzip(records: CompactSpeedRecord[], dataDir: str
 }
 
 /**
+ * Uploads a list of compact speed records as compressed JSONL to Google Cloud Storage.
+ * Object path format: speedbands/YYYY-MM-DD/HHmm.jsonl.gz (using SGT timestamp).
+ */
+export async function uploadSnapshotToGcs(
+  records: CompactSpeedRecord[],
+  bucketName: string
+): Promise<{ gcsUri: string; bytesWritten: number }> {
+  if (records.length === 0) {
+    return { gcsUri: '', bytesWritten: 0 };
+  }
+
+  // Format date and time in SGT (UTC+8)
+  const sgtOffsetMs = 8 * 3600 * 1000;
+  const sgtDate = new Date(records[0].ts + sgtOffsetMs);
+  const year = sgtDate.getUTCFullYear();
+  const month = String(sgtDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(sgtDate.getUTCDate()).padStart(2, '0');
+  const hours = String(sgtDate.getUTCHours()).padStart(2, '0');
+  const minutes = String(sgtDate.getUTCMinutes()).padStart(2, '0');
+
+  const dateStr = `${year}-${month}-${day}`;
+  const timeStr = `${hours}${minutes}`;
+  const objectPath = `speedbands/${dateStr}/${timeStr}.jsonl.gz`;
+
+  let bufferStr = '';
+  for (const r of records) {
+    bufferStr += JSON.stringify(r) + '\n';
+  }
+
+  const compressed = gzipSync(Buffer.from(bufferStr, 'utf8'), { level: 9 });
+
+  const { Storage } = await import('@google-cloud/storage');
+  const storage = new Storage();
+  const bucket = storage.bucket(bucketName);
+  const file = bucket.file(objectPath);
+
+  await file.save(compressed, {
+    contentType: 'application/gzip',
+    resumable: false,
+    metadata: {
+      contentEncoding: 'gzip',
+      recordCount: String(records.length),
+      snapshotTimestamp: String(records[0].ts),
+    },
+  });
+
+  const gcsUri = `gs://${bucketName}/${objectPath}`;
+  return { gcsUri, bytesWritten: compressed.length };
+}
+
+/**
  * Executes a single snapshot fetch and write cycle with error containment.
  */
 export async function runSnapshotCycle(options: LoggerOptions = {}): Promise<boolean> {
   const startMs = Date.now();
   const dataDir = options.dataDir || DEFAULT_DATA_DIR;
+  const bucket = options.bucket || process.env.SPEEDBANDS_BUCKET || process.env.GCS_BUCKET;
 
   try {
     const key = resolveLtaKey(options.apiKey);
     const records = await fetchAllSpeedBands(key, options.concurrency || 6);
-
-    const { filePath, bytesWritten } = appendSnapshotToGzip(records, dataDir);
     const durationSec = ((Date.now() - startMs) / 1000).toFixed(1);
-
     const logTs = new Date().toISOString();
-    console.log(`[${logTs}] Snapshot completed: ${records.length} links in ${durationSec}s. Wrote ${(bytesWritten / 1024).toFixed(1)} KB to ${filePath}`);
+
+    if (bucket) {
+      const { gcsUri, bytesWritten } = await uploadSnapshotToGcs(records, bucket);
+      console.log(`[${logTs}] Uploaded snapshot to ${gcsUri} (${(bytesWritten / 1024).toFixed(1)} KB, ${records.length} links in ${durationSec}s).`);
+    }
+
+    if (!bucket || options.dataDir) {
+      const { filePath, bytesWritten } = appendSnapshotToGzip(records, dataDir);
+      console.log(`[${logTs}] Local snapshot completed: ${records.length} links in ${durationSec}s. Wrote ${(bytesWritten / 1024).toFixed(1)} KB to ${filePath}`);
+    }
+
     return true;
   } catch (err: any) {
     const logTs = new Date().toISOString();
@@ -186,7 +246,7 @@ export async function runSnapshotCycle(options: LoggerOptions = {}): Promise<boo
  */
 export async function startLoggerDaemon(options: LoggerOptions = {}): Promise<void> {
   const intervalSec = options.intervalSeconds || 300;
-  console.log(`Starting SafeSpot speed-band logger (interval: ${intervalSec}s, once: ${!!options.once})...`);
+  console.log(`Starting SafeSpot speed-band logger (interval: ${intervalSec}s, once: ${!!options.once}, bucket: ${options.bucket || 'none'})...`);
 
   await runSnapshotCycle(options);
 
@@ -203,10 +263,12 @@ const isMain = process.argv[1] && (process.argv[1].endsWith('logger.ts') || proc
 if (isMain) {
   const args = process.argv.slice(2);
   const once = args.includes('--once');
+  const bucketArg = args.find(a => a.startsWith('--bucket='));
+  const bucket = bucketArg ? bucketArg.split('=')[1] : (process.env.SPEEDBANDS_BUCKET || process.env.GCS_BUCKET);
   const intervalArg = args.find(a => a.startsWith('--interval='));
   const intervalSeconds = intervalArg ? parseInt(intervalArg.split('=')[1], 10) : 300;
 
-  startLoggerDaemon({ once, intervalSeconds }).catch(err => {
+  startLoggerDaemon({ once, bucket, intervalSeconds }).catch(err => {
     console.error('Fatal logger startup error:', err);
     process.exit(1);
   });

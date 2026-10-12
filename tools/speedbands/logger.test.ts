@@ -58,4 +58,11 @@ describe('Speed-band Logger Unit Tests', () => {
     expect(bytesWritten).toBe(0);
     expect(filePath).toBe('');
   });
+
+  it('handles empty records cleanly in GCS uploader', async () => {
+    const { uploadSnapshotToGcs } = await import('./logger');
+    const res = await uploadSnapshotToGcs([], 'safespot-sg-speedbands');
+    expect(res.bytesWritten).toBe(0);
+    expect(res.gcsUri).toBe('');
+  });
 });

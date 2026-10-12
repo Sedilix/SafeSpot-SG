@@ -32,13 +32,24 @@ Custom interval (e.g. 10 minutes = 600s):
 npx tsx tools/speedbands/logger.ts --interval=600
 ```
 
-## Scheduling Recipes
+## Continuous Cloud Logging (Cloud Run Job & Scheduler)
 
-### Windows Task Scheduler (Recommended on Windows)
+Because laptops sleep and miss intervals, 24/7 continuous logging runs in GCP via a Cloud Run Job triggered by Cloud Scheduler every 5 minutes, writing to `gs://safespot-sg-speedbands/speedbands/YYYY-MM-DD/HHmm.jsonl.gz`.
+
+See [`docs/speedband-logging.md`](../../docs/speedband-logging.md) for setup commands and details.
+
+To download historical data locally from Cloud Storage:
+```bash
+npx tsx tools/speedbands/download.ts --bucket=safespot-sg-speedbands --days=14
+```
+
+## Local Scheduling Fallback
+
+### Windows Task Scheduler (Local Fallback)
 Run every 5 minutes using PowerShell:
 
 ```powershell
-$action = New-ScheduledTaskAction -Execute "npx.cmd" -Argument "tsx tools/speedbands/logger.ts --once" -WorkingDirectory "C:\Users\SIT EUC\Documents\Builds\safespot-routing"
+$action = New-ScheduledTaskAction -Execute "npx.cmd" -Argument "tsx tools/speedbands/logger.ts --once" -WorkingDirectory "C:\Users\SIT EUC\Documents\Builds\SafeSpotSG"
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
 Register-ScheduledTask -TaskName "SafeSpot-Speedbands-Logger" -Action $action -Trigger $trigger -Description "SafeSpot LTA Speed-Bands Snapshot Logger"
 ```
@@ -51,7 +62,7 @@ Unregister-ScheduledTask -TaskName "SafeSpot-Speedbands-Logger" -Confirm:$false
 ### Linux / Mac Cron Recipe
 Add to crontab (`crontab -e`):
 ```cron
-*/5 * * * * cd /path/to/safespot-routing && /usr/bin/npx tsx tools/speedbands/logger.ts --once >> tools/speedbands/logger.log 2>&1
+*/5 * * * * cd /path/to/SafeSpotSG && /usr/bin/npx tsx tools/speedbands/logger.ts --once >> tools/speedbands/logger.log 2>&1
 ```
 
 ## Error Resilience & Retries
