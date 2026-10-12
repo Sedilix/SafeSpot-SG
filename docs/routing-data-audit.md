@@ -9,7 +9,7 @@ This document assesses all data sources required by SafeSpot's routing engine, v
 
 | Data Item | Status | Official Source | Ingestion Strategy & Fallback |
 | :--- | :---: | :--- | :--- |
-| **ERP Tariff Rates** | **SOURCED (Static)** | [LTA DataMall Static Datasets](https://datamall.lta.gov.sg) ("ERP Rates" under Traffic & Trips) | Dynamic `ERPRates` API was removed on 30 Sep 2024. Ingest LTA's quarterly static tariff table into an in-memory matrix `[GantryID, DayOfWeek, TimeSlot, VehicleClass]`. |
+| **ERP Tariff Rates** | **NOT INGESTED (Static PDF only)** | [LTA DataMall Static Datasets](https://datamall.lta.gov.sg) ("ERP Rates" under Traffic & Trips) | Dynamic `ERPRates` API was removed on 30 Sep 2024 (source: LTA DataMall Dynamic Datasets notice). Machine-readable open datasets (JSON/CSV) are not published by LTA; only quarterly consolidated PDF tables are available. `ACTIVE_ERP_GANTRIES` remains empty by default; route calculations show "ERP: unknown". |
 | **Active ERP Gantries** | **SOURCED (OSM + LTA)** | OpenStreetMap (`highway=toll_gantry`, 105 tagged) + LTA press releases | OSM includes switched-off cordons and bi-directional gantries (~22 active on expressways, CBD cordon inactive). Filter against LTA's active charging schedule. |
 | **Enhanced School Zones** | **NOT AVAILABLE (Direct)** | LTA / MOE Primary Schools Proxy | No standalone ESZ list on data.gov.sg. LTA applies 40 km/h all-day (as of 1 Jan 2026) to primary/SPED schools. **Proxy**: Buffer MOE Primary School coordinates from data.gov.sg by 150m onto adjacent OSM roads. |
 | **Silver Zones** | **SOURCED (GeoJSON)** | [data.gov.sg](https://data.gov.sg) ("LTA Silver Zone") & LTA DataMall | Download official GeoJSON spatial boundaries. Tag matching OSM roads with 30–40 km/h limits and senior safety profile. |
@@ -26,10 +26,10 @@ This document assesses all data sources required by SafeSpot's routing engine, v
 ## Detailed Findings & Specifications
 
 ### 1. Electronic Road Pricing (ERP)
-* **Status**: Static Tariff Download only.
-* **Finding**: The dynamic `ERPRates` endpoint on LTA DataMall was removed on 30 September 2024 and returns 0 rows. LTA publishes downloadable consolidated PDF/tables on DataMall.
-* **Active Infrastructure**: As of 2026, only ~22 gantries are actively charging, all located on expressways (CTE, PIE, AYE, KPE). The CBD cordon gantries remain switched off. Google Routes does not return ERP tolls for Singapore.
-* **Implementation Plan**: Ingest LTA's official static tariff schedule. Apply charges based on arrival timestamp at the gantry edge, matched by vehicle type and direction.
+* **Status**: NOT INGESTED (Static PDF table only; no machine-readable API/dataset).
+* **Finding**: The dynamic `ERPRates` endpoint on LTA DataMall was removed on 30 September 2024 (source: official LTA DataMall Dynamic Datasets notice). LTA publishes quarterly downloadable PDF rate cards on DataMall ("ERP Rates"), but does not offer open machine-readable CSV/JSON data with gantry coordinates.
+* **Active Infrastructure**: Only expressway gantries charge actively (CTE, PIE, AYE, KPE); city cordon gantries remain switched off. Google Routes does not return ERP tolls for Singapore.
+* **Implementation Position**: Per `ROUTING_PLAN.md` §7 Fix A, `ACTIVE_ERP_GANTRIES` is set to `[]` by default, and `ERP_SAMPLE_TARIFFS` is retained for test verification only. The routing engine returns `tollStatus: 'unknown'` and benchmarks report "ERP: unknown". Once an official parsed feed is available, `ACTIVE_ERP_GANTRIES` will be populated.
 
 ### 2. Enhanced School Zones (40 km/h All-Day)
 * **Status**: Direct dataset not published.

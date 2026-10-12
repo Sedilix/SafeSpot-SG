@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import { RoadGraph, CompactEdge } from './graph';
 import { Router } from './router';
-import { ErpEngine, ACTIVE_ERP_GANTRIES, ErpGantry } from './erp';
+import { ErpEngine, ERP_SAMPLE_TARIFFS, ACTIVE_ERP_GANTRIES, ErpGantry } from './erp';
 import { IncidentLayer, TrafficIncident } from './incidents';
 import { SpeedProfileEngine } from './speedProfiles';
 import { buildGraphFromElements } from '../../tools/osm/build-graph';
@@ -25,10 +25,11 @@ const way = (id: number, pts: Array<[number, number]>, tags: Record<string, stri
 });
 
 describe('Phase 2: ERP Gantry Tariff Evaluation', () => {
-  const erp = new ErpEngine();
-  const cteGantry = ACTIVE_ERP_GANTRIES.find((g) => g.id === 'CTE-1')!;
+  // Test using clearly-labeled sample tariff schedules
+  const erp = new ErpEngine(ERP_SAMPLE_TARIFFS);
+  const cteGantry = ERP_SAMPLE_TARIFFS.find((g) => g.id === 'CTE-1')!;
 
-  it('charges the correct tariff bucket at 08:29 vs 08:31 on a weekday', () => {
+  it('charges the correct tariff bucket at 08:29 vs 08:31 on a weekday with sample data', () => {
     // 2026-10-08 is a Thursday (SGT is UTC+8, so 08:29 SGT is 00:29 UTC)
     const time0829 = new Date('2026-10-08T08:29:00+08:00');
     const time0831 = new Date('2026-10-08T08:31:00+08:00');
@@ -37,7 +38,7 @@ describe('Phase 2: ERP Gantry Tariff Evaluation', () => {
     const charge0829 = erp.evaluateGantryCharge(cteGantry, time0829, 190);
     const charge0831 = erp.evaluateGantryCharge(cteGantry, time0831, 190);
 
-    // Rate schedule for CTE-1:
+    // Rate schedule for CTE-1 sample:
     // 08:00-08:30 => $3.00
     // 08:30-09:00 => $4.00
     expect(charge0829).toBe(3.0);
@@ -55,6 +56,15 @@ describe('Phase 2: ERP Gantry Tariff Evaluation', () => {
     const sunday0830 = new Date('2026-10-11T08:30:00+08:00'); // Sunday
     const chargeSunday = erp.evaluateGantryCharge(cteGantry, sunday0830, 190);
     expect(chargeSunday).toBe(0.0);
+  });
+
+  it('defaults to unconfigured with active gantries list empty in production', () => {
+    const defaultErp = new ErpEngine();
+    expect(defaultErp.isConfigured()).toBe(false);
+    expect(ACTIVE_ERP_GANTRIES).toHaveLength(0);
+    const toll = defaultErp.evaluateSegmentToll(1.3412, 103.8576, 1.3400, 103.8576, new Date());
+    expect(toll.isKnown).toBe(false);
+    expect(toll.chargeSgd).toBe(0.0);
   });
 });
 
