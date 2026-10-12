@@ -55,6 +55,8 @@ export class SpeedProfileEngine {
   /**
    * Evaluates the Singapore temporal traffic factor [0.0 - 1.0] for a highway class
    * based on observed congestion patterns at arrival time.
+   *
+   * HEURISTIC (tuned on probe 2026-10-08, not from logged data).
    */
   public static getTemporalSpeedFactor(
     highway: string,
@@ -73,6 +75,7 @@ export class SpeedProfileEngine {
     const isArterial = highway === 'trunk' || highway === 'primary' || highway === 'primary_link';
 
     if (isMorningPeak) {
+      // HEURISTIC (tuned on probe 2026-10-08, not from logged data):
       // Inbound toward CBD / city center experiences higher morning congestion
       const isInbound = bearing !== undefined && bearing >= 120 && bearing <= 240;
       if (isExpressway) {
@@ -85,6 +88,7 @@ export class SpeedProfileEngine {
     }
 
     if (isEveningPeak) {
+      // HEURISTIC (tuned on probe 2026-10-08, not from logged data):
       // Outbound away from CBD experiences higher evening congestion
       const isOutbound = bearing !== undefined && (bearing <= 60 || bearing >= 300);
       if (isExpressway) {
