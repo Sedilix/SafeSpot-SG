@@ -56,6 +56,7 @@ import {
 } from './types';
 import { ensureEmergency995 } from './data/defaultContacts';
 import { OnboardingWizard, OnboardingResult } from './components/OnboardingWizard';
+import { SetupChecklist } from './components/SetupChecklist';
 import { speakSpeechmaticsOrFallback, stopSpeaking } from './utils/speech';
 import { getBatteryStatus, watchBattery } from './utils/telemetry';
 import { getPersistentItem, setPersistentItem } from './utils/storage';
@@ -97,7 +98,19 @@ export default function App() {
 function SeniorSafeSpotHome() {
   // State: Firebase User & Firestore Profile
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  // The profile entered in the first-launch wizard is kept on the device, so
+  // it survives reloads before (or without) signing in.
+  const readLocalProfile = (): UserProfile | null => {
+    try {
+      const saved = getPersistentItem('senior_safespot_profile');
+      return saved ? (JSON.parse(saved) as UserProfile) : null;
+    } catch {
+      return null;
+    }
+  };
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(readLocalProfile);
+  // Bumped when the signed-in user object changes in place (guest → Google).
+  const [, setAuthTick] = useState(0);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
@@ -213,24 +226,52 @@ function SeniorSafeSpotHome() {
 
   // Firebase Auth & Firestore Users Collection Sync
   useEffect(() => {
+    let unsubscribeProfile: (() => void) | null = null;
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
-      if (user) {
-        // Subscribe to Firestore Users/{uid}
-        const unsubscribeProfile = subscribeToUserProfile(user.uid, (profile) => {
-          setUserProfile(profile);
-          if (profile && profile.emergencyContacts && profile.emergencyContacts.length > 0) {
-            setContacts(profile.emergencyContacts);
-            setPersistentItem('senior_safespot_contacts', JSON.stringify(profile.emergencyContacts));
-          }
-        });
-        return () => unsubscribeProfile();
-      } else {
-        setUserProfile(null);
+      unsubscribeProfile?.();
+      unsubscribeProfile = null;
+      if (!user) {
+        setUserProfile(readLocalProfile());
+        return;
       }
+      let carriedOver = false;
+      // Subscribe to Firestore Users/{uid}
+      unsubscribeProfile = subscribeToUserProfile(user.uid, (profile) => {
+        if (!profile && !carriedOver) {
+          // First sign-in for this account: carry over what was set up on
+          // this device before signing in, so alerts know who to contact.
+          carriedOver = true;
+          const local = readLocalProfile();
+          let localContacts: EmergencyContact[] = [];
+          try {
+            localContacts = JSON.parse(getPersistentItem('senior_safespot_contacts') || '[]');
+          } catch {
+            /* none saved */
+          }
+          if (local || localContacts.some((c) => !c.locked)) {
+            void saveUserProfile({
+              ...(local ?? {}),
+              uid: user.uid,
+              emergencyContacts: ensureEmergency995(localContacts),
+              authProvider: user.isAnonymous ? 'anonymous' : user.providerData[0]?.providerId?.includes('google') ? 'google' : 'phone',
+            }).catch((e) => console.warn('Could not copy the local profile to the account:', e));
+          }
+          setUserProfile(local);
+          return;
+        }
+        setUserProfile(profile ?? readLocalProfile());
+        if (profile && profile.emergencyContacts && profile.emergencyContacts.length > 0) {
+          setContacts(profile.emergencyContacts);
+          setPersistentItem('senior_safespot_contacts', JSON.stringify(profile.emergencyContacts));
+        }
+      });
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      unsubscribeProfile?.();
+      unsubscribeAuth();
+    };
   }, []);
 
   // Apply theme classes to body + root font scaling for senior readability
@@ -937,6 +978,18 @@ function SeniorSafeSpotHome() {
           onOpenProfile={() => (currentUser ? setIsProfileModalOpen(true) : setIsAuthModalOpen(true))}
           isSpeaking={isSpeaking}
           settings={settings}
+        />
+
+        {/* What's left before an emergency alert actually reaches someone */}
+        <SetupChecklist
+          user={currentUser}
+          profile={userProfile}
+          contacts={contacts}
+          lang={settings.language}
+          onOpenAuth={() => setIsAuthModalOpen(true)}
+          onOpenProfile={() => setIsProfileModalOpen(true)}
+          onOpenContacts={() => setIsContactsModalOpen(true)}
+          onAccountUpgraded={() => setAuthTick((n) => n + 1)}
         />
 
         {/* Honest GPS failure banner — no invented locations, just a clear retry */}

@@ -53,6 +53,7 @@ import {
   getIncidentById,
   getPairingOwner,
   verifyFirebaseIdToken,
+  getFirebaseAdminDb,
 } from './src/utils/wearableIncidentService';
 import { bearerToken, canManagePairing, checkWearableEventAuth } from './src/utils/wearableAuth';
 import { classifyAddressQuery, mergeAddressSuggestions } from './src/utils/addressSearch';
@@ -1803,6 +1804,63 @@ app.post('/api/alerts/telegram/unlink', async (req, res) => {
     console.error('[TELEGRAM] Could not unlink chat:', e.message);
     return res.status(503).json({ error: 'Could not unlink. Please try again.' });
   }
+});
+
+// Setup checklist: send a clearly-labelled test alert through every channel
+// the account would use in a real emergency (SMS to its family contacts as
+// stored on the server, and its linked Telegram chats). Recipients come from
+// the account's own profile, never from the request.
+const testAlertRate = new Map<string, number[]>();
+app.post('/api/alerts/test', async (req, res) => {
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid) return;
+  const now = Date.now();
+  const recent = (testAlertRate.get(uid) || []).filter((t) => now - t < 60 * 60_000);
+  if (recent.length >= 3 || !allowNotify(uid, now)) {
+    return res.status(429).json({ error: 'Too many test alerts. Please try again in an hour.' });
+  }
+  recent.push(now);
+  testAlertRate.set(uid, recent);
+
+  const db = getFirebaseAdminDb();
+  let name = 'Senior';
+  let contacts: Array<{ name?: string; phone?: string; isPrimary?: boolean; locked?: boolean }> = [];
+  if (db) {
+    try {
+      const snap = await db.collection('Users').doc(uid).get();
+      const data = (snap.data() || {}) as Record<string, any>;
+      if (typeof data.actualName === 'string' && data.actualName.trim()) name = data.actualName.trim().slice(0, 60);
+      if (Array.isArray(data.emergencyContacts)) contacts = data.emergencyContacts;
+    } catch (e: any) {
+      console.error('[ALERT_TEST] Could not read profile:', e.message);
+      return res.status(503).json({ error: 'Could not load your profile. Please try again.' });
+    }
+  }
+
+  const recipients = smsAlertRecipients(contacts);
+  const smsText =
+    `🧪 SafeSpot.SG TEST alert for ${name}. This is only a test, no action needed.\n` +
+    `In a real emergency this message would include their location and a live tracking link.`;
+  const [smsResults, telegramSent] = await Promise.all([
+    Promise.all(recipients.map((c) => sendTwilioSms({ to: c.phone as string, body: smsText }))),
+    sendTelegramPin(uid, {
+      text: `🧪 <b>SafeSpot test alert for ${escapeHtml(name)}</b>\nThis is only a test, no action needed. ` +
+        'In a real emergency you would see what happened, a live map pin and an "I\'m responding" button.',
+    }).catch(() => 0),
+  ]);
+  const smsSent = smsResults.filter((r) => r.success).length;
+
+  if (smsSent + telegramSent > 0 && db) {
+    await db.collection('Users').doc(uid).set({ lastTestAlertAt: now }, { merge: true }).catch((e: any) =>
+      console.warn('[ALERT_TEST] Could not record test time:', e.message),
+    );
+  }
+  console.log(`[ALERT_TEST] ${uid.slice(0, 6)}…: SMS ${smsSent}/${recipients.length}, Telegram ${telegramSent}`);
+  return res.json({
+    sms: { sent: smsSent, attempted: recipients.length, configured: smsConfigured() },
+    telegram: { sent: telegramSent, configured: telegramConfigured() },
+    reachedSomeone: smsSent + telegramSent > 0,
+  });
 });
 
 // Phone app: send the current location to every linked Telegram chat.

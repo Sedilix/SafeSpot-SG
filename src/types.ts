@@ -217,6 +217,8 @@ export interface UserProfile {
   authProvider: 'google' | 'phone' | 'anonymous';
   medicalNotes?: string; // Optional allergies or medical conditions (e.g., "Diabetic, Pacemaker")
   wearableDeviceId?: string; // Paired Garmin watch ID, random per watch (e.g. "SS-7KQ2-M9XD-4TFH")
+  /** When the setup checklist's test alert last reached someone (set by the server). */
+  lastTestAlertAt?: number;
   createdAt: number;
   updatedAt: number;
 }
