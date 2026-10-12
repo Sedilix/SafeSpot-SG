@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Send, 
   Phone, 
@@ -17,10 +17,13 @@ import {
   Share2, 
   Radio, 
   Loader2,
-  Star
+  Star,
+  AlertTriangle
 } from 'lucide-react';
 import { EmergencyContact, LocationVerificationResult, AccessibilitySettings } from '../types';
 import { t } from '../locales/translations';
+import { auth } from '../lib/firebase';
+import { authFetch, responseError } from '../lib/authFetch';
 
 interface OneTapSharePanelProps {
   contacts: EmergencyContact[];
@@ -46,6 +49,45 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
   const [lastSentTo, setLastSentTo] = useState<string | null>(null);
   const [sendingContactId, setSendingContactId] = useState<string | null>(null);
   const [sentContactIds, setSentContactIds] = useState<Record<string, boolean>>({});
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [telegramChatCount, setTelegramChatCount] = useState(0);
+  const [telegramState, setTelegramState] = useState<'idle' | 'sending' | 'sent'>('idle');
+
+  // Show "Send to Telegram" only when this account has linked chats.
+  useEffect(() => {
+    if (!auth.currentUser) return;
+    let cancelled = false;
+    authFetch('/api/alerts/telegram/chats')
+      .then((r) => (r.ok ? r.json() : { chats: [] }))
+      .then((d) => !cancelled && setTelegramChatCount(Array.isArray(d.chats) ? d.chats.length : 0))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleSendTelegram = async () => {
+    if (telegramState === 'sending') return;
+    setTelegramState('sending');
+    setSendError(null);
+    try {
+      const res = await authFetch('/api/notify/telegram-pin', {
+        method: 'POST',
+        body: JSON.stringify({
+          address: verification?.formattedAddress || address,
+          lat: verification?.verifiedCoordinates?.lat,
+          lng: verification?.verifiedCoordinates?.lng,
+          driverHint: verification?.pickupInstructionsForDriver,
+        }),
+      });
+      if (!res.ok) throw new Error(await responseError(res, t('share.telegramFailed', lang)));
+      setTelegramState('sent');
+      setTimeout(() => setTelegramState('idle'), 4500);
+    } catch (err: any) {
+      setSendError(err.message);
+      setTelegramState('idle');
+    }
+  };
 
   const lang = settings.language || 'en';
 
@@ -85,15 +127,15 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
   const handleDirectSendPin = async (contact: EmergencyContact) => {
     if (sendingContactId === contact.id) return;
     setSendingContactId(contact.id);
+    setSendError(null);
 
     try {
       const blePrecision = verification?.bleAccuracyBoost && verification?.bleBeacons?.[0]
         ? `${verification.bleBeacons[0].locationName} (≈${verification.bleBeacons[0].estimatedDistanceMeters}m)`
         : undefined;
 
-      const res = await fetch('/api/notify/dispatch-pin', {
+      const res = await authFetch('/api/notify/dispatch-pin', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contactId: contact.id,
           contactName: contact.name,
@@ -122,9 +164,12 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
         }, 4500);
 
         setTimeout(() => setLastSentTo(null), 5000);
+      } else {
+        setSendError(await responseError(res, t('share.smsFailed', lang)));
       }
     } catch (err) {
       console.warn('Direct pin dispatch error:', err);
+      setSendError(t('share.smsFailed', lang));
     } finally {
       setSendingContactId(null);
     }
@@ -192,6 +237,36 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
           <Check className="h-6 w-6 stroke-[3] text-pine" />
           <span>{t('share.pinSentToBanner', lang)} {lastSentTo}!</span>
         </div>
+      )}
+
+      {sendError && (
+        <div role="alert" className="mb-4 flex items-center gap-2 rounded-2xl border-2 border-brick bg-brick-soft p-4 text-base font-bold text-brick-deep">
+          <AlertTriangle className="h-5 w-5 shrink-0" />
+          <span>{sendError}</span>
+        </div>
+      )}
+
+      {telegramChatCount > 0 && (
+        <button
+          id="btn-send-telegram"
+          type="button"
+          onClick={handleSendTelegram}
+          disabled={telegramState === 'sending'}
+          className="btn btn-md btn-secondary mb-4 w-full"
+        >
+          {telegramState === 'sending' ? (
+            <Loader2 className="h-5 w-5 animate-spin" />
+          ) : telegramState === 'sent' ? (
+            <Check className="text-pine h-5 w-5" />
+          ) : (
+            <Send className="text-sky h-5 w-5" />
+          )}
+          <span>
+            {telegramState === 'sent'
+              ? t('share.telegramSent', lang)
+              : `${t('share.sendTelegram', lang)} (${telegramChatCount})`}
+          </span>
+        </button>
       )}
 
       {/* 1-Tap Emergency Contact Cards Grid */}

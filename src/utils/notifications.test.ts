@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { normalizePhoneNumber, sendTwilioSms } from './notifications';
+import { normalizePhoneNumber, sendTwilioSms, smsConfigured, smsAlertRecipients } from './notifications';
 
 describe('normalizePhoneNumber', () => {
   it('formats Singapore 8-digit numbers with +65', () => {
@@ -24,6 +24,21 @@ describe('normalizePhoneNumber', () => {
 
   it('handles empty or blank phone strings', () => {
     expect(normalizePhoneNumber('')).toBe('+65');
+  });
+});
+
+describe('smsAlertRecipients', () => {
+  const scdf = { id: 'contact-emergency', phone: '995', isPrimary: false, locked: true };
+  const mei = { id: 'mei', phone: '9123 4567', isPrimary: false };
+  const tan = { id: 'tan', phone: '+65 8765 4321', isPrimary: true };
+
+  it('never texts 995 or other short codes, even with no primary contact', () => {
+    expect(smsAlertRecipients([scdf, mei])).toEqual([mei]);
+    expect(smsAlertRecipients([scdf, { id: 'x', phone: '995' }, { id: 'y', phone: '1777' }])).toEqual([]);
+  });
+
+  it('prefers primary contacts', () => {
+    expect(smsAlertRecipients([scdf, mei, tan])).toEqual([tan]);
   });
 });
 
@@ -54,6 +69,22 @@ describe('sendTwilioSms', () => {
     expect(res.carrierStatus).toBe('DISPATCHED_DIRECT_GATEWAY');
     expect(res.recipient).toBe('+6591234567');
     expect(res.messageId).toMatch(/^disp_/);
+  });
+
+  it('fails (never pretends) in production when Twilio credentials are missing', async () => {
+    process.env.NODE_ENV = 'production';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await sendTwilioSms({ to: '91234567', body: 'Emergency alert!' });
+    expect(res.success).toBe(false);
+    expect(res.carrierStatus).toBe('SMS_NOT_CONFIGURED');
+    expect(smsConfigured()).toBe(false);
+  });
+
+  it('reports SMS as configured when all three Twilio settings are present', () => {
+    process.env.TWILIO_ACCOUNT_SID = 'AC1';
+    process.env.TWILIO_AUTH_TOKEN = 't';
+    process.env.TWILIO_PHONE_NUMBER = '+15550000000';
+    expect(smsConfigured()).toBe(true);
   });
 
   it('dispatches to Twilio REST API when credentials are present and handles success', async () => {
