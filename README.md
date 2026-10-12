@@ -24,8 +24,8 @@ A Singapore live location and pickup assistant powered by **Gemini AI**, **Speec
 
 ### 2. Installation
 ```bash
-git clone https://github.com/Sedilix/Build-w-Gemini-22-Aug.git
-cd Build-w-Gemini-22-Aug
+git clone https://github.com/Sedilix/SafeSpot-SG.git
+cd SafeSpotSG
 npm install
 ```
 
