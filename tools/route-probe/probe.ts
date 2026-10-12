@@ -28,13 +28,25 @@ import { join } from 'path';
 type LatLng = { lat: number; lng: number };
 
 // ── Inputs ─────────────────────────────────────────────────────────────────
-const ORIGIN = { name: 'Blk 480 Toa Payoh', lat: 1.3327, lng: 103.8479 };
-const DESTINATIONS = [
-  { name: 'Raffles Place (CBD)', lat: 1.284, lng: 103.8514 },
-  { name: 'Changi Airport T3', lat: 1.357, lng: 103.9874 },
-  { name: 'Jurong East MRT', lat: 1.3331, lng: 103.7423 },
-];
-const PROBE_DATE = '2026-10-08'; // a Thursday (weekday ERP and traffic)
+const isHoldout = process.argv.includes('--holdout');
+
+const ORIGIN = isHoldout
+  ? { name: 'Jurong West St 64', lat: 1.3404, lng: 103.7090 }
+  : { name: 'Blk 480 Toa Payoh', lat: 1.3327, lng: 103.8479 };
+
+const DESTINATIONS = isHoldout
+  ? [
+      { name: 'Woodlands MRT', lat: 1.4370, lng: 103.7865 },
+      { name: 'Tampines Hub', lat: 1.3534, lng: 103.9401 },
+      { name: 'Sengkang General Hospital', lat: 1.3955, lng: 103.8930 },
+    ]
+  : [
+      { name: 'Raffles Place (CBD)', lat: 1.284, lng: 103.8514 },
+      { name: 'Changi Airport T3', lat: 1.357, lng: 103.9874 },
+      { name: 'Jurong East MRT', lat: 1.3331, lng: 103.7423 },
+    ];
+
+const PROBE_DATE = isHoldout ? '2026-10-14' : '2026-10-08'; // weekday ERP and traffic
 const DEPARTURES_SGT = ['07:30', '08:30', '11:00', '18:30', '22:00'];
 
 // Petrol price and a speed-dependent consumption curve for a compact petrol
@@ -62,9 +74,19 @@ const INCIDENT_WEIGHTS: Record<string, number> = {
   Diversion: 4, 'Unattended Vehicle': 2, Roadwork: 0.5, Weather: 3, Misc: 1,
 };
 
-const MAPS_KEY = process.env.MAPS_SERVER_KEY || '';
-const LTA_KEY = process.env.LTA_DATAMALL_KEY || '';
-if (!MAPS_KEY) throw new Error('Set MAPS_SERVER_KEY');
+function resolveKey(envVar: string, filePath: string): string {
+  if (process.env[envVar] && process.env[envVar]!.trim()) {
+    return process.env[envVar]!.trim();
+  }
+  if (existsSync(filePath)) {
+    return readFileSync(filePath, 'utf8').trim();
+  }
+  return '';
+}
+
+const MAPS_KEY = resolveKey('MAPS_SERVER_KEY', 'C:/Users/SIT EUC/maps_server_key.txt');
+const LTA_KEY = resolveKey('LTA_DATAMALL_KEY', 'C:/Users/SIT EUC/lta_datamall_key.txt');
+if (!MAPS_KEY) throw new Error('Set MAPS_SERVER_KEY or ensure C:/Users/SIT EUC/maps_server_key.txt exists');
 
 // ── Geometry ───────────────────────────────────────────────────────────────
 const R = 6_371_000;
@@ -292,9 +314,12 @@ interface ProbeRow {
 
   const outDir = join(process.cwd(), 'tools', 'route-probe', 'out');
   mkdirSync(outDir, { recursive: true });
-  writeFileSync(join(outDir, 'probe-dataset.json'), JSON.stringify({ origin: ORIGIN, destinations: DESTINATIONS, date: PROBE_DATE, generatedAt: new Date().toISOString(), rows }, null, 2));
+  const datasetFileName = isHoldout ? 'probe-dataset-holdout.json' : 'probe-dataset.json';
+  const reportFileName = isHoldout ? 'probe-report-holdout.md' : 'probe-report.md';
 
-  const md: string[] = [`# Route probe — ${PROBE_DATE} (Thu)`, '', `From **${ORIGIN.name}**. Car fuel at S$${FUEL_PRICE_SGD_PER_L}/L (modelled). ERP: gantries passed during charging hours (rates not available). Live incidents/road works/slow segments reflect conditions at probe time.`, ''];
+  writeFileSync(join(outDir, datasetFileName), JSON.stringify({ origin: ORIGIN, destinations: DESTINATIONS, date: PROBE_DATE, isHoldout, generatedAt: new Date().toISOString(), rows }, null, 2));
+
+  const md: string[] = [`# Route probe — ${PROBE_DATE} (${isHoldout ? 'Wed, Holdout Benchmark' : 'Thu'})`, '', `From **${ORIGIN.name}**. Car fuel at S$${FUEL_PRICE_SGD_PER_L}/L (modelled). ERP: gantries passed during charging hours (rates not available). Live incidents/road works/slow segments reflect conditions at probe time.`, ''];
   for (const dest of DESTINATIONS) for (const dir of ['A→B', 'B→A'] as const) {
     md.push(`## ${dir === 'A→B' ? `${ORIGIN.name} → ${dest.name}` : `${dest.name} → ${ORIGIN.name}`}`, '', '| Depart | # | Mode | Route | km | min (free-flow) | Fuel S$ | ERP gantries | Live issues | Transfers / walk | Score |', '|---|---|---|---|---|---|---|---|---|---|---|');
     for (const r of rows.filter((x) => x.trip.endsWith(dest.name) && x.direction === dir && x.weather === 'dry')) {
@@ -308,6 +333,6 @@ interface ProbeRow {
       return `${t}: ` + WEATHER_SCENARIOS.map((w) => { const b = best(w.name); return `${w.name} → ${b ? `${b.mode === 'car' ? b.route : 'MRT/bus ' + b.route} (${b.minutes} min)` : '–'}`; }).join(' | ');
     }).join('<br>'), '');
   }
-  writeFileSync(join(outDir, 'probe-report.md'), md.join('\n'));
-  console.log(`\nWrote ${rows.length} rows to tools/route-probe/out/`);
+  writeFileSync(join(outDir, reportFileName), md.join('\n'));
+  console.log(`\nWrote ${rows.length} rows to tools/route-probe/out/${datasetFileName} and ${reportFileName}`);
 })().catch((e) => { console.error('Probe failed:', e.message); process.exit(1); });
