@@ -24,6 +24,8 @@ export interface SetupState {
   contacts: EmergencyContact[];
   smsActive: boolean;
   telegramChats: number;
+  /** Phones/browsers getting push notifications for this account. */
+  pushDevices?: number;
   watchPaired: boolean;
   lastTestAlertAt?: number;
 }
@@ -37,7 +39,7 @@ export interface SetupState {
 export function computeSetupSteps(s: SetupState): SetupStep[] {
   const hasFamilyMobile = smsAlertRecipients(s.contacts).length > 0;
   const accountDone = s.signedIn && !s.isGuest;
-  const alertsDone = s.telegramChats > 0 || (s.smsActive && hasFamilyMobile && s.signedIn);
+  const alertsDone = s.telegramChats > 0 || (s.pushDevices ?? 0) > 0 || (s.smsActive && hasFamilyMobile && s.signedIn);
 
   return [
     { id: 'contacts', done: hasFamilyMobile, hintKey: 'setup.contacts.hint' },

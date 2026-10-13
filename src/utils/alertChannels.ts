@@ -14,6 +14,7 @@ import {
   updateTelegramLiveLocation,
   escapeHtml,
 } from './telegram';
+import { pushConfigured, sendWebPush, type PushPayload, type PushSubscriptionJSON } from './webPush';
 
 // Where a SafeSpot account's alerts go besides SMS. Telegram chats are linked
 // to the account (uid), so both watch alerts and alerts sent from the phone
@@ -289,4 +290,149 @@ export async function sendTelegramPin(uid: string, params: { text: string; lat?:
     }),
   );
   return sent;
+}
+
+// ── Web push devices ─────────────────────────────────────────────────────────
+//   AlertChannels/{uid}.pushSubs      PushDevice[] (server-only: endpoints are capability URLs)
+//   AlertChannels/{uid}.pushEndpoints string[] (for lookup when a browser unsubscribes)
+//   PushInvites/{code}                { uid, expiresAt, uses }
+
+export interface PushDevice {
+  id: string;
+  label: string;
+  createdAt: number;
+  subscription: PushSubscriptionJSON;
+}
+
+/** Family invite links last a week and can be opened by a few people (shared in a group chat). */
+export const PUSH_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const PUSH_INVITE_MAX_USES = 10;
+export const MAX_PUSH_DEVICES = 20;
+
+const memPush = new Map<string, PushDevice[]>();
+const memInvites = new Map<string, { uid: string; expiresAt: number; uses: number }>();
+
+export function _resetPushForTest(): void {
+  memPush.clear();
+  memInvites.clear();
+}
+
+export async function getPushDevices(uid: string): Promise<PushDevice[]> {
+  const db = getFirebaseAdminDb();
+  if (!db) return memPush.get(uid) || [];
+  const snap = await db.collection('AlertChannels').doc(uid).get();
+  const subs = snap.exists ? (snap.data() as any).pushSubs : null;
+  return Array.isArray(subs) ? subs : [];
+}
+
+async function savePushDevices(uid: string, devices: PushDevice[]): Promise<void> {
+  const db = getFirebaseAdminDb();
+  if (!db) {
+    memPush.set(uid, devices);
+    return;
+  }
+  await db.collection('AlertChannels').doc(uid).set(
+    { pushSubs: devices, pushEndpoints: devices.map((d) => d.subscription.endpoint), updatedAt: Date.now() },
+    { merge: true },
+  );
+}
+
+/** Adds (or refreshes) a device. Returns false when the account already has too many. */
+export async function addPushDevice(uid: string, subscription: PushSubscriptionJSON, label: string, now = Date.now()): Promise<boolean> {
+  const devices = await getPushDevices(uid);
+  const existing = devices.find((d) => d.subscription.endpoint === subscription.endpoint);
+  if (existing) {
+    existing.subscription = subscription;
+    existing.label = label.slice(0, 60) || existing.label;
+  } else {
+    if (devices.length >= MAX_PUSH_DEVICES) return false;
+    devices.push({ id: generateLinkCode().toLowerCase(), label: label.slice(0, 60) || 'Phone', createdAt: now, subscription });
+  }
+  await savePushDevices(uid, devices);
+  return true;
+}
+
+export async function removePushDevice(uid: string, id: string): Promise<boolean> {
+  const devices = await getPushDevices(uid);
+  const next = devices.filter((d) => d.id !== id);
+  if (next.length === devices.length) return false;
+  await savePushDevices(uid, next);
+  return true;
+}
+
+/** A browser turning alerts off for itself: knowing the endpoint proves it's that device. */
+export async function removePushEndpointEverywhere(endpoint: string): Promise<void> {
+  const db = getFirebaseAdminDb();
+  const owners: string[] = [];
+  if (!db) {
+    for (const [uid, list] of memPush) if (list.some((d) => d.subscription.endpoint === endpoint)) owners.push(uid);
+  } else {
+    const snap = await db.collection('AlertChannels').where('pushEndpoints', 'array-contains', endpoint).get();
+    owners.push(...snap.docs.map((d) => d.id));
+  }
+  for (const uid of owners) {
+    const devices = await getPushDevices(uid);
+    await savePushDevices(uid, devices.filter((d) => d.subscription.endpoint !== endpoint));
+  }
+}
+
+export async function createPushInvite(uid: string, now = Date.now()): Promise<{ code: string; expiresAt: number }> {
+  const code = generateLinkCode();
+  const entry = { uid, expiresAt: now + PUSH_INVITE_TTL_MS, uses: 0 };
+  const db = getFirebaseAdminDb();
+  if (db) await db.collection('PushInvites').doc(code).set(entry);
+  else memInvites.set(code, entry);
+  return { code, expiresAt: entry.expiresAt };
+}
+
+/** The account an invite belongs to, if it's still usable. Doesn't use it up. */
+export async function getPushInviteOwner(code: string, now = Date.now()): Promise<string | null> {
+  const db = getFirebaseAdminDb();
+  const entry = db
+    ? ((await db.collection('PushInvites').doc(code).get()).data() as { uid: string; expiresAt: number; uses: number } | undefined)
+    : memInvites.get(code);
+  if (!entry || entry.expiresAt < now || entry.uses >= PUSH_INVITE_MAX_USES) return null;
+  return entry.uid;
+}
+
+/** Uses an invite to subscribe a family member's device. Returns the account uid, or null. */
+export async function joinPushInvite(
+  code: string,
+  subscription: PushSubscriptionJSON,
+  label: string,
+  now = Date.now(),
+): Promise<string | null> {
+  const db = getFirebaseAdminDb();
+  let uid: string | null = null;
+  if (db) {
+    const ref = db.collection('PushInvites').doc(code);
+    uid = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const e = snap.data() as { uid: string; expiresAt: number; uses: number } | undefined;
+      if (!e || e.expiresAt < now || e.uses >= PUSH_INVITE_MAX_USES) return null;
+      tx.update(ref, { uses: e.uses + 1 });
+      return e.uid;
+    });
+  } else {
+    const e = memInvites.get(code);
+    if (e && e.expiresAt >= now && e.uses < PUSH_INVITE_MAX_USES) {
+      e.uses++;
+      uid = e.uid;
+    }
+  }
+  if (!uid) return null;
+  return (await addPushDevice(uid, subscription, label, now)) ? uid : null;
+}
+
+/** Sends a notification to every device on the account; drops unsubscribed ones. Returns how many got it. */
+export async function notifyPushDevices(uid: string | null, payload: PushPayload): Promise<number> {
+  if (!uid || !pushConfigured()) return 0;
+  const devices = await getPushDevices(uid).catch(() => [] as PushDevice[]);
+  if (devices.length === 0) return 0;
+  const results = await Promise.all(devices.map((d) => sendWebPush(d.subscription, payload)));
+  const gone = devices.filter((_, i) => results[i].gone);
+  if (gone.length) {
+    await savePushDevices(uid, devices.filter((d) => !gone.includes(d))).catch(() => {});
+  }
+  return results.filter((r) => r.ok).length;
 }

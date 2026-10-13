@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { normalizePhoneNumber, sendTwilioSms, smsConfigured, smsAlertRecipients } from './notifications';
+import { normalizePhoneNumber, sendSms, sendTextbeeSms, sendTwilioSms, smsConfigured, smsAlertRecipients, smsProviderOrder } from './notifications';
 
 describe('normalizePhoneNumber', () => {
   it('formats Singapore 8-digit numbers with +65', () => {
@@ -120,5 +120,71 @@ describe('sendTwilioSms', () => {
     expect(res.success).toBe(false);
     expect(res.carrierStatus).toBe('TWILIO_CARRIER_ERROR');
     expect(res.error).toContain('21608');
+  });
+});
+
+describe('SMS providers', () => {
+  const originalEnv = process.env;
+  beforeEach(() => {
+    process.env = { ...originalEnv, NODE_ENV: 'production' };
+    for (const k of ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER', 'TEXTBEE_API_KEY', 'TEXTBEE_DEVICE_ID', 'SMS_PROVIDER']) {
+      delete process.env[k];
+    }
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const twilioEnv = () => {
+    process.env.TWILIO_ACCOUNT_SID = 'AC1';
+    process.env.TWILIO_AUTH_TOKEN = 't';
+    process.env.TWILIO_PHONE_NUMBER = '+15550000000';
+  };
+
+  it('sends via textbee with the API key, recipient and optional device', async () => {
+    process.env.TEXTBEE_API_KEY = 'tb-key';
+    process.env.TEXTBEE_DEVICE_ID = 'dev1';
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: { smsBatchId: 'b1' } }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await sendTextbeeSms({ to: '91234567', body: 'Hi' });
+    expect(res).toMatchObject({ success: true, carrierStatus: 'SENT_TEXTBEE', messageId: 'b1', recipient: '+6591234567' });
+    const [url, init] = fetchMock.mock.calls[0] as any;
+    expect(url).toBe('https://api.textbee.dev/api/v1/gateway/send-sms');
+    expect(init.headers['x-api-key']).toBe('tb-key');
+    expect(JSON.parse(init.body)).toEqual({ recipients: ['+6591234567'], message: 'Hi', deviceId: 'dev1' });
+  });
+
+  it('prefers textbee by default and Twilio when SMS_PROVIDER=twilio', () => {
+    process.env.TEXTBEE_API_KEY = 'k';
+    twilioEnv();
+    expect(smsProviderOrder()).toEqual(['textbee', 'twilio']);
+    process.env.SMS_PROVIDER = 'twilio';
+    expect(smsProviderOrder()).toEqual(['twilio', 'textbee']);
+    delete process.env.TEXTBEE_API_KEY;
+    expect(smsProviderOrder()).toEqual(['twilio']);
+    expect(smsConfigured()).toBe(true);
+  });
+
+  it('falls back to the other provider when the first fails', async () => {
+    process.env.TEXTBEE_API_KEY = 'k';
+    twilioEnv();
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes('textbee')
+        ? { ok: false, status: 503, json: async () => ({ message: 'device offline' }) }
+        : { ok: true, status: 201, json: async () => ({ sid: 'SM1' }) },
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await sendSms({ to: '91234567', body: 'Alert' });
+    expect(res).toMatchObject({ success: true, carrierStatus: 'SENT_CARRIER_SMS', messageId: 'SM1' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('with no provider, fails in production', async () => {
+    const res = await sendSms({ to: '91234567', body: 'Alert' });
+    expect(res).toMatchObject({ success: false, carrierStatus: 'SMS_NOT_CONFIGURED' });
   });
 });
