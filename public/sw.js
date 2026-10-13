@@ -11,7 +11,7 @@
  *  - Navigation requests: Network-first, fallback to cached /index.html.
  */
 
-const CACHE_NAME = 'onthedot-safespot-v2';
+const CACHE_NAME = 'onthedot-safespot-v3';
 
 // Static app shell — everything needed to render the initial frame offline.
 const APP_SHELL = [
@@ -120,5 +120,41 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
     )
+  );
+});
+
+// ─── Push notifications (emergency alerts) ──────────────────────────────────
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { title: 'SafeSpot alert', body: event.data ? event.data.text() : '' };
+  }
+  const title = data.title || 'SafeSpot alert';
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || '',
+      tag: data.tag || 'safespot',
+      renotify: true,
+      requireInteraction: Boolean(data.urgent),
+      vibrate: data.urgent ? [400, 200, 400, 200, 400] : [200],
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      data: { url: data.url || '/' },
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = new URL((event.notification.data && event.notification.data.url) || '/', self.location.origin).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+      for (const w of windows) {
+        if (w.url === target && 'focus' in w) return w.focus();
+      }
+      return self.clients.openWindow(target);
+    })
   );
 });

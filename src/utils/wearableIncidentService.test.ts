@@ -142,7 +142,7 @@ describe('wearableIncidentService', () => {
     });
 
     it('creates an incident and dispatches SMS alerts on watch trigger', async () => {
-      const sendSpy = vi.spyOn(notifications, 'sendTwilioSms').mockResolvedValue({
+      const sendSpy = vi.spyOn(notifications, 'sendSms').mockResolvedValue({
         success: true,
         messageId: 'SMmock',
         carrierStatus: 'SENT_CARRIER_SMS',
@@ -227,7 +227,7 @@ describe('wearableIncidentService', () => {
     });
 
     it('resolves incident and dispatches cancellation SMS on alert cancel', async () => {
-      const sendSpy = vi.spyOn(notifications, 'sendTwilioSms').mockResolvedValue({
+      const sendSpy = vi.spyOn(notifications, 'sendSms').mockResolvedValue({
         success: true,
         messageId: 'SMmock_cancel',
         carrierStatus: 'SENT_CARRIER_SMS',

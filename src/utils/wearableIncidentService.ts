@@ -5,8 +5,8 @@
 
 import admin from 'firebase-admin';
 import type { Incident, EmergencyContact } from '../types';
-import { sendTwilioSms, smsAlertRecipients } from './notifications';
-import { notifyTelegramAlert, resolveTelegramIncident, updateTelegramIncidentLocation } from './alertChannels';
+import { sendSms, smsAlertRecipients } from './notifications';
+import { notifyPushDevices, notifyTelegramAlert, resolveTelegramIncident, updateTelegramIncidentLocation } from './alertChannels';
 import { formatTelegramAlert, formatTelegramResolved } from './telegram';
 import { WearableEvent } from './wearable';
 
@@ -26,6 +26,7 @@ export interface IncidentDispatchResult {
   smsDispatched: boolean;
   contactsNotified: number;
   telegramChatsNotified: number;
+  pushDevicesNotified: number;
 }
 
 let adminDb: admin.firestore.Firestore | null = null;
@@ -373,7 +374,7 @@ export async function handleWatchAlertTrigger(params: {
   const smsTask = Promise.all(
     contactsToNotify.map(async (contact) => {
       try {
-        const res = await sendTwilioSms({ to: contact.phone, body: smsBody });
+        const res = await sendSms({ to: contact.phone, body: smsBody });
         if (res.success) {
           console.log(`[WEARABLE_INCIDENT] Dispatched SOS alert to ${contact.name}`);
           return 1;
@@ -411,9 +412,22 @@ export async function handleWatchAlertTrigger(params: {
     return 0;
   });
 
-  const [sentCount, telegramCount] = await Promise.all([smsTask, telegramTask]);
-  if (sentCount + telegramCount === 0) {
-    console.error(`[WEARABLE_INCIDENT] ALERT ${incidentId} REACHED NOBODY: no SMS sent and no Telegram chat linked.`);
+  const what =
+    event.eventType === 'FALL_DETECTED' ? 'Fall detected' : event.eventType === 'HR_ALERT' ? 'Heart rate alert' : 'SOS';
+  const pushTask = notifyPushDevices(profile.uid, {
+    title: `🚨 ${what}: ${profile.elderName}`,
+    body: `${formattedAddress || (landmark ? `Near ${landmark}` : 'Location on the tracking page')}. Tap to see where they are.`,
+    url: `/track/${incidentId}`,
+    tag: incidentId,
+    urgent: true,
+  }).catch((err: any) => {
+    console.warn('[WEARABLE_INCIDENT] Push alert failed:', err.message);
+    return 0;
+  });
+
+  const [sentCount, telegramCount, pushCount] = await Promise.all([smsTask, telegramTask, pushTask]);
+  if (sentCount + telegramCount + pushCount === 0) {
+    console.error(`[WEARABLE_INCIDENT] ALERT ${incidentId} REACHED NOBODY: no SMS sent, no Telegram chat or phone linked.`);
   }
 
   return {
@@ -421,6 +435,7 @@ export async function handleWatchAlertTrigger(params: {
     smsDispatched: sentCount > 0,
     contactsNotified: sentCount,
     telegramChatsNotified: telegramCount,
+    pushDevicesNotified: pushCount,
   };
 }
 
@@ -525,11 +540,17 @@ export async function handleWatchAlertCancel(
   await Promise.all([
     ...contactsToNotify.map(async (contact) => {
       try {
-        await sendTwilioSms({ to: contact.phone, body: resolvedBody });
+        await sendSms({ to: contact.phone, body: resolvedBody });
       } catch (err: any) {
         console.warn(`[WEARABLE_INCIDENT] Failed to notify ${contact.name} of cancel:`, err.message);
       }
     }),
+    notifyPushDevices(profile.uid, {
+      title: `✅ ${profile.elderName} is OK`,
+      body: 'They cancelled the alert on their watch.',
+      url: `/track/${incidentId}`,
+      tag: incidentId,
+    }).catch(() => 0),
     resolveTelegramIncident(incidentId, formatTelegramResolved(profile.elderName)).catch((e: any) =>
       console.warn('[WEARABLE_INCIDENT] Telegram resolve failed:', e.message),
     ),

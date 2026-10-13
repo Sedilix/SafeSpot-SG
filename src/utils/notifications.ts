@@ -135,13 +135,89 @@ export async function sendTwilioSms(params: TwilioSendParams): Promise<TwilioSen
   }
 }
 
-/** True when the server has Twilio credentials (SMS can actually be sent). */
-export function smsConfigured(): boolean {
+export function twilioConfigured(): boolean {
   return Boolean(
     process.env.TWILIO_ACCOUNT_SID &&
       process.env.TWILIO_AUTH_TOKEN &&
       (process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER),
   );
+}
+
+/** textbee.dev: sends SMS from an Android phone's own SIM via the textbee app. */
+export function textbeeConfigured(): boolean {
+  return Boolean(process.env.TEXTBEE_API_KEY);
+}
+
+/** True when at least one SMS provider can actually send. */
+export function smsConfigured(): boolean {
+  return twilioConfigured() || textbeeConfigured();
+}
+
+export type SmsProvider = 'twilio' | 'textbee';
+
+/**
+ * Configured providers in the order to try them. SMS_PROVIDER picks the
+ * first choice; the other (if configured) is the fallback. Default: textbee
+ * first when both exist, since it's free and sends from a local number.
+ */
+export function smsProviderOrder(): SmsProvider[] {
+  const preferred = (process.env.SMS_PROVIDER || '').toLowerCase() === 'twilio' ? 'twilio' : 'textbee';
+  const order: SmsProvider[] = preferred === 'twilio' ? ['twilio', 'textbee'] : ['textbee', 'twilio'];
+  return order.filter((p) => (p === 'twilio' ? twilioConfigured() : textbeeConfigured()));
+}
+
+export async function sendTextbeeSms(params: TwilioSendParams): Promise<TwilioSendResult> {
+  const cleanPhone = normalizePhoneNumber(params.to);
+  if (!cleanPhone || cleanPhone === '+65') {
+    return { success: false, carrierStatus: 'MISSING_PHONE', recipient: params.to, error: 'Valid phone number is required.' };
+  }
+  const apiKey = process.env.TEXTBEE_API_KEY;
+  if (!apiKey) {
+    return { success: false, carrierStatus: 'SMS_NOT_CONFIGURED', recipient: cleanPhone, error: 'textbee is not configured.' };
+  }
+  try {
+    const res = await fetch('https://api.textbee.dev/api/v1/gateway/send-sms', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipients: [cleanPhone],
+        message: params.body,
+        ...(process.env.TEXTBEE_DEVICE_ID ? { deviceId: process.env.TEXTBEE_DEVICE_ID } : {}),
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = (await res.json().catch(() => ({}))) as any;
+    if (res.ok) {
+      return {
+        success: true,
+        messageId: data?.data?.smsBatchId || data?.data?._id || undefined,
+        carrierStatus: 'SENT_TEXTBEE',
+        recipient: cleanPhone,
+      };
+    }
+    const error = String(data?.message || data?.error || `HTTP ${res.status}`).slice(0, 200);
+    console.warn(`[TEXTBEE] SMS to ${maskPhone(cleanPhone)} failed: ${error}`);
+    return { success: false, carrierStatus: 'TEXTBEE_ERROR', recipient: cleanPhone, error };
+  } catch (err: any) {
+    console.warn(`[TEXTBEE] SMS to ${maskPhone(cleanPhone)} failed: ${err.message}`);
+    return { success: false, carrierStatus: 'TEXTBEE_NETWORK_ERROR', recipient: cleanPhone, error: err.message };
+  }
+}
+
+/**
+ * Sends an SMS through the configured providers, falling back to the next
+ * one if the first fails. With none configured it behaves like
+ * sendTwilioSms unconfigured: a failure in production, simulated in dev.
+ */
+export async function sendSms(params: TwilioSendParams): Promise<TwilioSendResult> {
+  const order = smsProviderOrder();
+  if (order.length === 0) return sendTwilioSms(params);
+  let last: TwilioSendResult | null = null;
+  for (const provider of order) {
+    last = provider === 'twilio' ? await sendTwilioSms(params) : await sendTextbeeSms(params);
+    if (last.success || last.carrierStatus === 'MISSING_PHONE') return last;
+  }
+  return last!;
 }
 
 /**

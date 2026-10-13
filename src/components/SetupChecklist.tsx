@@ -44,6 +44,7 @@ export const SetupChecklist: React.FC<SetupChecklistProps> = ({
 }) => {
   const [channels, setChannels] = useState<{ sms: boolean; telegram: boolean } | null>(null);
   const [telegramChats, setTelegramChats] = useState(0);
+  const [pushDevices, setPushDevices] = useState(0);
   const [hidden, setHidden] = useState(() => {
     try {
       return getPersistentItem(HIDDEN_KEY) === '1';
@@ -55,12 +56,20 @@ export const SetupChecklist: React.FC<SetupChecklistProps> = ({
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   const refreshChats = useCallback(async () => {
-    if (!user) return setTelegramChats(0);
+    if (!user) {
+      setTelegramChats(0);
+      setPushDevices(0);
+      return;
+    }
     try {
-      const res = await authFetch('/api/alerts/telegram/chats');
-      if (res.ok) {
-        const d = await res.json();
+      const [chats, push] = await Promise.all([authFetch('/api/alerts/telegram/chats'), authFetch('/api/alerts/push/devices')]);
+      if (chats.ok) {
+        const d = await chats.json();
         setTelegramChats(Array.isArray(d.chats) ? d.chats.length : 0);
+      }
+      if (push.ok) {
+        const d = await push.json();
+        setPushDevices(Array.isArray(d.devices) ? d.devices.length : 0);
       }
     } catch {
       /* keep the last known count */
@@ -88,6 +97,7 @@ export const SetupChecklist: React.FC<SetupChecklistProps> = ({
     contacts,
     smsActive: channels?.sms ?? false,
     telegramChats,
+    pushDevices,
     watchPaired: Boolean(profile?.wearableDeviceId),
     lastTestAlertAt: profile?.lastTestAlertAt,
   });
@@ -132,6 +142,7 @@ export const SetupChecklist: React.FC<SetupChecklistProps> = ({
       const parts = [
         d.sms.sent ? `${d.sms.sent} SMS` : '',
         d.telegram.sent ? `${d.telegram.sent} Telegram` : '',
+        d.push?.sent ? `${d.push.sent} ${t('push.notifications', lang)}` : '',
       ].filter(Boolean);
       setMessage({ kind: 'ok', text: `${t('setup.testSent', lang)} ${parts.join(' + ')}. ${t('setup.testAskFamily', lang)}` });
     } catch (e: any) {

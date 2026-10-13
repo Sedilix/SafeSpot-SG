@@ -20,7 +20,8 @@ import {
   MAX_WEARABLE_DEVICES,
   WearableState,
 } from './src/utils/wearable';
-import { sendTwilioSms, smsAlertRecipients, smsConfigured } from './src/utils/notifications';
+import { sendSms, smsAlertRecipients, smsConfigured } from './src/utils/notifications';
+import { isValidSubscription, pushConfigured, sendWebPush, vapidPublicKey, type PushSubscriptionJSON } from './src/utils/webPush';
 import {
   answerTelegramCallback,
   ensureTelegramWebhook,
@@ -42,6 +43,14 @@ import {
   removeTelegramChat,
   removeTelegramChatEverywhere,
   sendTelegramPin,
+  addPushDevice,
+  createPushInvite,
+  getPushDevices,
+  getPushInviteOwner,
+  joinPushInvite,
+  notifyPushDevices,
+  removePushDevice,
+  removePushEndpointEverywhere,
 } from './src/utils/alertChannels';
 import {
   handleWatchAlertTrigger,
@@ -1720,7 +1729,7 @@ app.post('/api/notify/dispatch-pin', async (req, res) => {
       `🗺️ Google Maps Pin: ${mapsUrl}\n` +
       (typeof incidentId === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(incidentId) ? `⚡ Live Tracking: ${baseUrl}/track/${incidentId}` : '');
 
-    const twilioResult = await sendTwilioSms({ to: cleanPhone, body: messageBody });
+    const twilioResult = await sendSms({ to: cleanPhone, body: messageBody });
     console.log(`[DISPATCH_PIN] ${twilioResult.success ? 'Sent' : 'FAILED'} location pin to ${clipText(contactName, 60) || 'contact'}: ${twilioResult.carrierStatus}`);
 
     if (!twilioResult.success) {
@@ -1755,6 +1764,8 @@ app.get('/api/alerts/channels', async (_req, res) => {
     sms: smsConfigured(),
     telegram: telegramConfigured(),
     telegramBot: telegramConfigured() ? await getBotUsername().catch(() => null) : null,
+    push: pushConfigured(),
+    vapidPublicKey: vapidPublicKey(),
   });
 });
 
@@ -1845,16 +1856,22 @@ app.post('/api/alerts/test', async (req, res) => {
   const smsText =
     `🧪 SafeSpot.SG TEST alert for ${name}. This is only a test, no action needed.\n` +
     `In a real emergency this message would include their location and a live tracking link.`;
-  const [smsResults, telegramSent] = await Promise.all([
-    Promise.all(recipients.map((c) => sendTwilioSms({ to: c.phone as string, body: smsText }))),
+  const [smsResults, telegramSent, pushSent] = await Promise.all([
+    Promise.all(recipients.map((c) => sendSms({ to: c.phone as string, body: smsText }))),
     sendTelegramPin(uid, {
       text: `🧪 <b>SafeSpot test alert for ${escapeHtml(name)}</b>\nThis is only a test, no action needed. ` +
         'In a real emergency you would see what happened, a live map pin and an "I\'m responding" button.',
     }).catch(() => 0),
+    notifyPushDevices(uid, {
+      title: `🧪 SafeSpot test alert for ${name}`,
+      body: 'This is only a test, no action needed.',
+      url: '/',
+      tag: 'safespot-test',
+    }).catch(() => 0),
   ]);
   const smsSent = smsResults.filter((r) => r.success).length;
 
-  if (smsSent + telegramSent > 0 && db) {
+  if (smsSent + telegramSent + pushSent > 0 && db) {
     await db.collection('Users').doc(uid).set({ lastTestAlertAt: now }, { merge: true }).catch((e: any) =>
       console.warn('[ALERT_TEST] Could not record test time:', e.message),
     );
@@ -1863,7 +1880,139 @@ app.post('/api/alerts/test', async (req, res) => {
   return res.json({
     sms: { sent: smsSent, attempted: recipients.length, configured: smsConfigured() },
     telegram: { sent: telegramSent, configured: telegramConfigured() },
-    reachedSomeone: smsSent + telegramSent > 0,
+    push: { sent: pushSent, configured: pushConfigured() },
+    reachedSomeone: smsSent + telegramSent + pushSent > 0,
+  });
+});
+
+
+// ── Web push (phone notifications) ───────────────────────────────────────────
+
+const pushJoinRate = new Map<string, number[]>();
+function allowPushJoin(ip: string, now = Date.now()): boolean {
+  const recent = (pushJoinRate.get(ip) || []).filter((t) => now - t < 60 * 60_000);
+  if (recent.length >= 20) return false;
+  recent.push(now);
+  pushJoinRate.set(ip, recent);
+  return true;
+}
+const clientIp = (req: express.Request) => String(req.get('x-forwarded-for') || req.ip || '').split(',')[0].trim();
+const isInviteCode = (c: unknown): c is string => typeof c === 'string' && /^[0-9A-Z]{8}$/.test(c);
+
+// This device, signed in to the account, turns on notifications for itself.
+app.post('/api/alerts/push/subscribe', async (req, res) => {
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid) return;
+  if (!pushConfigured()) return res.status(503).json({ error: 'Phone notifications are not set up yet.' });
+  const { subscription, label } = req.body || {};
+  if (!isValidSubscription(subscription)) return res.status(400).json({ error: 'Invalid subscription.' });
+  const ok = await addPushDevice(uid, subscription, clipText(label, 60) || 'This phone').catch(() => false);
+  return ok ? res.json({ status: 'ok' }) : res.status(409).json({ error: 'Too many phones on this account. Remove one first.' });
+});
+
+// A shareable link for family to get notifications on their own phones.
+app.post('/api/alerts/push/invite', async (req, res) => {
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid) return;
+  if (!pushConfigured()) return res.status(503).json({ error: 'Phone notifications are not set up yet.' });
+  try {
+    const { code, expiresAt } = await createPushInvite(uid);
+    const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    return res.json({ code, expiresAt, url: `${baseUrl}/alerts/join/${code}` });
+  } catch (e: any) {
+    console.error('[PUSH] Could not create invite:', e.message);
+    return res.status(503).json({ error: 'Could not create an invite. Please try again.' });
+  }
+});
+
+// Invite landing page: whose alerts these are (first name only).
+app.get('/api/alerts/push/invite/:code', async (req, res) => {
+  const code = String(req.params.code || '').toUpperCase();
+  if (!isInviteCode(code) || !allowPushJoin(clientIp(req))) return res.status(404).json({ error: 'Invite not found.' });
+  const uid = await getPushInviteOwner(code).catch(() => null);
+  if (!uid) return res.status(404).json({ error: 'This invite has expired. Ask for a new link.' });
+  let name = 'your family member';
+  const db = getFirebaseAdminDb();
+  if (db) {
+    const data = (await db.collection('Users').doc(uid).get().catch(() => null))?.data() as Record<string, any> | undefined;
+    if (typeof data?.actualName === 'string' && data.actualName.trim()) name = data.actualName.trim().split(/\s+/)[0].slice(0, 30);
+  }
+  return res.json({ name, vapidPublicKey: vapidPublicKey() });
+});
+
+app.post('/api/alerts/push/join', async (req, res) => {
+  if (!pushConfigured()) return res.status(503).json({ error: 'Phone notifications are not set up yet.' });
+  if (!allowPushJoin(clientIp(req))) return res.status(429).json({ error: 'Too many attempts. Please wait a while.' });
+  const { code, subscription, label } = req.body || {};
+  const c = String(code || '').toUpperCase();
+  if (!isInviteCode(c) || !isValidSubscription(subscription)) return res.status(400).json({ error: 'Invalid request.' });
+  const uid = await joinPushInvite(c, subscription, clipText(label, 60) || 'Family phone').catch(() => null);
+  if (!uid) return res.status(404).json({ error: 'This invite has expired or was used too many times. Ask for a new link.' });
+  await notifyPushDevicesOne(subscription);
+  return res.json({ status: 'ok' });
+});
+
+// A device turning its own notifications off (knowing the endpoint proves it's that device).
+app.post('/api/alerts/push/unsubscribe', async (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (typeof endpoint !== 'string' || !/^https:\/\//.test(endpoint)) return res.status(400).json({ error: 'endpoint is required.' });
+  await removePushEndpointEverywhere(endpoint).catch(() => {});
+  return res.json({ status: 'ok' });
+});
+
+app.get('/api/alerts/push/devices', async (req, res) => {
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid) return;
+  try {
+    const devices = await getPushDevices(uid);
+    return res.json({
+      devices: devices.map((d) => ({ id: d.id, label: d.label, createdAt: d.createdAt, endpoint: d.subscription.endpoint })),
+    });
+  } catch {
+    return res.status(503).json({ error: 'Could not load phones.' });
+  }
+});
+
+app.post('/api/alerts/push/remove', async (req, res) => {
+  const uid = await requireFirebaseUid(req, res);
+  if (!uid) return;
+  const id = typeof req.body?.id === 'string' ? req.body.id : '';
+  if (!/^[0-9a-z]{8}$/.test(id)) return res.status(400).json({ error: 'id is required.' });
+  const removed = await removePushDevice(uid, id).catch(() => false);
+  return res.json({ status: 'ok', removed });
+});
+
+/** Confirms to a newly joined phone that notifications work. */
+async function notifyPushDevicesOne(subscription: PushSubscriptionJSON): Promise<void> {
+  await sendWebPush(subscription, {
+    title: '✅ SafeSpot alerts are on',
+    body: "You'll get a notification here if there's an emergency.",
+    url: '/',
+    tag: 'safespot-welcome',
+  }).catch(() => {});
+}
+
+// iPhone: notifications need SafeSpot on the home screen. While on an invite
+// page the app points at this manifest, so the home-screen app opens the
+// invite instead of the start page.
+app.get('/manifest-join/:code.webmanifest', (req, res) => {
+  const code = String(req.params.code || '').toUpperCase();
+  if (!isInviteCode(code)) return res.status(404).end();
+  res.setHeader('Content-Type', 'application/manifest+json');
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    name: 'SafeSpot.SG',
+    short_name: 'SafeSpot.SG',
+    id: '/',
+    start_url: `/alerts/join/${code}`,
+    display: 'standalone',
+    background_color: '#f3efe6',
+    theme_color: '#2f6d5b',
+    icons: [
+      { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    ],
   });
 });
 
@@ -1871,7 +2020,7 @@ app.post('/api/alerts/test', async (req, res) => {
 app.post('/api/notify/telegram-pin', async (req, res) => {
   const uid = await requireFirebaseUid(req, res);
   if (!uid) return;
-  if (!telegramConfigured()) return res.status(503).json({ error: 'Telegram alerts are not set up yet.' });
+  if (!telegramConfigured() && !pushConfigured()) return res.status(503).json({ error: 'Telegram alerts are not set up yet.' });
   if (!allowNotify(uid)) return res.status(429).json({ error: 'Too many messages sent. Please wait a while.' });
   const { address, lat, lng, driverHint, seniorName, incidentId, emergency } = req.body || {};
   const hasPos = inSingaporeBounds(lat, lng);
@@ -1888,13 +2037,25 @@ app.post('/api/notify/telegram-pin', async (req, res) => {
       ? `\n⚡ Live tracking: ${baseUrl}/track/${incidentId}`
       : '');
   try {
-    const sent = await sendTelegramPin(uid, {
-      text,
-      lat: hasPos ? (lat as number) : undefined,
-      lng: hasPos ? (lng as number) : undefined,
-    });
-    if (sent === 0) return res.status(404).json({ error: 'No Telegram chat is linked yet.' });
-    return res.json({ success: true, chatsNotified: sent });
+    const validIncident = typeof incidentId === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(incidentId);
+    const [sent, pushed] = await Promise.all([
+      sendTelegramPin(uid, {
+        text,
+        lat: hasPos ? (lat as number) : undefined,
+        lng: hasPos ? (lng as number) : undefined,
+      }),
+      emergency === true
+        ? notifyPushDevices(uid, {
+            title: `🚨 ${clipText(seniorName, 60) || 'Senior'} needs help`,
+            body: `${clipText(address, 120) || 'Tap to see where they are.'}`,
+            url: validIncident ? `/track/${incidentId}` : '/',
+            tag: validIncident ? (incidentId as string) : 'safespot-emergency',
+            urgent: true,
+          }).catch(() => 0)
+        : Promise.resolve(0),
+    ]);
+    if (sent + pushed === 0) return res.status(404).json({ error: 'No Telegram chat is linked yet.' });
+    return res.json({ success: true, chatsNotified: sent, pushNotified: pushed });
   } catch (e: any) {
     console.error('[TELEGRAM] telegram-pin failed:', e.message);
     return res.status(502).json({ error: 'Could not send to Telegram.' });
@@ -2305,9 +2466,10 @@ async function startServer() {
 
   if (!smsConfigured()) {
     console.warn(IS_PRODUCTION
-      ? 'TWILIO_* is not set: SMS alerts will NOT be sent.'
-      : 'TWILIO_* is not set: SMS alerts are simulated (development only).');
+      ? 'No SMS provider (TEXTBEE_API_KEY or TWILIO_*) is set: SMS alerts will NOT be sent.'
+      : 'No SMS provider is set: SMS alerts are simulated (development only).');
   }
+  if (!pushConfigured()) console.warn('VAPID_* is not set: phone (web push) notifications are off.');
   if (telegramConfigured() && process.env.APP_BASE_URL) {
     ensureTelegramWebhook(process.env.APP_BASE_URL).catch(() => {});
   }

@@ -47,6 +47,11 @@ describe('computeSetupSteps', () => {
     expect(byId({ ...noSms, telegramChats: 1 }).alerts.done).toBe(true);
   });
 
+  it('a phone getting notifications also counts as a working channel', () => {
+    const noSms = { ...base, signedIn: true, smsActive: false };
+    expect(byId({ ...noSms, pushDevices: 1 }).alerts.done).toBe(true);
+  });
+
   it('SMS needs the contacts on the account (signed in)', () => {
     expect(byId({ ...base, contacts: [mei] }).alerts.done).toBe(false);
     expect(byId({ ...base, signedIn: true, contacts: [mei] }).alerts.done).toBe(true);

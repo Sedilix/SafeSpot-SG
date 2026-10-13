@@ -79,6 +79,7 @@ import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { AlertCircle, PhoneCall, ShieldAlert, Sparkles, Check, RefreshCw } from 'lucide-react';
 import { t } from './locales/translations';
 import { PrivacyPolicy } from './components/PrivacyPolicy';
+import { AlertJoinPage } from './components/AlertJoinPage';
 
 export default function App() {
   // Caregiver live tracking route: /track/:incidentId renders the read-only
@@ -88,6 +89,11 @@ export default function App() {
     : null;
   if (trackMatch) {
     return <CaregiverLiveTracker incidentId={trackMatch[1]} />;
+  }
+  // Family invite for phone notifications: /alerts/join/:code (no account needed).
+  const joinMatch = typeof window !== 'undefined' ? window.location.pathname.match(/^\/alerts\/join\/([0-9A-Za-z]{8})\/?$/) : null;
+  if (joinMatch) {
+    return <AlertJoinPage code={joinMatch[1].toUpperCase()} />;
   }
   if (typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === '/privacy') {
     return <PrivacyPolicy />;
