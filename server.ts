@@ -68,6 +68,7 @@ import {
 import { bearerToken, canManagePairing, checkWearableEventAuth } from './src/utils/wearableAuth';
 import { classifyAddressQuery, mergeAddressSuggestions } from './src/utils/addressSearch';
 import { findPickupOptions } from './src/utils/pickupService';
+import { maybeInitDriveWorkerAtStartup } from './src/routing/driveWorkerClient';
 import type { AddressSuggestion } from './src/types';
 
 const app = express();
@@ -2473,6 +2474,9 @@ async function startServer() {
   if (telegramConfigured() && process.env.APP_BASE_URL) {
     ensureTelegramWebhook(process.env.APP_BASE_URL).catch(() => {});
   }
+
+  // Pre-load routing graph in background if shadow mode or local engine is active
+  maybeInitDriveWorkerAtStartup();
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`SafeSpot.SG Server running on http://0.0.0.0:${PORT}`);
