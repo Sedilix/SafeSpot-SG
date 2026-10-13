@@ -54,6 +54,21 @@ export class DriveWorkerClient {
     return DriveWorkerClient.instance;
   }
 
+  public static hasInstance(): boolean {
+    return DriveWorkerClient.instance !== null;
+  }
+
+  public static resetInstanceForTesting(): void {
+    if (DriveWorkerClient.instance?.worker) {
+      try {
+        DriveWorkerClient.instance.worker.terminate().catch(() => {});
+      } catch {
+        // ignore in test teardown
+      }
+    }
+    DriveWorkerClient.instance = null;
+  }
+
   private constructor() {
     this.init().catch((err) => {
       console.warn('[DRIVE_WORKER] Initialization background error:', err.message);
@@ -76,7 +91,10 @@ export class DriveWorkerClient {
         const tmpGz = '/tmp/singapore-road-graph.json.gz';
         const tmpJson = '/tmp/singapore-road-graph.json';
 
-        if (existsSync(tmpJson)) return tmpJson;
+        if (existsSync(tmpJson)) {
+          console.log(`[DRIVE_WORKER] Using cached road graph at ${tmpJson}`);
+          return tmpJson;
+        }
 
         try {
           console.log(`[DRIVE_WORKER] Downloading road graph from ${uri}...`);
@@ -99,11 +117,18 @@ export class DriveWorkerClient {
 
       // Check standard local path
       const localPath = join(process.cwd(), 'data', 'graph', 'singapore-road-graph.json');
-      if (existsSync(localPath)) return localPath;
+      if (existsSync(localPath)) {
+        console.log(`[DRIVE_WORKER] Using local road graph at ${localPath}`);
+        return localPath;
+      }
 
       const tmpJson = '/tmp/singapore-road-graph.json';
-      if (existsSync(tmpJson)) return tmpJson;
+      if (existsSync(tmpJson)) {
+        console.log(`[DRIVE_WORKER] Using cached road graph at ${tmpJson}`);
+        return tmpJson;
+      }
 
+      console.warn('[DRIVE_WORKER] No road graph available (ROUTING_GRAPH_URI not set/failed and local graph missing)');
       return null;
     })();
 
@@ -252,4 +277,21 @@ export class DriveWorkerClient {
   public get ready(): boolean {
     return this.isReady;
   }
+}
+
+/**
+ * Pre-initializes the DriveWorkerClient at server startup when shadow mode or local engine is active,
+ * downloading and unpacking the road graph in the background without blocking server startup or requests.
+ */
+export function maybeInitDriveWorkerAtStartup(): DriveWorkerClient | null {
+  const isShadow = process.env.ROUTING_SHADOW_DRIVE === '1';
+  const isLocal = process.env.ROUTING_ENGINE_DRIVE === 'local';
+
+  if (!isShadow && !isLocal) {
+    return null;
+  }
+
+  const reason = isLocal ? 'ROUTING_ENGINE_DRIVE=local' : 'ROUTING_SHADOW_DRIVE=1';
+  console.log(`[DRIVE_WORKER] Initializing drive worker client at server startup (${reason})...`);
+  return DriveWorkerClient.getInstance();
 }

@@ -96,6 +96,7 @@ describe('shadow-probe execution', () => {
       simulateGoogle: true,
       pairs: [pair],
       graph: mockGraph,
+      upload: false,
     });
 
     expect(records.length).toBe(1);
