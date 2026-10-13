@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { SHADOW_PAIRS, ShadowRecord, runShadowProbe } from './shadow-probe';
-import { computeStats, resolveTimeOfDay, generateReportMarkdown } from './shadow-report';
+import { computeStats, resolveTimeOfDay, generateReportMarkdown, isUsable } from './shadow-report';
 
 describe('shadow-probe: Fixed Corridor Configuration', () => {
   it('defines exactly 10 valid Singapore O-D pairs', () => {
@@ -41,9 +41,9 @@ describe('shadow-report: Statistics & Time Slots', () => {
 
   it('computes median absolute error, mean signed error, and latency quantiles', () => {
     const samples: ShadowRecord[] = [
-      { at: '2026-10-13T00:30:00.000Z', pairId: 'p1', localSec: 1000, googleSec: 900, diffPct: 11.1, localMs: 120 },
-      { at: '2026-10-13T00:30:00.000Z', pairId: 'p1', localSec: 950, googleSec: 1000, diffPct: -5.0, localMs: 150 },
-      { at: '2026-10-13T00:30:00.000Z', pairId: 'p2', localSec: 800, googleSec: 800, diffPct: 0.0, localMs: 110 },
+      { at: '2026-10-13T00:30:00.000Z', pairId: 'p1', localSec: 1000, googleSec: 900, diffPct: 11.1, localMs: 120, googleOk: true },
+      { at: '2026-10-13T00:30:00.000Z', pairId: 'p1', localSec: 950, googleSec: 1000, diffPct: -5.0, localMs: 150, googleOk: true },
+      { at: '2026-10-13T00:30:00.000Z', pairId: 'p2', localSec: 800, googleSec: 800, diffPct: 0.0, localMs: 110, googleOk: true },
     ];
 
     const stats = computeStats(samples);
@@ -58,7 +58,7 @@ describe('shadow-report: Statistics & Time Slots', () => {
 
   it('generates report markdown containing computed status and breakdown tables', () => {
     const samples: ShadowRecord[] = [
-      { at: '2026-10-13T00:30:00.000Z', pairId: 'toa-payoh-to-raffles-place', localSec: 1200, googleSec: 1150, diffPct: 4.3, localMs: 95 },
+      { at: '2026-10-13T00:30:00.000Z', pairId: 'toa-payoh-to-raffles-place', localSec: 1200, googleSec: 1150, diffPct: 4.3, localMs: 95, googleOk: true },
     ];
 
     const md = generateReportMarkdown(samples);
@@ -102,5 +102,59 @@ describe('shadow-probe execution', () => {
     expect(records[0].pairId).toBe(pair.id);
     expect(records[0].localSec).toBeGreaterThan(0);
     expect(records[0].googleSec).toBeGreaterThan(0);
+    expect(records[0].simulated).toBe(true);
+    expect(records[0].googleOk).toBe(false);
+  });
+
+  it('records a Google failure as a failure, never as a 0% match, and fails the run', async () => {
+    const pair = SHADOW_PAIRS[0];
+    const midLat = (pair.origin.lat + pair.dest.lat) / 2;
+    const midLng = (pair.origin.lng + pair.dest.lng) / 2;
+    const graph = new RoadGraph(
+      buildGraphFromElements([
+        {
+          type: 'way',
+          id: 202,
+          tags: { highway: 'primary', maxspeed: '60' },
+          geometry: [
+            { lat: pair.origin.lat, lon: pair.origin.lng },
+            { lat: midLat, lon: midLng },
+            { lat: pair.dest.lat, lon: pair.dest.lng },
+          ],
+        },
+      ]),
+    );
+    const prevKey = process.env.MAPS_SERVER_KEY;
+    process.env.MAPS_SERVER_KEY = 'test-key';
+    const calls: any[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: any) => {
+        calls.push({ url, body: init?.body ? JSON.parse(init.body) : null });
+        return { ok: false, status: 400, text: async () => '{"error":{"message":"Timestamp must be set to a future time."}}' } as any;
+      }),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(runShadowProbe({ pairs: [pair], graph, upload: false })).rejects.toThrow(/Every Google query failed/);
+      const google = calls.find((c) => String(c.url).includes('computeRoutes'));
+      expect(google.body.departureTime).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+      warn.mockRestore();
+      if (prevKey === undefined) delete process.env.MAPS_SERVER_KEY;
+      else process.env.MAPS_SERVER_KEY = prevKey;
+    }
+  });
+
+  it('reports ignore failed, simulated and pre-fix rows', () => {
+    const rows: any[] = [
+      { at: 'x', pairId: 'a', localSec: 988, googleSec: 988, diffPct: 0, localMs: 100 },
+      { at: 'x', pairId: 'a', localSec: 900, googleSec: null, diffPct: null, localMs: 100, googleOk: false, error: 'HTTP 400' },
+      { at: 'x', pairId: 'a', localSec: 900, googleSec: 1000, diffPct: -10, localMs: 100, googleOk: true },
+    ];
+    expect(rows.filter(isUsable)).toHaveLength(1);
+    expect(computeStats(rows).count).toBe(1);
+    expect(computeStats(rows).medianAbsErrorPct).toBe(10);
   });
 });

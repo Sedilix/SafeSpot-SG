@@ -30,10 +30,16 @@ export interface ShadowPair {
 export interface ShadowRecord {
   at: string;        // ISO timestamp
   pairId: string;    // Identifier of fixed OD corridor
-  localSec: number;  // SafeSpot engine duration in seconds
-  googleSec: number; // Google Routes TRAFFIC_AWARE duration in seconds
-  diffPct: number;   // ((localSec - googleSec) / googleSec) * 100
+  localSec: number;  // SafeSpot engine duration in seconds (0 = engine found no route)
+  googleSec: number | null; // Google Routes TRAFFIC_AWARE duration in seconds; null if the query failed
+  diffPct: number | null;   // ((localSec - googleSec) / googleSec) * 100; null unless both sides succeeded
   localMs: number;   // Engine search execution latency in ms
+  /** True only when Google really answered and the engine found a route. Reports use only these rows. */
+  googleOk?: boolean;
+  /** Test-only rows with a made-up Google time. Never uploaded. */
+  simulated?: boolean;
+  /** Why the row can't be compared, e.g. the Google error message. */
+  error?: string;
 }
 
 /** 10 Fixed Public Singapore O-D Corridors per ROUTING_PLAN.md §9 Fix F */
@@ -117,7 +123,6 @@ export async function queryGoogleDrivingSeconds(
   origin: { lat: number; lng: number },
   dest: { lat: number; lng: number },
   mapsKey: string,
-  departureTime: Date
 ): Promise<number | null> {
   const url = 'https://routes.googleapis.com/directions/v2:computeRoutes';
   const body = {
@@ -125,7 +130,8 @@ export async function queryGoogleDrivingSeconds(
     destination: { location: { latLng: { latitude: dest.lat, longitude: dest.lng } } },
     travelMode: 'DRIVE',
     routingPreference: 'TRAFFIC_AWARE',
-    departureTime: departureTime.toISOString(),
+    // No departureTime: Google then uses "now". Sending our own "now" fails
+    // with "Timestamp must be set to a future time" once it reaches Google.
   };
 
   const res = await fetch(url, {
@@ -259,6 +265,8 @@ export async function runShadowProbe(options?: {
   bucket?: string;
   pairs?: ShadowPair[];
   simulateGoogle?: boolean;
+  /** false = never write to Cloud Storage (tests). */
+  upload?: boolean;
   graph?: RoadGraph;
 }): Promise<ShadowRecord[]> {
   const mapsKey = resolveKey('MAPS_SERVER_KEY', 'C:/Users/SIT EUC/maps_server_key.txt');
@@ -291,24 +299,27 @@ export async function runShadowProbe(options?: {
     const localMs = Math.round(performance.now() - t0);
     const localSec = route ? Math.round(route.durationSeconds) : 0;
 
-    // 3. Query Google Routes TRAFFIC_AWARE
-    let googleSec = 0;
-    if (options?.simulateGoogle || !mapsKey) {
-      // Offline fallback: simulate based on static speed limit
-      googleSec = Math.round(localSec * (1 + (Math.sin(localMs) * 0.05)));
+    // 3. Query Google Routes TRAFFIC_AWARE. A failure is recorded as a
+    // failure (googleSec null), never filled in with the engine's own time.
+    let googleSec: number | null = null;
+    let error: string | undefined;
+    if (options?.simulateGoogle) {
+      googleSec = Math.round(localSec * (1 + Math.sin(localMs) * 0.05));
+    } else if (!mapsKey) {
+      error = 'MAPS_SERVER_KEY not set';
     } else {
       try {
-        const fetchedSec = await queryGoogleDrivingSeconds(p.origin, p.dest, mapsKey, now);
-        googleSec = fetchedSec ?? localSec;
+        googleSec = await queryGoogleDrivingSeconds(p.origin, p.dest, mapsKey);
+        if (googleSec === null) error = 'Google returned no route';
       } catch (err: any) {
-        console.warn(`[SHADOW_PROBE] Google query error for ${p.id}: ${err.message}`);
-        googleSec = localSec;
+        error = String(err.message).slice(0, 160);
+        console.warn(`[SHADOW_PROBE] Google query error for ${p.id}: ${error}`);
       }
     }
+    if (localSec <= 0 && !error) error = 'Engine found no route';
 
-    const diffPct = googleSec > 0
-      ? Number((((localSec - googleSec) / googleSec) * 100).toFixed(1))
-      : 0;
+    const comparable = googleSec !== null && googleSec > 0 && localSec > 0;
+    const diffPct = comparable ? Number((((localSec - googleSec!) / googleSec!) * 100).toFixed(1)) : null;
 
     const rec: ShadowRecord = {
       at: now.toISOString(),
@@ -317,10 +328,17 @@ export async function runShadowProbe(options?: {
       googleSec,
       diffPct,
       localMs,
+      googleOk: comparable && !options?.simulateGoogle,
+      ...(options?.simulateGoogle ? { simulated: true } : {}),
+      ...(error ? { error } : {}),
     };
     records.push(rec);
 
-    console.log(`  -> ${p.id.padEnd(28)}: local=${localSec}s google=${googleSec}s diff=${diffPct > 0 ? '+' : ''}${diffPct}% (${localMs}ms)`);
+    console.log(
+      `  -> ${p.id.padEnd(28)}: local=${localSec}s google=${googleSec ?? 'FAILED'}s ` +
+        (diffPct === null ? `(${error})` : `diff=${diffPct > 0 ? '+' : ''}${diffPct}%`) +
+        ` (${localMs}ms)`,
+    );
   }
 
   // 4. Save locally
@@ -328,13 +346,19 @@ export async function runShadowProbe(options?: {
   console.log(`[SHADOW_PROBE] Appended ${records.length} records to local: ${localFile}`);
 
   // 5. Upload/append to GCS if accessible
-  if (bucket && !options?.simulateGoogle) {
+  if (bucket && !options?.simulateGoogle && options?.upload !== false) {
     try {
       const gcsUri = await appendGcsShadowRecords(records, bucket, dateStr);
       console.log(`[SHADOW_PROBE] Synchronized records to Cloud Storage: ${gcsUri}`);
     } catch (err: any) {
       console.warn(`[SHADOW_PROBE] GCS sync skipped/failed: ${err.message}`);
     }
+  }
+
+  const ok = records.filter((r) => r.googleOk).length;
+  console.log(`[SHADOW_PROBE] ${ok}/${records.length} pairs compared successfully.`);
+  if (!options?.simulateGoogle && records.length > 0 && ok === 0) {
+    throw new Error('Every Google query failed; no usable comparisons this run.');
   }
 
   return records;

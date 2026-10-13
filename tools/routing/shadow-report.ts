@@ -23,7 +23,17 @@ export interface GroupStats {
   p95LatencyMs: number;
 }
 
-export function computeStats(records: ShadowRecord[]): GroupStats {
+/**
+ * Rows where Google really answered. Rows from before 2026-10-13 ~08:00 UTC
+ * (no `googleOk` field) were written while every Google query failed and the
+ * engine's own time was copied in, so they read as false 0% errors.
+ */
+export function isUsable(r: ShadowRecord): boolean {
+  return r.googleOk === true && typeof r.diffPct === 'number' && !r.simulated;
+}
+
+export function computeStats(all: ShadowRecord[]): GroupStats {
+  const records = all.filter(isUsable);
   if (records.length === 0) {
     return {
       count: 0,
@@ -34,8 +44,8 @@ export function computeStats(records: ShadowRecord[]): GroupStats {
     };
   }
 
-  const absErrors = records.map((r) => Math.abs(r.diffPct)).sort((a, b) => a - b);
-  const signedErrors = records.map((r) => r.diffPct);
+  const absErrors = records.map((r) => Math.abs(r.diffPct as number)).sort((a, b) => a - b);
+  const signedErrors = records.map((r) => r.diffPct as number);
   const latencies = records.map((r) => r.localMs).sort((a, b) => a - b);
 
   const medianAbs = absErrors[Math.floor(absErrors.length / 2)];
@@ -93,7 +103,7 @@ export function generateReportMarkdown(records: ShadowRecord[]): string {
 
   let md = `# SafeSpot Routing Engine — Scheduled Drive Shadow Probe Report\n\n`;
   md += `**Generated**: ${new Date().toISOString()}  \n`;
-  md += `**Total Observations**: ${records.length}  \n`;
+  md += `**Usable Observations**: ${records.filter(isUsable).length} of ${records.length} (rows where Google failed, or written before the 2026-10-13 fix, are excluded)  \n`;
   md += `**Evaluation Basis**: SafeSpot Traffic-Aware Engine vs Google Routes API (TRAFFIC_AWARE)  \n\n`;
 
   md += `## Acceptance Criteria Summary\n\n`;
