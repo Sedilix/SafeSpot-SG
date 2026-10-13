@@ -1,38 +1,38 @@
 # SafeSpot Routing Engine — Scheduled Drive Shadow Probe Report
 
-**Generated**: 2026-10-13T05:17:26.422Z  
-**Total Observations**: 22  
+**Generated**: 2026-10-13T06:36:41.704Z  
+**Total Observations**: 10  
 **Evaluation Basis**: SafeSpot Traffic-Aware Engine vs Google Routes API (TRAFFIC_AWARE)  
 
 ## Acceptance Criteria Summary
 
 | Metric | Target | Status | Measured Value |
 |---|---|---|---|
-| **Median Absolute Error** | $\le 20.0\%$ | **PASS** | 14% |
-| **Median Engine Latency** | $< 200$ ms | **FAIL** | 821 ms (p95: 2241 ms) |
-| **Mean Signed Error** | Bias monitor | **INFO** | +0.7% |
+| **Median Absolute Error** | $\le 20.0\%$ | **PASS** | 0% |
+| **Median Engine Latency** | $< 200$ ms | **PASS** | 156 ms (p95: 326 ms) |
+| **Mean Signed Error** | Bias monitor | **INFO** | 0% |
 
 ## Time-of-Day Performance Breakdown
 
 | Time Slot (SGT) | Probes | Median Abs Error | Mean Signed Error | Median Latency | p95 Latency |
 |---|---|---|---|---|---|
 | **Morning Peak (07:00-09:30)** | 0 | 0% | 0% | 0 ms | 0 ms |
-| **Midday (11:30-14:00)** | 22 | 14% | +0.7% | 821 ms | 2241 ms |
+| **Midday (11:30-14:00)** | 0 | 0% | 0% | 0 ms | 0 ms |
 | **Evening Peak (17:00-20:00)** | 0 | 0% | 0% | 0 ms | 0 ms |
-| **Night / Off-Peak** | 0 | 0% | 0% | 0 ms | 0 ms |
+| **Night / Off-Peak** | 10 | 0% | 0% | 156 ms | 326 ms |
 
 ## Corridor Pairwise Breakdown (10 Fixed Corridors)
 
 | Corridor ID | Observations | Median Abs Error | Mean Signed Error | Median Latency |
 |---|---|---|---|---|
-| `toa-payoh-to-raffles-place` | 4 | 10.9% | -5.28% | 713 ms |
-| `toa-payoh-to-changi-t3` | 2 | 19.1% | -16.25% | 1528 ms |
-| `toa-payoh-to-jurong-east` | 2 | 26.1% | +15.25% | 976 ms |
-| `jurong-west-to-woodlands` | 2 | 15.1% | +14.3% | 413 ms |
-| `jurong-west-to-tampines` | 2 | 20.6% | +20.05% | 2241 ms |
-| `jurong-west-to-sengkang` | 2 | 14.6% | +14.2% | 2216 ms |
-| `pasir-ris-to-bedok` | 2 | 0.9% | -0.55% | 241 ms |
-| `ang-mo-kio-to-punggol` | 2 | 24.1% | +23.4% | 864 ms |
-| `clementi-to-harbourfront` | 2 | 100% | -41.05% | 3517 ms |
-| `novena-to-mbs` | 2 | 12.1% | -11.05% | 374 ms |
+| `toa-payoh-to-raffles-place` | 1 | 0% | 0% | 228 ms |
+| `toa-payoh-to-changi-t3` | 1 | 0% | 0% | 156 ms |
+| `toa-payoh-to-jurong-east` | 1 | 0% | 0% | 166 ms |
+| `jurong-west-to-woodlands` | 1 | 0% | 0% | 116 ms |
+| `jurong-west-to-tampines` | 1 | 0% | 0% | 324 ms |
+| `jurong-west-to-sengkang` | 1 | 0% | 0% | 326 ms |
+| `pasir-ris-to-bedok` | 1 | 0% | 0% | 42 ms |
+| `ang-mo-kio-to-punggol` | 1 | 0% | 0% | 89 ms |
+| `clementi-to-harbourfront` | 1 | 0% | 0% | 76 ms |
+| `novena-to-mbs` | 1 | 0% | 0% | 60 ms |
 
