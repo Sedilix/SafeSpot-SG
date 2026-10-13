@@ -8,7 +8,7 @@
  */
 
 import { RoadGraph, CompactEdge, haversineMeters, bearingDegrees } from './graph';
-import { SpeedProfileEngine } from './speedProfiles';
+import { SpeedProfileEngine, DayType } from './speedProfiles';
 import { IncidentLayer } from './incidents';
 import { ErpEngine } from './erp';
 
@@ -48,41 +48,86 @@ export interface AlternativeRoutingOptions extends RoutingOptions {
   maxIterations?: number;      // Default 8
 }
 
-interface HeapItem { edgeId: number; elapsed: number; priority: number }
+class FlatMinHeap {
+  public edgeIds: Int32Array;
+  public elapsedArr: Float64Array;
+  public priorityArr: Float64Array;
+  private _size = 0;
 
-class MinHeap {
-  private a: HeapItem[] = [];
-  get size(): number { return this.a.length; }
-  push(item: HeapItem): void {
-    const a = this.a;
-    a.push(item);
-    let i = a.length - 1;
+  constructor(capacity = 131072) {
+    this.edgeIds = new Int32Array(capacity);
+    this.elapsedArr = new Float64Array(capacity);
+    this.priorityArr = new Float64Array(capacity);
+  }
+
+  get size(): number { return this._size; }
+  clear(): void { this._size = 0; }
+
+  private grow(): void {
+    const newCap = this.edgeIds.length * 2;
+    const newEdges = new Int32Array(newCap);
+    newEdges.set(this.edgeIds);
+    this.edgeIds = newEdges;
+
+    const newElapsed = new Float64Array(newCap);
+    newElapsed.set(this.elapsedArr);
+    this.elapsedArr = newElapsed;
+
+    const newPriority = new Float64Array(newCap);
+    newPriority.set(this.priorityArr);
+    this.priorityArr = newPriority;
+  }
+
+  push(edgeId: number, elapsed: number, priority: number): void {
+    if (this._size >= this.edgeIds.length) this.grow();
+    let i = this._size++;
+    const edges = this.edgeIds;
+    const elapseds = this.elapsedArr;
+    const priorities = this.priorityArr;
+
+    edges[i] = edgeId;
+    elapseds[i] = elapsed;
+    priorities[i] = priority;
+
     while (i > 0) {
       const p = (i - 1) >> 1;
-      if (a[p].priority <= a[i].priority) break;
-      [a[p], a[i]] = [a[i], a[p]];
+      if (priorities[p] <= priorities[i]) break;
+      const te = edges[p], tel = elapseds[p], tp = priorities[p];
+      edges[p] = edges[i]; elapseds[p] = elapseds[i]; priorities[p] = priorities[i];
+      edges[i] = te; elapseds[i] = tel; priorities[i] = tp;
       i = p;
     }
   }
-  pop(): HeapItem | undefined {
-    const a = this.a;
-    if (!a.length) return undefined;
-    const top = a[0];
-    const last = a.pop()!;
-    if (a.length) {
-      a[0] = last;
+
+  pop(out: { edgeId: number; elapsed: number }): boolean {
+    if (this._size === 0) return false;
+    const edges = this.edgeIds;
+    const elapseds = this.elapsedArr;
+    const priorities = this.priorityArr;
+
+    out.edgeId = edges[0];
+    out.elapsed = elapseds[0];
+
+    const last = --this._size;
+    if (last > 0) {
+      edges[0] = edges[last];
+      elapseds[0] = elapseds[last];
+      priorities[0] = priorities[last];
+
       let i = 0;
       for (;;) {
-        const l = 2 * i + 1, r = l + 1;
+        const l = (i << 1) + 1, r = l + 1;
         let m = i;
-        if (l < a.length && a[l].priority < a[m].priority) m = l;
-        if (r < a.length && a[r].priority < a[m].priority) m = r;
+        if (l < this._size && priorities[l] < priorities[m]) m = l;
+        if (r < this._size && priorities[r] < priorities[m]) m = r;
         if (m === i) break;
-        [a[m], a[i]] = [a[i], a[m]];
+        const te = edges[m], tel = elapseds[m], tp = priorities[m];
+        edges[m] = edges[i]; elapseds[m] = elapseds[i]; priorities[m] = priorities[i];
+        edges[i] = te; elapseds[i] = tel; priorities[i] = tp;
         i = m;
       }
     }
-    return top;
+    return true;
   }
 }
 
@@ -95,14 +140,19 @@ export class Router {
   /** Heuristic slack (m) so the half-edge accounting at the destination can't make h inadmissible. */
   private static readonly HEURISTIC_SLACK_M = 200;
 
-  constructor(private graph: RoadGraph) {}
+  private heap = new FlatMinHeap();
+  private popItem = { edgeId: 0, elapsed: 0 };
+  private best: Float64Array;
+  private prev: Int32Array;
+
+  constructor(private graph: RoadGraph) {
+    this.best = new Float64Array(graph.edges.length);
+    this.prev = new Int32Array(graph.edges.length);
+  }
 
   /** Signed turn angle in degrees, positive = right, in (-180, 180]. */
-  private turnAngle(from: CompactEdge, to: CompactEdge): number {
-    const g = this.graph.nodes;
-    const b1 = bearingDegrees(g[from.from].lat, g[from.from].lng, g[from.to].lat, g[from.to].lng);
-    const b2 = bearingDegrees(g[to.from].lat, g[to.from].lng, g[to.to].lat, g[to.to].lng);
-    return ((b2 - b1 + 540) % 360) - 180;
+  public turnAngle(from: CompactEdge, to: CompactEdge): number {
+    return ((this.graph.edgeBearings[to.id] - this.graph.edgeBearings[from.id] + 540) % 360) - 180;
   }
 
   /** Whether `from` -> `to` is legal, and the delay it costs. */
@@ -110,26 +160,32 @@ export class Router {
     const via = from.to;
     const isReverse = to.to === from.from;
 
-    // Restrictions are matched on (from-way, via-node, to-way), as OSM defines them.
-    for (const r of this.graph.restrictionsAt(from.wayId, via)) {
-      const toMatches = to.wayId === r.toWayId;
-      if (r.type === 'no_u_turn') {
-        if (toMatches && (isReverse || Math.abs(this.turnAngle(from, to)) > 135)) return { allowed: false, delaySec: 0 };
-      } else if (r.type.startsWith('no_')) {
-        if (!toMatches) continue;
-        if (from.wayId !== r.toWayId) return { allowed: false, delaySec: 0 };
-        const a = this.turnAngle(from, to); // same way continues: fall back to angle class
-        if ((r.type === 'no_left_turn' && a < -30) || (r.type === 'no_right_turn' && a > 30) ||
-            (r.type === 'no_straight_on' && Math.abs(a) <= 30)) return { allowed: false, delaySec: 0 };
-      } else if (r.type.startsWith('only_')) {
-        if (!toMatches) return { allowed: false, delaySec: 0 };
-        if (isReverse && r.type !== 'only_u_turn') return { allowed: false, delaySec: 0 };
+    if (this.graph.hasRestrictions[via]) {
+      // Restrictions are matched on (from-way, via-node, to-way), as OSM defines them.
+      for (const r of this.graph.restrictionsAt(from.wayId, via)) {
+        const toMatches = to.wayId === r.toWayId;
+        if (r.type === 'no_u_turn') {
+          if (toMatches && (isReverse || Math.abs(this.turnAngle(from, to)) > 135)) return { allowed: false, delaySec: 0 };
+        } else if (r.type.startsWith('no_')) {
+          if (!toMatches) continue;
+          if (from.wayId !== r.toWayId) return { allowed: false, delaySec: 0 };
+          const a = this.turnAngle(from, to); // same way continues: fall back to angle class
+          if ((r.type === 'no_left_turn' && a < -30) || (r.type === 'no_right_turn' && a > 30) ||
+              (r.type === 'no_straight_on' && Math.abs(a) <= 30)) return { allowed: false, delaySec: 0 };
+        } else if (r.type.startsWith('only_')) {
+          if (!toMatches) return { allowed: false, delaySec: 0 };
+          if (isReverse && r.type !== 'only_u_turn') return { allowed: false, delaySec: 0 };
+        }
       }
     }
 
     if (isReverse) {
-      const exits = this.graph.outgoingEdges[via].filter((id) => this.graph.edges[id].to !== from.from);
-      return exits.length === 0 ? { allowed: true, delaySec: Router.DELAY_UTURN_SEC } : { allowed: false, delaySec: 0 };
+      const start = this.graph.outgoingOffsets[via];
+      const end = this.graph.outgoingOffsets[via + 1];
+      for (let k = start; k < end; k++) {
+        if (this.graph.edgeTo[this.graph.outgoingEdgeIds[k]] !== from.from) return { allowed: false, delaySec: 0 };
+      }
+      return { allowed: true, delaySec: Router.DELAY_UTURN_SEC };
     }
 
     if (!this.graph.isJunction[via]) return { allowed: true, delaySec: 0 };
@@ -152,50 +208,90 @@ export class Router {
 
     const { edges, nodes } = this.graph;
     const targetIds = new Set(t.edges.map((e) => e.id));
-    const best = new Float64Array(edges.length).fill(Infinity);
-    const prev = new Int32Array(edges.length).fill(-1);
-    const heap = new MinHeap();
+
+    if (this.best.length !== edges.length) {
+      this.best = new Float64Array(edges.length);
+      this.prev = new Int32Array(edges.length);
+    }
+    const best = this.best;
+    const prev = this.prev;
+    best.fill(Infinity);
+    prev.fill(-1);
+
+    const heap = this.heap;
+    heap.clear();
+    const popObj = this.popItem;
+
+    const destLat = dest.lat, destLng = dest.lng;
     const h = (edge: CompactEdge) =>
-      Math.max(0, haversineMeters(nodes[edge.to].lat, nodes[edge.to].lng, dest.lat, dest.lng) - Router.HEURISTIC_SLACK_M) / Router.MAX_SPEED_MS;
+      Math.max(0, haversineMeters(this.graph.nodeLat[edge.to], this.graph.nodeLng[edge.to], destLat, destLng) - Router.HEURISTIC_SLACK_M) / Router.MAX_SPEED_MS;
 
     const departureTime = options?.departureTime || new Date();
     const speedProfiles = options?.speedProfiles;
     const incidents = options?.incidents;
     const erp = options?.erp;
+    const hasIncidents = incidents && incidents.count > 0;
+    const hasPenalties = options?.edgePenalties && options.edgePenalties.size > 0;
     const encounteredIncidents = new Set<string>();
+
+    const baseDayType = speedProfiles ? SpeedProfileEngine.getDayType(departureTime) : 'WEEKDAY';
+    const baseSgtMs = departureTime.getTime() + 8 * 3600 * 1000;
+    const dSgt = new Date(baseSgtMs);
+    const baseDaySec = dSgt.getUTCHours() * 3600 + dSgt.getUTCMinutes() * 60 + dSgt.getUTCSeconds();
+    const baseSlot = Math.floor(baseDaySec / 900);
 
     // Start mid-segment: either direction, half the segment still to travel.
     for (const e of s.edges) {
-      if (incidents) {
+      if (hasIncidents) {
         const a = nodes[e.from], b = nodes[e.to];
         const impact = incidents.evaluateEdgeImpact(a.lat, a.lng, b.lat, b.lng, departureTime);
         if (impact.impassable) continue;
       }
-      const initialSeconds = speedProfiles ? speedProfiles.calculateEdgeSeconds(e, departureTime) : e.seconds;
-      const penalty = options?.edgePenalties?.get(e.id) ?? 1.0;
+      const initialSeconds = speedProfiles
+        ? speedProfiles.calculateEdgeSecondsFast(
+            e.id,
+            this.graph.edgeLength[e.id],
+            this.graph.edgeMaxspeed[e.id],
+            this.graph.edgeBaseSpeeds[e.id],
+            this.graph.edgeBearings[e.id],
+            this.graph.edgeHighwayType[e.id],
+            this.graph.edgeSchoolSilver[e.id],
+            baseDayType,
+            baseSlot
+          )
+        : this.graph.edgeSeconds[e.id];
+
+      const penalty = hasPenalties ? (options?.edgePenalties?.get(e.id) ?? 1.0) : 1.0;
       const c = initialSeconds * 0.5 * penalty;
       best[e.id] = c;
-      heap.push({ edgeId: e.id, elapsed: c, priority: c + h(e) });
+      heap.push(e.id, c, c + h(e));
     }
 
     let reached = -1;
     while (heap.size) {
-      const top = heap.pop()!;
-      if (top.elapsed > best[top.edgeId]) continue; // stale entry (Float64: exact comparison is safe)
-      if (targetIds.has(top.edgeId)) { reached = top.edgeId; break; }
-      const cur = edges[top.edgeId];
+      heap.pop(popObj);
+      const topEdgeId = popObj.edgeId;
+      const topElapsed = popObj.elapsed;
 
-      for (const nid of this.graph.outgoingEdges[cur.to]) {
+      if (topElapsed > best[topEdgeId]) continue; // stale entry (Float64: exact comparison is safe)
+      if (targetIds.has(topEdgeId)) { reached = topEdgeId; break; }
+      const cur = edges[topEdgeId];
+
+      const startOut = this.graph.outgoingOffsets[cur.to];
+      const endOut = this.graph.outgoingOffsets[cur.to + 1];
+
+      for (let j = startOut; j < endOut; j++) {
+        const nid = this.graph.outgoingEdgeIds[j];
         const next = edges[nid];
         const turn = this.evaluateTurn(cur, next);
         if (!turn.allowed) continue;
 
-        const arrivalMs = departureTime.getTime() + (top.elapsed + turn.delaySec) * 1000;
-        const arrivalTime = new Date(arrivalMs);
+        const arrivalElapsed = topElapsed + turn.delaySec;
 
         // 1. Live Incidents: impassable closures and decay delays
         let incidentDelay = 0;
-        if (incidents) {
+        if (hasIncidents) {
+          const arrivalTime = new Date(departureTime.getTime() + arrivalElapsed * 1000);
           const a = nodes[next.from], b = nodes[next.to];
           const impact = incidents.evaluateEdgeImpact(a.lat, a.lng, b.lat, b.lng, arrivalTime);
           if (impact.impassable) {
@@ -208,19 +304,30 @@ export class Router {
         }
 
         // 2. Time-dependent speed profile at arrival time
-        let nextSeconds = next.seconds;
+        let nextSeconds: number;
         if (speedProfiles) {
-          const a = nodes[next.from], b = nodes[next.to];
-          const bearing = bearingDegrees(a.lat, a.lng, b.lat, b.lng);
-          nextSeconds = speedProfiles.calculateEdgeSeconds(next, arrivalTime, bearing);
+          const slotIndex = Math.floor((baseDaySec + arrivalElapsed) / 900) % 96;
+          nextSeconds = speedProfiles.calculateEdgeSecondsFast(
+            nid,
+            this.graph.edgeLength[nid],
+            this.graph.edgeMaxspeed[nid],
+            this.graph.edgeBaseSpeeds[nid],
+            this.graph.edgeBearings[nid],
+            this.graph.edgeHighwayType[nid],
+            this.graph.edgeSchoolSilver[nid],
+            baseDayType,
+            slotIndex
+          );
+        } else {
+          nextSeconds = this.graph.edgeSeconds[nid];
         }
 
-        const penalty = options?.edgePenalties?.get(next.id) ?? 1.0;
-        const cost = top.elapsed + turn.delaySec + incidentDelay + nextSeconds * penalty;
+        const penalty = hasPenalties ? (options?.edgePenalties?.get(nid) ?? 1.0) : 1.0;
+        const cost = arrivalElapsed + incidentDelay + nextSeconds * penalty;
         if (cost < best[nid]) {
           best[nid] = cost;
-          prev[nid] = top.edgeId;
-          heap.push({ edgeId: nid, elapsed: cost, priority: cost + h(next) });
+          prev[nid] = topEdgeId;
+          heap.push(nid, cost, cost + h(next));
         }
       }
     }
@@ -237,7 +344,9 @@ export class Router {
       incidents,
       erp,
       encounteredIncidents,
-      options?.edgePenalties
+      options?.edgePenalties,
+      baseDayType,
+      baseDaySec
     );
   }
 
@@ -252,7 +361,9 @@ export class Router {
     incidents?: IncidentLayer,
     erp?: ErpEngine,
     encounteredIncidents?: Set<string>,
-    edgePenalties?: Map<number, number>
+    edgePenalties?: Map<number, number>,
+    baseDayType: DayType = 'WEEKDAY',
+    baseDaySec = 0
   ): RouteResult {
     const { edges, nodes } = this.graph;
     const path: CompactEdge[] = [];
@@ -287,9 +398,24 @@ export class Router {
       seconds = unpenalizedSeconds;
     } else {
       // We entered the last edge to detect arrival but the target is mid-segment: refund half of it.
-      const lastEdgeSeconds = speedProfiles
-        ? speedProfiles.calculateEdgeSeconds(edges[reached], new Date(departureTime.getTime() + best[reached] * 1000))
-        : edges[reached].seconds;
+      let lastEdgeSeconds: number;
+      if (speedProfiles) {
+        const arrivalElapsed = best[reached];
+        const slot = Math.floor((baseDaySec + arrivalElapsed) / 900) % 96;
+        lastEdgeSeconds = speedProfiles.calculateEdgeSecondsFast(
+          reached,
+          this.graph.edgeLength[reached],
+          this.graph.edgeMaxspeed[reached],
+          this.graph.edgeBaseSpeeds[reached],
+          this.graph.edgeBearings[reached],
+          this.graph.edgeHighwayType[reached],
+          this.graph.edgeSchoolSilver[reached],
+          baseDayType,
+          slot
+        );
+      } else {
+        lastEdgeSeconds = edges[reached].seconds;
+      }
       seconds = best[reached] - lastEdgeSeconds * 0.5;
     }
 
@@ -376,41 +502,66 @@ export class Router {
 
     const best = new Float64Array(edges.length).fill(Infinity);
     const prev = new Int32Array(edges.length).fill(-1);
-    const heap = new MinHeap();
+    const heap = new FlatMinHeap();
+    const popObj = { edgeId: 0, elapsed: 0 };
 
     const departureTime = options?.departureTime || new Date();
     const speedProfiles = options?.speedProfiles;
     const incidents = options?.incidents;
     const erp = options?.erp;
+    const hasIncidents = incidents && incidents.count > 0;
+    const hasPenalties = options?.edgePenalties && options.edgePenalties.size > 0;
     const encounteredIncidents = new Set<string>();
     const MAX_ELAPSED_CAP_SEC = 3600; // 3,600 s cap per §8 E3
 
+    const baseDayType = speedProfiles ? SpeedProfileEngine.getDayType(departureTime) : 'WEEKDAY';
+    const baseSgtMs = departureTime.getTime() + 8 * 3600 * 1000;
+    const dSgt = new Date(baseSgtMs);
+    const baseDaySec = dSgt.getUTCHours() * 3600 + dSgt.getUTCMinutes() * 60 + dSgt.getUTCSeconds();
+    const baseSlot = Math.floor(baseDaySec / 900);
+
     // Start mid-segment: either direction, half the segment still to travel.
     for (const e of s.edges) {
-      if (incidents) {
+      if (hasIncidents) {
         const a = nodes[e.from], b = nodes[e.to];
         const impact = incidents.evaluateEdgeImpact(a.lat, a.lng, b.lat, b.lng, departureTime);
         if (impact.impassable) continue;
       }
-      const initialSeconds = speedProfiles ? speedProfiles.calculateEdgeSeconds(e, departureTime) : e.seconds;
-      const penalty = options?.edgePenalties?.get(e.id) ?? 1.0;
+      const initialSeconds = speedProfiles
+        ? speedProfiles.calculateEdgeSecondsFast(
+            e.id,
+            this.graph.edgeLength[e.id],
+            this.graph.edgeMaxspeed[e.id],
+            this.graph.edgeBaseSpeeds[e.id],
+            this.graph.edgeBearings[e.id],
+            this.graph.edgeHighwayType[e.id],
+            this.graph.edgeSchoolSilver[e.id],
+            baseDayType,
+            baseSlot
+          )
+        : this.graph.edgeSeconds[e.id];
+
+      const penalty = hasPenalties ? (options?.edgePenalties?.get(e.id) ?? 1.0) : 1.0;
       const c = initialSeconds * 0.5 * penalty;
       best[e.id] = c;
-      heap.push({ edgeId: e.id, elapsed: c, priority: c });
+      heap.push(e.id, c, c);
     }
 
     while (heap.size > 0 && unsettledTargets.size > 0) {
-      const top = heap.pop()!;
-      if (top.elapsed > best[top.edgeId]) continue; // Stale entry
-      if (top.elapsed > MAX_ELAPSED_CAP_SEC) break; // Reached cap
+      heap.pop(popObj);
+      const topEdgeId = popObj.edgeId;
+      const topElapsed = popObj.elapsed;
+
+      if (topElapsed > best[topEdgeId]) continue; // Stale entry
+      if (topElapsed > MAX_ELAPSED_CAP_SEC) break; // Reached cap
 
       // Check if this edge settles any target
-      const matchingTargets = edgeToTargets.get(top.edgeId);
+      const matchingTargets = edgeToTargets.get(topEdgeId);
       if (matchingTargets) {
         for (const mt of matchingTargets) {
           if (unsettledTargets.has(mt.id)) {
             const route = this.reconstructRoute(
-              top.edgeId,
+              topEdgeId,
               prev,
               best,
               departureTime,
@@ -420,7 +571,9 @@ export class Router {
               incidents,
               erp,
               encounteredIncidents,
-              options?.edgePenalties
+              options?.edgePenalties,
+              baseDayType,
+              baseDaySec
             );
             results.set(mt.id, route);
             unsettledTargets.delete(mt.id);
@@ -429,17 +582,21 @@ export class Router {
         if (unsettledTargets.size === 0) break;
       }
 
-      const cur = edges[top.edgeId];
-      for (const nid of this.graph.outgoingEdges[cur.to]) {
+      const cur = edges[topEdgeId];
+      const startOut = this.graph.outgoingOffsets[cur.to];
+      const endOut = this.graph.outgoingOffsets[cur.to + 1];
+
+      for (let j = startOut; j < endOut; j++) {
+        const nid = this.graph.outgoingEdgeIds[j];
         const next = edges[nid];
         const turn = this.evaluateTurn(cur, next);
         if (!turn.allowed) continue;
 
-        const arrivalMs = departureTime.getTime() + (top.elapsed + turn.delaySec) * 1000;
-        const arrivalTime = new Date(arrivalMs);
+        const arrivalElapsed = topElapsed + turn.delaySec;
 
         let incidentDelay = 0;
-        if (incidents) {
+        if (hasIncidents) {
+          const arrivalTime = new Date(departureTime.getTime() + arrivalElapsed * 1000);
           const a = nodes[next.from], b = nodes[next.to];
           const impact = incidents.evaluateEdgeImpact(a.lat, a.lng, b.lat, b.lng, arrivalTime);
           if (impact.impassable) continue;
@@ -449,19 +606,30 @@ export class Router {
           }
         }
 
-        let nextSeconds = next.seconds;
+        let nextSeconds: number;
         if (speedProfiles) {
-          const a = nodes[next.from], b = nodes[next.to];
-          const bearing = bearingDegrees(a.lat, a.lng, b.lat, b.lng);
-          nextSeconds = speedProfiles.calculateEdgeSeconds(next, arrivalTime, bearing);
+          const slotIndex = Math.floor((baseDaySec + arrivalElapsed) / 900) % 96;
+          nextSeconds = speedProfiles.calculateEdgeSecondsFast(
+            nid,
+            this.graph.edgeLength[nid],
+            this.graph.edgeMaxspeed[nid],
+            this.graph.edgeBaseSpeeds[nid],
+            this.graph.edgeBearings[nid],
+            this.graph.edgeHighwayType[nid],
+            this.graph.edgeSchoolSilver[nid],
+            baseDayType,
+            slotIndex
+          );
+        } else {
+          nextSeconds = this.graph.edgeSeconds[nid];
         }
 
-        const penalty = options?.edgePenalties?.get(next.id) ?? 1.0;
-        const cost = top.elapsed + turn.delaySec + incidentDelay + nextSeconds * penalty;
+        const penalty = hasPenalties ? (options?.edgePenalties?.get(nid) ?? 1.0) : 1.0;
+        const cost = arrivalElapsed + incidentDelay + nextSeconds * penalty;
         if (cost < best[nid]) {
           best[nid] = cost;
-          prev[nid] = top.edgeId;
-          heap.push({ edgeId: nid, elapsed: cost, priority: cost });
+          prev[nid] = topEdgeId;
+          heap.push(nid, cost, cost);
         }
       }
     }

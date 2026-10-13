@@ -77,12 +77,33 @@ export interface Snap {
 /** Classes a car can't be dropped onto from an arbitrary point (limited access). */
 const NOT_SNAPPABLE = new Set(['motorway', 'motorway_link']);
 
+const EMPTY_RESTRICTIONS: TurnRestriction[] = [];
+
 export class RoadGraph {
   public nodes: CompactNode[];
   public edges: CompactEdge[];
   public outgoingEdges: number[][];
   /** 1 where 3+ distinct neighbouring nodes meet: only there do turn delays/angles apply. */
   public isJunction: Uint8Array;
+
+  // Typed arrays for high-performance cache-friendly routing
+  public nodeLat: Float64Array;
+  public nodeLng: Float64Array;
+  public nodeCos: Float32Array;
+  public edgeFrom: Int32Array;
+  public edgeTo: Int32Array;
+  public edgeLength: Float32Array;
+  public edgeSeconds: Float32Array;
+  public edgeMaxspeed: Uint8Array;
+  public edgeWayId: Int32Array;
+  public edgeBearings: Float32Array;
+  public edgeBaseSpeeds: Float32Array;
+  public edgeSchoolSilver: Uint8Array;
+  public edgeHighwayType: Uint8Array;
+  public outgoingOffsets: Int32Array;
+  public outgoingEdgeIds: Int32Array;
+  public hasRestrictions: Uint8Array;
+
   private restrictionIndex = new Map<string, TurnRestriction[]>();
   private grid = new Map<number, number[]>();
   private static readonly GRID_SCALE = 100; // ~1.1 km cells
@@ -90,19 +111,85 @@ export class RoadGraph {
   constructor(data: RoadGraphData) {
     this.nodes = data.nodes;
     this.edges = data.edges;
-    this.outgoingEdges = Array.from({ length: this.nodes.length }, () => [] as number[]);
-    const neighbours: Array<Set<number>> = Array.from({ length: this.nodes.length }, () => new Set<number>());
+    const N = this.nodes.length;
+    const M = this.edges.length;
 
-    for (const e of this.edges) {
+    this.outgoingEdges = Array.from({ length: N }, () => [] as number[]);
+    const neighbours: Array<Set<number>> = Array.from({ length: N }, () => new Set<number>());
+
+    this.nodeLat = new Float64Array(N);
+    this.nodeLng = new Float64Array(N);
+    this.nodeCos = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      this.nodeLat[i] = this.nodes[i].lat;
+      this.nodeLng[i] = this.nodes[i].lng;
+      this.nodeCos[i] = Math.cos((this.nodes[i].lat * Math.PI) / 180);
+    }
+
+    this.edgeFrom = new Int32Array(M);
+    this.edgeTo = new Int32Array(M);
+    this.edgeLength = new Float32Array(M);
+    this.edgeSeconds = new Float32Array(M);
+    this.edgeMaxspeed = new Uint8Array(M);
+    this.edgeWayId = new Int32Array(M);
+    this.edgeBearings = new Float32Array(M);
+    this.edgeBaseSpeeds = new Float32Array(M);
+    this.edgeSchoolSilver = new Uint8Array(M);
+    this.edgeHighwayType = new Uint8Array(M);
+
+    for (let i = 0; i < M; i++) {
+      const e = this.edges[i];
       this.outgoingEdges[e.from].push(e.id);
       neighbours[e.from].add(e.to);
       neighbours[e.to].add(e.from);
       this.indexEdge(e);
+
+      this.edgeFrom[i] = e.from;
+      this.edgeTo[i] = e.to;
+      this.edgeLength[i] = e.length;
+      this.edgeSeconds[i] = e.seconds;
+      this.edgeMaxspeed[i] = e.maxspeed;
+      this.edgeWayId[i] = e.wayId;
+
+      const aLat = this.nodeLat[e.from], aLng = this.nodeLng[e.from];
+      const bLat = this.nodeLat[e.to], bLng = this.nodeLng[e.to];
+      this.edgeBearings[i] = bearingDegrees(aLat, aLng, bLat, bLng);
+      this.edgeBaseSpeeds[i] = (e.length / e.seconds) * 3.6;
+
+      const nl = (e.name || '').toLowerCase();
+      if (nl.includes('school') || nl.includes('primary')) this.edgeSchoolSilver[i] = 1;
+      else if (nl.includes('silver zone')) this.edgeSchoolSilver[i] = e.highway === 'residential' ? 3 : 2;
+
+      if (e.highway === 'motorway' || e.highway === 'motorway_link') this.edgeHighwayType[i] = 1;
+      else if (e.highway === 'trunk' || e.highway === 'primary' || e.highway === 'primary_link') this.edgeHighwayType[i] = 2;
     }
-    this.isJunction = new Uint8Array(this.nodes.length);
+
+    this.isJunction = new Uint8Array(N);
     for (let i = 0; i < neighbours.length; i++) this.isJunction[i] = neighbours[i].size >= 3 ? 1 : 0;
 
+    // Build CSR for outgoing edges
+    this.outgoingOffsets = new Int32Array(N + 1);
+    let totalOut = 0;
+    for (let i = 0; i < N; i++) {
+      this.outgoingOffsets[i] = totalOut;
+      totalOut += this.outgoingEdges[i].length;
+    }
+    this.outgoingOffsets[N] = totalOut;
+
+    this.outgoingEdgeIds = new Int32Array(totalOut);
+    for (let i = 0; i < N; i++) {
+      const edges = this.outgoingEdges[i];
+      const off = this.outgoingOffsets[i];
+      for (let j = 0; j < edges.length; j++) {
+        this.outgoingEdgeIds[off + j] = edges[j];
+      }
+    }
+
+    this.hasRestrictions = new Uint8Array(N);
     for (const r of data.turnRestrictions ?? []) {
+      if (r.viaNode >= 0 && r.viaNode < N) {
+        this.hasRestrictions[r.viaNode] = 1;
+      }
       const key = `${r.fromWayId}|${r.viaNode}`;
       const list = this.restrictionIndex.get(key);
       if (list) list.push(r); else this.restrictionIndex.set(key, [r]);
@@ -110,7 +197,8 @@ export class RoadGraph {
   }
 
   public restrictionsAt(fromWayId: number, viaNode: number): TurnRestriction[] {
-    return this.restrictionIndex.get(`${fromWayId}|${viaNode}`) ?? [];
+    if (!this.hasRestrictions[viaNode]) return EMPTY_RESTRICTIONS;
+    return this.restrictionIndex.get(`${fromWayId}|${viaNode}`) ?? EMPTY_RESTRICTIONS;
   }
 
   private cell(lat: number, lng: number): number {
