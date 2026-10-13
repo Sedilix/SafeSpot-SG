@@ -143,6 +143,68 @@ export class SpeedProfileEngine {
     return Math.max(10, baseSpeed * factor);
   }
 
+  public get hasCustomProfiles(): boolean {
+    return this.linkProfiles.size > 0;
+  }
+
+  /**
+   * Fast path for edge travel duration using precomputed typed arrays and slot index.
+   * Avoids all Date instantiations, string manipulations, and trigonometric calculations.
+   */
+  public calculateEdgeSecondsFast(
+    edgeId: number,
+    edgeLength: number,
+    edgeMaxspeed: number,
+    baseSpeed: number,
+    bearing: number,
+    highwayType: number,
+    schoolSilver: number,
+    dayType: DayType,
+    slotIndex: number
+  ): number {
+    if (this.linkProfiles.size > 0) {
+      const explicit = this.linkProfiles.get(String(edgeId));
+      if (explicit && explicit.slots[slotIndex] > 0) {
+        return edgeLength / (explicit.slots[slotIndex] / 3.6);
+      }
+    }
+
+    if (schoolSilver === 1 || schoolSilver === 2) {
+      const speedKmh = Math.min(40, edgeMaxspeed);
+      return edgeLength / (speedKmh / 3.6);
+    }
+    if (schoolSilver === 3) {
+      const speedKmh = Math.min(30, edgeMaxspeed);
+      return edgeLength / (speedKmh / 3.6);
+    }
+
+    if (dayType === 'SUNDAY_PH') {
+      const speedKmh = Math.max(10, baseSpeed);
+      return edgeLength / (speedKmh / 3.6);
+    }
+
+    const isMorning = slotIndex >= 28 && slotIndex <= 38;
+    const isEvening = slotIndex >= 70 && slotIndex <= 80;
+    let factor = 1.0;
+
+    if (isMorning) {
+      const isInbound = bearing >= 120 && bearing <= 240;
+      if (highwayType === 1) factor = isInbound ? 0.62 : 0.88;
+      else if (highwayType === 2) factor = isInbound ? 0.68 : 0.85;
+      else factor = 0.85;
+    } else if (isEvening) {
+      const isOutbound = bearing <= 60 || bearing >= 300;
+      if (highwayType === 1) factor = isOutbound ? 0.65 : 0.85;
+      else if (highwayType === 2) factor = isOutbound ? 0.70 : 0.85;
+      else factor = 0.88;
+    } else if (slotIndex >= 46 && slotIndex <= 56) {
+      if (highwayType === 2) factor = 0.90;
+    }
+
+    const speedKmh = Math.max(10, baseSpeed * factor);
+    return edgeLength / (speedKmh / 3.6);
+  }
+
   /**
    * Calculates the edge travel duration in seconds at arrival time.
    */

@@ -42,6 +42,10 @@ export class IncidentLayer {
     this.incidents.push(incident);
   }
 
+  public get count(): number {
+    return this.incidents.length;
+  }
+
   /**
    * Evaluates the impact of live incidents on a specific road edge at arrival time.
    */
@@ -52,6 +56,10 @@ export class IncidentLayer {
     endLng: number,
     arrivalTime: Date
   ): IncidentImpact {
+    if (this.incidents.length === 0) {
+      return { impassable: false, delaySec: 0 };
+    }
+
     const midLat = (startLat + endLat) / 2;
     const midLng = (startLng + endLng) / 2;
     const nowMs = arrivalTime.getTime();
