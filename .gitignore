@@ -20,3 +20,4 @@ data/graph/
 
 # Route probe output (research data)
 tools/route-probe/out/
+tools/routing/out/shadow/
