@@ -26,6 +26,7 @@ import {
   ensureTelegramWebhook,
   escapeHtml,
   getBotUsername,
+  googleMapsUrl,
   parseLinkCommand,
   RESPOND_CALLBACK_PREFIX,
   sendTelegramText,
@@ -270,14 +271,15 @@ async function fetchReverseGeocode(lat: number, lng: number): Promise<string | n
   if (mapsKey) {
     try {
       const gRes = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${mapsKey}`
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${mapsKey}`,
+        { signal: AbortSignal.timeout(4000) },
       );
-      if (gRes.ok) {
-        const data = await gRes.json();
-        if (data.results && data.results.length > 0) {
-          return data.results[0].formatted_address;
-        }
+      const data = (await gRes.json().catch(() => ({}))) as any;
+      if (gRes.ok && data.results && data.results.length > 0) {
+        return data.results[0].formatted_address;
       }
+      // Google answers HTTP 200 with a status like REQUEST_DENIED; say why.
+      console.warn(`[GEOCODE] Google reverse geocode failed: HTTP ${gRes.status} ${data.status || ''} ${String(data.error_message || '').slice(0, 160)}`);
     } catch (e) {
       console.warn('Google geocoding error:', e);
     }
@@ -289,14 +291,16 @@ async function fetchReverseGeocode(lat: number, lng: number): Promise<string | n
       `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
       {
         headers: {
-          'User-Agent': 'SeniorSafeSpotApp/1.0',
+          'User-Agent': 'SafeSpot-SG/1.0 (https://github.com/Sedilix/SafeSpot-SG)',
         },
+        signal: AbortSignal.timeout(4000),
       }
     );
     if (osmRes.ok) {
       const data = await osmRes.json();
       return data.display_name || null;
     }
+    console.warn(`[GEOCODE] OpenStreetMap reverse geocode failed: HTTP ${osmRes.status}`);
   } catch (e) {
     console.warn('OSM geocoding error:', e);
   }
@@ -1879,6 +1883,7 @@ app.post('/api/notify/telegram-pin', async (req, res) => {
       : `📍 <b>Pick-up location for ${name}</b>\n`) +
     `🏠 ${escapeHtml(clipText(address, 200) || 'See the map pin below')}` +
     (driverHint ? `\n🚗 ${escapeHtml(clipText(driverHint, 300))}` : '') +
+    (hasPos ? `\n🗺️ <a href="${googleMapsUrl(lat as number, lng as number)}">Open in Google Maps</a>` : '') +
     (typeof incidentId === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(incidentId)
       ? `\n⚡ Live tracking: ${baseUrl}/track/${incidentId}`
       : '');

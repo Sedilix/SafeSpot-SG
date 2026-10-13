@@ -109,12 +109,27 @@ export function webhookSecretMatches(provided: string | undefined): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/** Google Maps link that opens the pin (or directions) in the Maps app on any phone. */
+export function googleMapsUrl(lat: number, lng: number, directions = false): string {
+  const ll = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+  return directions
+    ? `https://www.google.com/maps/dir/?api=1&destination=${ll}`
+    : `https://www.google.com/maps/search/?api=1&query=${ll}`;
+}
+
+/** Medical notes like "None" or "-" carry no information; leave them out. */
+function isEmptyNote(s: string): boolean {
+  return /^\s*(none|nil|na|n\/a|no|-+|nothing)?\s*\.?\s*$/i.test(s);
+}
+
 export function formatTelegramAlert(params: {
   elderName: string;
   eventType: 'SOS_TRIGGER' | 'FALL_DETECTED' | 'HR_ALERT' | 'HEARTBEAT' | 'SOS_CANCEL' | string;
   incidentId: string;
   serverBaseUrl: string;
   locationText?: string | null;
+  lat?: number;
+  lng?: number;
   heartRate?: number;
   battery?: number;
   bloodType?: string;
@@ -129,13 +144,16 @@ export function formatTelegramAlert(params: {
   }
   const lines = [header, ''];
   if (params.locationText) lines.push(`📍 ${escapeHtml(params.locationText)}`);
+  if (params.lat !== undefined && params.lng !== undefined) {
+    lines.push(`🗺️ <a href="${googleMapsUrl(params.lat, params.lng)}">Open in Google Maps</a> (where they were when the alert started)`);
+  }
   const vitals = [
     params.heartRate ? `❤️ ${params.heartRate} bpm` : '',
     params.battery != null ? `🔋 ${params.battery}%` : '',
   ].filter(Boolean);
   if (vitals.length) lines.push(vitals.join('  '));
   if (params.bloodType && params.bloodType !== 'Unknown') lines.push(`🩸 Blood type: ${escapeHtml(params.bloodType)}`);
-  if (params.medicalNotes) lines.push(`📝 ${escapeHtml(params.medicalNotes.slice(0, 300))}`);
+  if (params.medicalNotes && !isEmptyNote(params.medicalNotes)) lines.push(`📝 ${escapeHtml(params.medicalNotes.slice(0, 300))}`);
   lines.push('', `⚡ Live tracking: ${params.serverBaseUrl}/track/${encodeURIComponent(params.incidentId)}`);
   lines.push('The map pin below moves with them until the alert ends.');
   return lines.join('\n');
@@ -156,7 +174,12 @@ export async function sendTelegramAlert(
     parse_mode: 'HTML',
     disable_web_page_preview: true,
     reply_markup: {
-      inline_keyboard: [[{ text: "🙋 I'm responding", callback_data: `${RESPOND_CALLBACK_PREFIX}${params.incidentId}` }]],
+      inline_keyboard: [
+        [{ text: "🙋 I'm responding", callback_data: `${RESPOND_CALLBACK_PREFIX}${params.incidentId}` }],
+        ...(params.lat !== undefined && params.lng !== undefined
+          ? [[{ text: '🧭 Directions (Google Maps)', url: googleMapsUrl(params.lat, params.lng, true) }]]
+          : []),
+      ],
     },
   });
   if (!msg.ok) return { ok: false, gone: isChatGone(msg.errorCode, msg.description) };

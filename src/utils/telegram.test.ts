@@ -14,6 +14,7 @@ import {
   webhookSecretMatches,
   ensureTelegramWebhook,
   getBotUsername,
+  googleMapsUrl,
   _resetTelegramForTest,
 } from './telegram';
 
@@ -75,6 +76,31 @@ describe('telegram', () => {
     expect(text).toContain('Blk 480 Toa Payoh');
     expect(text).toContain('O+');
     expect(text).toContain('https://safespot.sg/track/inc_1');
+  });
+
+  it('links to Google Maps and leaves out empty medical notes', () => {
+    const text = formatTelegramAlert({
+      elderName: 'Benjamin',
+      eventType: 'SOS_TRIGGER',
+      incidentId: 'inc_2',
+      serverBaseUrl: 'https://safespot.sg',
+      lat: 1.4241,
+      lng: 103.8382,
+      medicalNotes: 'None',
+    });
+    expect(text).toContain('https://www.google.com/maps/search/?api=1&query=1.424100,103.838200');
+    expect(text).not.toContain('📝');
+    expect(googleMapsUrl(1.4241, 103.8382, true)).toBe('https://www.google.com/maps/dir/?api=1&destination=1.424100,103.838200');
+  });
+
+  it('adds a Directions button only when the position is known', async () => {
+    const calls = mockTelegram(() => ({ ok: true, result: { message_id: 1 } }));
+    await sendTelegramAlert(1, { text: 'x', incidentId: 'i', lat: 1.3, lng: 103.8 });
+    const rows = calls[0].body.reply_markup.inline_keyboard;
+    expect(rows[1][0]).toMatchObject({ text: expect.stringContaining('Directions'), url: expect.stringContaining('/maps/dir/') });
+    calls.length = 0;
+    await sendTelegramAlert(1, { text: 'x', incidentId: 'i' });
+    expect(calls[0].body.reply_markup.inline_keyboard).toHaveLength(1);
   });
 
   it('verifies the webhook secret', () => {
