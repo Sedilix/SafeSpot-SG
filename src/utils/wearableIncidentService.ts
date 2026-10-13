@@ -375,7 +375,7 @@ export async function handleWatchAlertTrigger(params: {
       try {
         const res = await sendTwilioSms({ to: contact.phone, body: smsBody });
         if (res.success) {
-          console.log(`[WEARABLE_INCIDENT] Dispatched SOS alert to ${contact.name} (${res.recipient})`);
+          console.log(`[WEARABLE_INCIDENT] Dispatched SOS alert to ${contact.name}`);
           return 1;
         }
         console.warn(`[WEARABLE_INCIDENT] SMS to ${contact.name} not sent: ${res.carrierStatus}`);
@@ -395,7 +395,9 @@ export async function handleWatchAlertTrigger(params: {
       eventType: event.eventType,
       incidentId,
       serverBaseUrl,
-      locationText: formattedAddress || landmark || null,
+      locationText: formattedAddress || (landmark ? `Near ${landmark}` : null),
+      lat: event.lat,
+      lng: event.lng,
       heartRate: event.heartRate,
       battery: event.battery,
       bloodType: profile.bloodType,

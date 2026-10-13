@@ -36,6 +36,11 @@ export function normalizePhoneNumber(phone: string): string {
   return digitsOnly.startsWith('+') ? digitsOnly : `+65${digitsOnly.replace(/^0+/, '')}`;
 }
 
+/** "+6591234567" -> "+65•••4567", for logs. */
+export function maskPhone(phone: string): string {
+  return phone.length > 6 ? `${phone.slice(0, 3)}•••${phone.slice(-4)}` : '•••';
+}
+
 /**
  * Dispatches an SMS via Twilio REST API if credentials are present,
  * or simulates delivery in development/test environments.
@@ -63,7 +68,7 @@ export async function sendTwilioSms(params: TwilioSendParams): Promise<TwilioSen
     // In production an unconfigured gateway is a failure, never a pretend
     // success: callers must know the alert did not go out.
     if (process.env.NODE_ENV === 'production') {
-      console.error(`[TWILIO] SMS NOT SENT to ${cleanPhone}: Twilio is not configured (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER).`);
+      console.error(`[TWILIO] SMS NOT SENT to ${maskPhone(cleanPhone)}: Twilio is not configured (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER).`);
       return {
         success: false,
         carrierStatus: 'SMS_NOT_CONFIGURED',
@@ -71,7 +76,7 @@ export async function sendTwilioSms(params: TwilioSendParams): Promise<TwilioSen
         error: 'SMS is not configured on this server.',
       };
     }
-    console.log(`[TWILIO] Gateway unconfigured (dev/test), simulated SMS to ${cleanPhone}:`, {
+    console.log(`[TWILIO] Gateway unconfigured (dev/test), simulated SMS to ${maskPhone(cleanPhone)}:`, {
       messagePreview: body.slice(0, 100) + (body.length > 100 ? '...' : ''),
     });
     return {
