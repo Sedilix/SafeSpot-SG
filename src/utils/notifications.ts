@@ -166,7 +166,37 @@ export function smsProviderOrder(): SmsProvider[] {
   return order.filter((p) => (p === 'twilio' ? twilioConfigured() : textbeeConfigured()));
 }
 
-export async function sendTextbeeSms(params: TwilioSendParams): Promise<TwilioSendResult> {
+const TEXTBEE_API = 'https://api.textbee.dev/api/v1/gateway';
+let textbeeDeviceCache: { id: string; at: number } | null = null;
+
+export function _resetTextbeeForTest(): void {
+  textbeeDeviceCache = null;
+}
+
+/** The phone textbee sends from: TEXTBEE_DEVICE_ID, else the enabled phone seen most recently. */
+async function textbeeDeviceId(apiKey: string): Promise<string | null> {
+  if (process.env.TEXTBEE_DEVICE_ID) return process.env.TEXTBEE_DEVICE_ID;
+  if (textbeeDeviceCache && Date.now() - textbeeDeviceCache.at < 10 * 60_000) return textbeeDeviceCache.id;
+  const res = await fetch(`${TEXTBEE_API}/devices`, { headers: { 'x-api-key': apiKey }, signal: AbortSignal.timeout(8000) });
+  const list = (((await res.json().catch(() => ({}))) as any)?.data || []) as any[];
+  const best = list
+    .filter((d) => d.enabled)
+    .sort((a, b) => String(b.lastHeartbeat || '').localeCompare(String(a.lastHeartbeat || '')))[0];
+  if (!best?._id) return null;
+  textbeeDeviceCache = { id: best._id, at: Date.now() };
+  return best._id;
+}
+
+/**
+ * Sends through textbee and waits for the phone to report the result.
+ * textbee answers "queued" immediately; the phone may still fail (no SIM,
+ * no signal), so only a confirmed send counts. A failure or no answer in
+ * time returns success: false, so sendSms falls back to the next provider.
+ */
+export async function sendTextbeeSms(
+  params: TwilioSendParams,
+  opts: { confirmTimeoutMs?: number; pollMs?: number } = {},
+): Promise<TwilioSendResult> {
   const cleanPhone = normalizePhoneNumber(params.to);
   if (!cleanPhone || cleanPhone === '+65') {
     return { success: false, carrierStatus: 'MISSING_PHONE', recipient: params.to, error: 'Valid phone number is required.' };
@@ -175,29 +205,51 @@ export async function sendTextbeeSms(params: TwilioSendParams): Promise<TwilioSe
   if (!apiKey) {
     return { success: false, carrierStatus: 'SMS_NOT_CONFIGURED', recipient: cleanPhone, error: 'textbee is not configured.' };
   }
+  const confirmTimeoutMs = opts.confirmTimeoutMs ?? 20_000;
+  const pollMs = opts.pollMs ?? 2_000;
   try {
-    const res = await fetch('https://api.textbee.dev/api/v1/gateway/send-sms', {
+    const deviceId = await textbeeDeviceId(apiKey).catch(() => null);
+    const res = await fetch(`${TEXTBEE_API}/send-sms`, {
       method: 'POST',
       headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        recipients: [cleanPhone],
-        message: params.body,
-        ...(process.env.TEXTBEE_DEVICE_ID ? { deviceId: process.env.TEXTBEE_DEVICE_ID } : {}),
-      }),
+      body: JSON.stringify({ recipients: [cleanPhone], message: params.body, ...(deviceId ? { deviceId } : {}) }),
       signal: AbortSignal.timeout(10000),
     });
     const data = (await res.json().catch(() => ({}))) as any;
-    if (res.ok) {
-      return {
-        success: true,
-        messageId: data?.data?.smsBatchId || data?.data?._id || undefined,
-        carrierStatus: 'SENT_TEXTBEE',
-        recipient: cleanPhone,
-      };
+    if (!res.ok) {
+      const error = String(data?.message || data?.error || `HTTP ${res.status}`).slice(0, 200);
+      console.warn(`[TEXTBEE] SMS to ${maskPhone(cleanPhone)} rejected: ${error}`);
+      return { success: false, carrierStatus: 'TEXTBEE_ERROR', recipient: cleanPhone, error };
     }
-    const error = String(data?.message || data?.error || `HTTP ${res.status}`).slice(0, 200);
-    console.warn(`[TEXTBEE] SMS to ${maskPhone(cleanPhone)} failed: ${error}`);
-    return { success: false, carrierStatus: 'TEXTBEE_ERROR', recipient: cleanPhone, error };
+
+    const batchId = data?.data?.smsBatchId || data?.data?._id;
+    if (!batchId || !deviceId) {
+      // Can't confirm delivery, so don't claim it.
+      return { success: false, carrierStatus: 'TEXTBEE_UNCONFIRMED', recipient: cleanPhone, error: 'Could not check the send result.' };
+    }
+
+    const deadline = Date.now() + confirmTimeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, pollMs));
+      const st = await fetch(`${TEXTBEE_API}/devices/${encodeURIComponent(deviceId)}/sms-batch/${encodeURIComponent(batchId)}`, {
+        headers: { 'x-api-key': apiKey },
+        signal: AbortSignal.timeout(8000),
+      })
+        .then((r) => r.json())
+        .catch(() => null);
+      const batch = st?.data?.batch ?? {};
+      const sms = (st?.data?.messages ?? [])[0] ?? {};
+      if ((batch.sentCount ?? 0) > 0 || (batch.deliveredCount ?? 0) > 0 || ['sent', 'delivered'].includes(sms.status)) {
+        return { success: true, messageId: batchId, carrierStatus: 'SENT_TEXTBEE', recipient: cleanPhone };
+      }
+      if ((batch.failureCount ?? 0) > 0 || batch.status === 'failed' || sms.status === 'failed') {
+        const error = String(sms.errorMessage || 'The phone could not send the SMS.').slice(0, 200);
+        console.warn(`[TEXTBEE] SMS to ${maskPhone(cleanPhone)} failed on the phone: ${error}`);
+        return { success: false, carrierStatus: 'TEXTBEE_FAILED_ON_PHONE', recipient: cleanPhone, error };
+      }
+    }
+    console.warn(`[TEXTBEE] SMS to ${maskPhone(cleanPhone)} not confirmed within ${confirmTimeoutMs} ms; trying the next provider.`);
+    return { success: false, carrierStatus: 'TEXTBEE_UNCONFIRMED', recipient: cleanPhone, error: 'The phone did not confirm sending in time.' };
   } catch (err: any) {
     console.warn(`[TEXTBEE] SMS to ${maskPhone(cleanPhone)} failed: ${err.message}`);
     return { success: false, carrierStatus: 'TEXTBEE_NETWORK_ERROR', recipient: cleanPhone, error: err.message };
