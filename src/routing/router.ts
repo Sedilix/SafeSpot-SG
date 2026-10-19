@@ -286,6 +286,11 @@ export class Router {
         const turn = this.evaluateTurn(cur, next);
         if (!turn.allowed) continue;
 
+        const parentEdgeId = prev[topEdgeId];
+        if (parentEdgeId >= 0 && this.graph.isViaWayRestricted(this.graph.edgeWayId[parentEdgeId], cur.wayId, next.wayId)) {
+          continue;
+        }
+
         const arrivalElapsed = topElapsed + turn.delaySec;
 
         // 1. Live Incidents: impassable closures and decay delays
@@ -591,6 +596,11 @@ export class Router {
         const next = edges[nid];
         const turn = this.evaluateTurn(cur, next);
         if (!turn.allowed) continue;
+
+        const parentEdgeId = prev[topEdgeId];
+        if (parentEdgeId >= 0 && this.graph.isViaWayRestricted(this.graph.edgeWayId[parentEdgeId], cur.wayId, next.wayId)) {
+          continue;
+        }
 
         const arrivalElapsed = topElapsed + turn.delaySec;
 

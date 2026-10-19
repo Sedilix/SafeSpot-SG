@@ -196,3 +196,34 @@ describe('traffic-aware routing (E2)', () => {
     expect(peakRoute.durationSeconds).toBeGreaterThan(offPeakRoute.durationSeconds);
   });
 });
+
+describe('via-way turn restrictions (from-way, via-way, to-way)', () => {
+  it('blocks path taking a banned from-way -> via-way -> to-way transition and takes a detour', () => {
+    const elements = [
+      way(1, [[0, 2], [0, 0]], { highway: 'primary', oneway: 'yes' }),
+      way(2, [[0, 0], [1, 0]], { highway: 'residential', oneway: 'yes' }),
+      way(3, [[1, 0], [1, 2]], { highway: 'primary', oneway: 'yes' }),
+      way(4, [[0, 0], [0, -1], [1, -1], [1, 0]], { highway: 'residential', oneway: 'yes' }),
+      {
+        type: 'relation',
+        tags: { type: 'restriction', restriction: 'no_u_turn' },
+        members: [
+          { type: 'way', ref: 1, role: 'from' },
+          { type: 'way', ref: 2, role: 'via' },
+          { type: 'way', ref: 3, role: 'to' },
+        ],
+      },
+    ];
+
+    const { r } = make(elements);
+    const origin = at(0, 1.5);
+    const dest = at(1, 1.5);
+    const res = r.findRoute(origin, dest)!;
+    expect(res).not.toBeNull();
+    const ids = wayIds(res.edges);
+    const usedBannedUturn = ids.some((id, i) => id === 1 && ids[i + 1] === 2 && ids[i + 2] === 3);
+    expect(usedBannedUturn).toBe(false);
+    expect(ids).toContain(4);
+  });
+});
+

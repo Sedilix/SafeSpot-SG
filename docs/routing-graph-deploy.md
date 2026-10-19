@@ -31,31 +31,44 @@ Cloud Run's default memory is 512 MiB. Under 512 MiB, transient JSON string allo
 
 ---
 
-## 3. Deployment Commands (For User to Run)
+## 3. Build & Deployment Commands (For User to Run)
 
-Execute these commands in Google Cloud Shell or your local authenticated terminal:
+Execute these commands in your authenticated terminal or Cloud Shell:
 
-### Step 1: Upload the Compressed Road Graph to Cloud Storage
+### Step 1: Rebuild the Road Graph (Generates .json and .json.gz natively)
 ```bash
-# Generated locally via: npx tsx tools/osm/upload-graph.ts
+npm run build:graph
+```
+This runs `tsx tools/osm/build-graph.ts`, reading from `data/graph/overpass-cache.json` and generating both `data/graph/singapore-road-graph.json` and `data/graph/singapore-road-graph.json.gz` natively using Node.js `zlib`.
+
+### Step 2: Upload the Compressed Road Graph to Cloud Storage
+```bash
 gcloud storage cp data/graph/singapore-road-graph.json.gz \
-  gs://safespot-sg-speedbands/graph/2026-10-12/singapore-road-graph.json.gz
+  gs://safespot-sg-speedbands/graph/2026-10-19/singapore-road-graph.json.gz
 ```
 
-### Step 2: Grant Storage Object Viewer to the Cloud Run Service Account
+### Step 3: (If not already granted) Grant Storage Object Viewer to the Service Account
 ```bash
 gcloud storage buckets add-iam-policy-binding gs://safespot-sg-speedbands \
   --member="serviceAccount:258662267000-compute@developer.gserviceaccount.com" \
   --role="roles/storage.objectViewer"
 ```
 
-### Step 3: Configure Cloud Run Environment & Memory Limit
+### Step 4: Update Cloud Run Service (`safespot-sg`)
 ```bash
 gcloud run services update safespot-sg \
   --region asia-southeast1 \
-  --project cybrdeck \
-  --update-env-vars ROUTING_GRAPH_URI=gs://safespot-sg-speedbands/graph/2026-10-12/singapore-road-graph.json.gz,ROUTING_SHADOW_DRIVE=1 \
+  --project safespot-sg \
+  --update-env-vars ROUTING_GRAPH_URI=gs://safespot-sg-speedbands/graph/2026-10-19/singapore-road-graph.json.gz,ROUTING_SHADOW_DRIVE=1 \
   --memory 1Gi
+```
+
+### Step 5: Update Cloud Run Scheduled Shadow Probe Job (`routing-shadow-probe`)
+```bash
+gcloud run jobs update routing-shadow-probe \
+  --region asia-southeast1 \
+  --project safespot-sg \
+  --update-env-vars ROUTING_GRAPH_URI=gs://safespot-sg-speedbands/graph/2026-10-19/singapore-road-graph.json.gz
 ```
 
 ---
