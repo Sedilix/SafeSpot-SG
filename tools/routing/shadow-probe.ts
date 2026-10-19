@@ -34,6 +34,8 @@ export interface ShadowRecord {
   googleSec: number | null; // Google Routes TRAFFIC_AWARE duration in seconds; null if the query failed
   diffPct: number | null;   // ((localSec - googleSec) / googleSec) * 100; null unless both sides succeeded
   localMs: number;   // Engine search execution latency in ms
+  localMeters?: number;     // SafeSpot engine distance in meters (0 = engine found no route)
+  googleMeters?: number | null; // Google Routes distanceMeters; null if the query failed
   /** True only when Google really answered and the engine found a route. Reports use only these rows. */
   googleOk?: boolean;
   /** Test-only rows with a made-up Google time. Never uploaded. */
@@ -118,12 +120,17 @@ export function resolveKey(envName: string, filePath: string): string {
   return '';
 }
 
+export interface GoogleDrivingResult {
+  durationSec: number;
+  distanceMeters: number;
+}
+
 /** Queries Google Routes API v2 computeRoutes with TRAFFIC_AWARE routing. */
-export async function queryGoogleDrivingSeconds(
+export async function queryGoogleDriving(
   origin: { lat: number; lng: number },
   dest: { lat: number; lng: number },
   mapsKey: string,
-): Promise<number | null> {
+): Promise<GoogleDrivingResult | null> {
   const url = 'https://routes.googleapis.com/directions/v2:computeRoutes';
   const body = {
     origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
@@ -154,7 +161,20 @@ export async function queryGoogleDrivingSeconds(
   const route = data.routes?.[0];
   if (!route?.duration) return null;
 
-  return parseInt(String(route.duration).replace('s', ''), 10);
+  return {
+    durationSec: parseInt(String(route.duration).replace('s', ''), 10),
+    distanceMeters: route.distanceMeters ? Number(route.distanceMeters) : 0,
+  };
+}
+
+/** Queries Google Routes API v2 computeRoutes with TRAFFIC_AWARE routing. */
+export async function queryGoogleDrivingSeconds(
+  origin: { lat: number; lng: number },
+  dest: { lat: number; lng: number },
+  mapsKey: string,
+): Promise<number | null> {
+  const res = await queryGoogleDriving(origin, dest, mapsKey);
+  return res ? res.durationSec : null;
 }
 
 /** Fetches live incidents from LTA DataMall if key is provided. */
@@ -298,19 +318,27 @@ export async function runShadowProbe(options?: {
     });
     const localMs = Math.round(performance.now() - t0);
     const localSec = route ? Math.round(route.durationSeconds) : 0;
+    const localMeters = route ? Math.round(route.distanceMeters) : 0;
 
     // 3. Query Google Routes TRAFFIC_AWARE. A failure is recorded as a
-    // failure (googleSec null), never filled in with the engine's own time.
+    // failure (googleSec null, googleMeters null), never filled in with the engine's own time.
     let googleSec: number | null = null;
+    let googleMeters: number | null = null;
     let error: string | undefined;
     if (options?.simulateGoogle) {
       googleSec = Math.round(localSec * (1 + Math.sin(localMs) * 0.05));
+      googleMeters = Math.round(localMeters * (1 + Math.cos(localMs) * 0.02));
     } else if (!mapsKey) {
       error = 'MAPS_SERVER_KEY not set';
     } else {
       try {
-        googleSec = await queryGoogleDrivingSeconds(p.origin, p.dest, mapsKey);
-        if (googleSec === null) error = 'Google returned no route';
+        const gRes = await queryGoogleDriving(p.origin, p.dest, mapsKey);
+        if (gRes === null) {
+          error = 'Google returned no route';
+        } else {
+          googleSec = gRes.durationSec;
+          googleMeters = gRes.distanceMeters;
+        }
       } catch (err: any) {
         error = String(err.message).slice(0, 160);
         console.warn(`[SHADOW_PROBE] Google query error for ${p.id}: ${error}`);
@@ -328,6 +356,8 @@ export async function runShadowProbe(options?: {
       googleSec,
       diffPct,
       localMs,
+      localMeters,
+      googleMeters,
       googleOk: comparable && !options?.simulateGoogle,
       ...(options?.simulateGoogle ? { simulated: true } : {}),
       ...(error ? { error } : {}),
@@ -335,7 +365,7 @@ export async function runShadowProbe(options?: {
     records.push(rec);
 
     console.log(
-      `  -> ${p.id.padEnd(28)}: local=${localSec}s google=${googleSec ?? 'FAILED'}s ` +
+      `  -> ${p.id.padEnd(28)}: local=${localSec}s (${localMeters}m) google=${googleSec ?? 'FAILED'}s (${googleMeters !== null ? `${googleMeters}m` : 'FAILED'}) ` +
         (diffPct === null ? `(${error})` : `diff=${diffPct > 0 ? '+' : ''}${diffPct}%`) +
         ` (${localMs}ms)`,
     );

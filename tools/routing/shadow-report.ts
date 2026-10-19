@@ -21,6 +21,8 @@ export interface GroupStats {
   meanSignedErrorPct: number;
   medianLatencyMs: number;
   p95LatencyMs: number;
+  medianLocalMeters?: number;
+  medianGoogleMeters?: number;
 }
 
 /**
@@ -55,12 +57,26 @@ export function computeStats(all: ShadowRecord[]): GroupStats {
   const p95Idx = Math.min(latencies.length - 1, Math.floor(latencies.length * 0.95));
   const p95Lat = latencies[p95Idx];
 
+  const localMetersList = records
+    .filter((r) => typeof r.localMeters === 'number' && (r.localMeters as number) > 0)
+    .map((r) => r.localMeters as number)
+    .sort((a, b) => a - b);
+  const googleMetersList = records
+    .filter((r) => typeof r.googleMeters === 'number' && (r.googleMeters as number) > 0)
+    .map((r) => r.googleMeters as number)
+    .sort((a, b) => a - b);
+
+  const medianLocalM = localMetersList.length > 0 ? localMetersList[Math.floor(localMetersList.length / 2)] : undefined;
+  const medianGoogleM = googleMetersList.length > 0 ? googleMetersList[Math.floor(googleMetersList.length / 2)] : undefined;
+
   return {
     count: records.length,
     medianAbsErrorPct: Number(medianAbs.toFixed(2)),
     meanSignedErrorPct: Number(meanSigned.toFixed(2)),
     medianLatencyMs: Math.round(medianLat),
     p95LatencyMs: Math.round(p95Lat),
+    medianLocalMeters: medianLocalM,
+    medianGoogleMeters: medianGoogleM,
   };
 }
 
@@ -150,8 +166,8 @@ export function generateReportMarkdown(records: ShadowRecord[]): string {
 
   // By Pair breakdown
   md += `## Corridor Pairwise Breakdown (10 Fixed Corridors)\n\n`;
-  md += `| Corridor ID | Observations | Median Abs Error | Mean Signed Error | Median Latency |\n`;
-  md += `|---|---|---|---|---|\n`;
+  md += `| Corridor ID | Observations | Median Abs Error | Mean Signed Error | Median Latency | Median Distance (Local / Google) |\n`;
+  md += `|---|---|---|---|---|---|\n`;
 
   const pairGroups = new Map<string, ShadowRecord[]>();
   for (const r of records) {
@@ -165,7 +181,11 @@ export function generateReportMarkdown(records: ShadowRecord[]): string {
 
   for (const [pairId, list] of pairGroups.entries()) {
     const stats = computeStats(list);
-    md += `| \`${pairId}\` | ${stats.count} | ${stats.medianAbsErrorPct}% | ${stats.meanSignedErrorPct > 0 ? '+' : ''}${stats.meanSignedErrorPct}% | ${stats.medianLatencyMs} ms |\n`;
+    const distCol =
+      stats.medianLocalMeters && stats.medianGoogleMeters
+        ? `${(stats.medianLocalMeters / 1000).toFixed(2)} km / ${(stats.medianGoogleMeters / 1000).toFixed(2)} km`
+        : 'N/A';
+    md += `| \`${pairId}\` | ${stats.count} | ${stats.medianAbsErrorPct}% | ${stats.meanSignedErrorPct > 0 ? '+' : ''}${stats.meanSignedErrorPct}% | ${stats.medianLatencyMs} ms | ${distCol} |\n`;
   }
   md += `\n`;
 

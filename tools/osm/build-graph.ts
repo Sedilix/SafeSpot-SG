@@ -178,7 +178,23 @@ export function buildGraphFromElements(elements: any[]): RoadGraphData {
 
     if (el.type !== 'way' || !el.tags?.highway || (el.geometry?.length ?? 0) < 2) continue;
     const t = el.tags;
-    const highway: string = t.highway;
+    let highway: string = t.highway;
+
+    // Singapore Expressway corridor links: links explicitly destined for or named after
+    // expressways (AYE, BKE, CTE, ECP, KJE, KPE, MCE, PIE, SLE, TPE) are grade-separated
+    // ramps connecting to/between motorways. If mistakenly tagged in OSM as primary_link,
+    // trunk_link, or secondary_link, normalize to motorway_link so they are not artificially
+    // capped at surface intersection speeds (e.g. primary_link 25 km/h cap vs posted 50-70 km/h).
+    const dest = t['destination:ref'] || t.destination || '';
+    const isExpresswayLink =
+      highway.endsWith('_link') &&
+      (/\b(AYE|BKE|CTE|ECP|KJE|KPE|MCE|PIE|SLE|TPE)\b/i.test(dest) ||
+       /\b(AYE|BKE|CTE|ECP|KJE|KPE|MCE|PIE|SLE|TPE)\b/i.test(t.ref || '') ||
+       /\bExpressway\b/i.test(t.name || ''));
+    if (isExpresswayLink) {
+      highway = 'motorway_link';
+    }
+
     const maxspeed = parseMaxspeed(t.maxspeed, highway);
     const freeFlowCap = FREE_FLOW_SPEED_ASSUMPTIONS[highway] ?? 25;
     const effectiveSpeed = Math.min(maxspeed, freeFlowCap);

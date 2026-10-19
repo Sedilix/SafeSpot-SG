@@ -41,9 +41,9 @@ describe('shadow-report: Statistics & Time Slots', () => {
 
   it('computes median absolute error, mean signed error, and latency quantiles', () => {
     const samples: ShadowRecord[] = [
-      { at: '2026-10-13T00:30:00.000Z', pairId: 'p1', localSec: 1000, googleSec: 900, diffPct: 11.1, localMs: 120, googleOk: true },
-      { at: '2026-10-13T00:30:00.000Z', pairId: 'p1', localSec: 950, googleSec: 1000, diffPct: -5.0, localMs: 150, googleOk: true },
-      { at: '2026-10-13T00:30:00.000Z', pairId: 'p2', localSec: 800, googleSec: 800, diffPct: 0.0, localMs: 110, googleOk: true },
+      { at: '2026-10-13T00:30:00.000Z', pairId: 'p1', localSec: 1000, googleSec: 900, diffPct: 11.1, localMs: 120, localMeters: 10000, googleMeters: 9800, googleOk: true },
+      { at: '2026-10-13T00:30:00.000Z', pairId: 'p1', localSec: 950, googleSec: 1000, diffPct: -5.0, localMs: 150, localMeters: 9500, googleMeters: 10000, googleOk: true },
+      { at: '2026-10-13T00:30:00.000Z', pairId: 'p2', localSec: 800, googleSec: 800, diffPct: 0.0, localMs: 110, localMeters: 8000, googleMeters: 8000, googleOk: true },
     ];
 
     const stats = computeStats(samples);
@@ -54,11 +54,13 @@ describe('shadow-report: Statistics & Time Slots', () => {
     expect(stats.meanSignedErrorPct).toBeCloseTo(2.03, 1);
     expect(stats.medianLatencyMs).toBe(120);
     expect(stats.p95LatencyMs).toBe(150);
+    expect(stats.medianLocalMeters).toBe(9500);
+    expect(stats.medianGoogleMeters).toBe(9800);
   });
 
   it('generates report markdown containing computed status and breakdown tables', () => {
     const samples: ShadowRecord[] = [
-      { at: '2026-10-13T00:30:00.000Z', pairId: 'toa-payoh-to-raffles-place', localSec: 1200, googleSec: 1150, diffPct: 4.3, localMs: 95, googleOk: true },
+      { at: '2026-10-13T00:30:00.000Z', pairId: 'toa-payoh-to-raffles-place', localSec: 1200, googleSec: 1150, diffPct: 4.3, localMs: 95, localMeters: 10500, googleMeters: 10400, googleOk: true },
     ];
 
     const md = generateReportMarkdown(samples);
@@ -66,6 +68,7 @@ describe('shadow-report: Statistics & Time Slots', () => {
     expect(md).toContain('toa-payoh-to-raffles-place');
     expect(md).toContain('Morning Peak (07:00-09:30)');
     expect(md).toContain('PASS');
+    expect(md).toContain('10.50 km / 10.40 km');
   });
 });
 
@@ -103,6 +106,8 @@ describe('shadow-probe execution', () => {
     expect(records[0].pairId).toBe(pair.id);
     expect(records[0].localSec).toBeGreaterThan(0);
     expect(records[0].googleSec).toBeGreaterThan(0);
+    expect(records[0].localMeters).toBeGreaterThan(0);
+    expect(records[0].googleMeters).toBeGreaterThan(0);
     expect(records[0].simulated).toBe(true);
     expect(records[0].googleOk).toBe(false);
   });
