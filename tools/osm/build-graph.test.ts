@@ -33,10 +33,10 @@ describe('build-graph: Expressway Corridor Link Normalization', () => {
     expect(edge.highway).toBe('motorway_link');
     expect(edge.oneway).toBe(true);
 
-    // At 40 km/h (motorway_link free flow speed), speed is 40 / 3.6 = 11.11 m/s
+    // At 50 km/h (motorway_link with maxspeed 50 and 55 cap), speed is 50 / 3.6 = 13.89 m/s
     // At 25 km/h (primary_link cap), speed would have been 25 / 3.6 = 6.94 m/s
     const effectiveKmh = (edge.length / edge.seconds) * 3.6;
-    expect(effectiveKmh).toBeCloseTo(40, 0);
+    expect(effectiveKmh).toBeCloseTo(50, 0);
   });
 
   it('keeps standard primary_link without expressway destination as primary_link', () => {
@@ -88,5 +88,48 @@ describe('build-graph: Expressway Corridor Link Normalization', () => {
 
     const graphData = buildGraphFromElements(elements);
     expect(graphData.edges[0].highway).toBe('motorway_link');
+  });
+
+  it('parses and retains via-way turn restrictions where all 3 ways are in the graph', () => {
+    const elements = [
+      {
+        type: 'way',
+        id: 101,
+        tags: { highway: 'primary', oneway: 'yes' },
+        geometry: [{ lat: 1.3000, lon: 103.8000 }, { lat: 1.3010, lon: 103.8010 }],
+      },
+      {
+        type: 'way',
+        id: 102,
+        tags: { highway: 'residential', oneway: 'yes' },
+        geometry: [{ lat: 1.3010, lon: 103.8010 }, { lat: 1.3010, lon: 103.8020 }],
+      },
+      {
+        type: 'way',
+        id: 103,
+        tags: { highway: 'primary', oneway: 'yes' },
+        geometry: [{ lat: 1.3010, lon: 103.8020 }, { lat: 1.3000, lon: 103.8020 }],
+      },
+      {
+        type: 'relation',
+        id: 99901,
+        tags: { type: 'restriction', restriction: 'no_u_turn' },
+        members: [
+          { type: 'way', ref: 101, role: 'from' },
+          { type: 'way', ref: 102, role: 'via' },
+          { type: 'way', ref: 103, role: 'to' },
+        ],
+      },
+    ];
+
+    const graphData = buildGraphFromElements(elements);
+    expect(graphData.viaWayRestrictions?.length).toBe(1);
+    expect(graphData.viaWayRestrictions?.[0]).toEqual({
+      type: 'no_u_turn',
+      fromWayId: 101,
+      viaWayId: 102,
+      toWayId: 103,
+    });
+    expect(graphData.stats.restrictionsViaWayKept).toBe(1);
   });
 });

@@ -18,6 +18,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { gzipSync } from 'zlib';
 import { join } from 'path';
 
 export interface CompactNode { id: number; lat: number; lng: number }
@@ -43,10 +44,18 @@ export interface TurnRestriction {
   viaNode: number;    // graph node id
 }
 
+export interface ViaWayRestriction {
+  type: string;       // OSM restriction=* value
+  fromWayId: number;
+  viaWayId: number;
+  toWayId: number;
+}
+
 export interface RoadGraphData {
   nodes: CompactNode[];
   edges: CompactEdge[];
   turnRestrictions: TurnRestriction[];
+  viaWayRestrictions?: ViaWayRestriction[];
   generatedAt: string;
   stats: Record<string, number>;
 }
@@ -72,7 +81,7 @@ const DEFAULT_SPEEDS: Record<string, number> = {
 // Signals every 200-400m and urban deceleration limit actual progression below legal maxspeed.
 export const FREE_FLOW_SPEED_ASSUMPTIONS: Record<string, number> = {
   motorway: 68,
-  motorway_link: 40,
+  motorway_link: 55,
   trunk: 48,
   trunk_link: 35,
   primary: 28,
@@ -144,7 +153,8 @@ export function buildGraphFromElements(elements: any[]): RoadGraphData {
   const nodes: CompactNode[] = [];
   const edges: CompactEdge[] = [];
   const pending: Array<{ type: string; fromWayId: number; toWayId: number; viaKey: string }> = [];
-  let viaWayRestrictions = 0, incompleteRestrictions = 0;
+  const pendingViaWay: Array<{ type: string; fromWayId: number; viaWayId: number; toWayId: number }> = [];
+  let viaWaySkipped = 0, incompleteRestrictions = 0;
 
   const keyOf = (lat: number, lng: number) => `${lat.toFixed(6)},${lng.toFixed(6)}`;
   function nodeFor(lat: number, lng: number): number {
@@ -163,14 +173,21 @@ export function buildGraphFromElements(elements: any[]): RoadGraphData {
       const type = el.tags?.restriction;
       if (!type) { incompleteRestrictions++; continue; }
       let fromWayId: number | undefined, toWayId: number | undefined, via: any;
-      let viaIsWay = false;
+      let viaWayId: number | undefined;
       for (const m of el.members ?? []) {
         if (m.role === 'from' && m.type === 'way') fromWayId = m.ref;
         else if (m.role === 'to' && m.type === 'way') toWayId = m.ref;
         else if (m.role === 'via' && m.type === 'node') via = m;
-        else if (m.role === 'via' && m.type === 'way') viaIsWay = true;
+        else if (m.role === 'via' && m.type === 'way') viaWayId = m.ref;
       }
-      if (viaIsWay) { viaWayRestrictions++; continue; }
+      if (viaWayId !== undefined) {
+        if (fromWayId !== undefined && toWayId !== undefined) {
+          pendingViaWay.push({ type, fromWayId, viaWayId, toWayId });
+        } else {
+          incompleteRestrictions++;
+        }
+        continue;
+      }
       if (fromWayId === undefined || toWayId === undefined || !via) { incompleteRestrictions++; continue; }
       pending.push({ type, fromWayId, toWayId, viaKey: keyOf(via.lat, via.lon) });
       continue;
@@ -219,6 +236,7 @@ export function buildGraphFromElements(elements: any[]): RoadGraphData {
   }
 
   const turnRestrictions: TurnRestriction[] = [];
+  const viaWayRestrictions: ViaWayRestriction[] = [];
   const wayIdsInGraph = new Set<number>(edges.map((e) => e.wayId));
   let viaNotInGraph = 0, viaMissingButWaysPresent = 0;
   for (const r of pending) {
@@ -232,11 +250,20 @@ export function buildGraphFromElements(elements: any[]): RoadGraphData {
     turnRestrictions.push({ type: r.type, fromWayId: r.fromWayId, toWayId: r.toWayId, viaNode });
   }
 
+  for (const r of pendingViaWay) {
+    if (wayIdsInGraph.has(r.fromWayId) && wayIdsInGraph.has(r.viaWayId) && wayIdsInGraph.has(r.toWayId)) {
+      viaWayRestrictions.push(r);
+    } else {
+      viaWaySkipped++;
+    }
+  }
+
   return {
-    nodes, edges, turnRestrictions, generatedAt: new Date().toISOString(),
+    nodes, edges, turnRestrictions, viaWayRestrictions, generatedAt: new Date().toISOString(),
     stats: {
       nodes: nodes.length, edges: edges.length, restrictionsKept: turnRestrictions.length,
-      restrictionsSkippedViaWay: viaWayRestrictions, restrictionsSkippedIncomplete: incompleteRestrictions,
+      restrictionsViaWayKept: viaWayRestrictions.length,
+      restrictionsSkippedViaWay: viaWaySkipped, restrictionsSkippedIncomplete: incompleteRestrictions,
       restrictionsSkippedViaNotInGraph: viaNotInGraph,
       restrictionsSkippedViaNotInGraphButBothWaysPresent: viaMissingButWaysPresent,
     },
@@ -246,8 +273,11 @@ export function buildGraphFromElements(elements: any[]): RoadGraphData {
 export async function buildRoadGraph(): Promise<RoadGraphData> {
   const data = buildGraphFromElements((await fetchFromOverpass()).elements ?? []);
   mkdirSync(GRAPH_DIR, { recursive: true });
-  writeFileSync(OUTPUT_FILE, JSON.stringify(data));
-  console.log('Graph built:', data.stats, '->', OUTPUT_FILE);
+  const jsonStr = JSON.stringify(data);
+  writeFileSync(OUTPUT_FILE, jsonStr);
+  const gz = gzipSync(Buffer.from(jsonStr));
+  writeFileSync(OUTPUT_FILE + '.gz', gz);
+  console.log('Graph built:', data.stats, '->', OUTPUT_FILE, `(${OUTPUT_FILE}.gz)`);
   return data;
 }
 

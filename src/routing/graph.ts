@@ -32,10 +32,18 @@ export interface TurnRestriction {
   viaNode: number;
 }
 
+export interface ViaWayRestriction {
+  type: string;
+  fromWayId: number;
+  viaWayId: number;
+  toWayId: number;
+}
+
 export interface RoadGraphData {
   nodes: CompactNode[];
   edges: CompactEdge[];
   turnRestrictions: TurnRestriction[];
+  viaWayRestrictions?: ViaWayRestriction[];
   generatedAt?: string;
   stats?: Record<string, number>;
 }
@@ -194,6 +202,21 @@ export class RoadGraph {
       const list = this.restrictionIndex.get(key);
       if (list) list.push(r); else this.restrictionIndex.set(key, [r]);
     }
+
+    if (data.viaWayRestrictions) {
+      for (const r of data.viaWayRestrictions) {
+        if (r.type.startsWith('no_')) {
+          this.viaWayRestrictions.add(`${r.fromWayId}|${r.viaWayId}|${r.toWayId}`);
+        }
+      }
+    }
+  }
+
+  private viaWayRestrictions = new Set<string>();
+
+  public isViaWayRestricted(fromWayId: number, viaWayId: number, toWayId: number): boolean {
+    if (this.viaWayRestrictions.size === 0) return false;
+    return this.viaWayRestrictions.has(`${fromWayId}|${viaWayId}|${toWayId}`);
   }
 
   public restrictionsAt(fromWayId: number, viaNode: number): TurnRestriction[] {
