@@ -27,6 +27,14 @@ export interface IncidentDispatchResult {
   contactsNotified: number;
   telegramChatsNotified: number;
   pushDevicesNotified: number;
+  /** True when we stopped waiting (waitForDeliveryMs) before every channel finished; they keep going. */
+  deliveryPending?: boolean;
+}
+
+/** Waits for `task` at most `ms` (if given); null means it's still running. */
+function within<T>(task: Promise<T>, ms?: number): Promise<T | null> {
+  if (ms === undefined) return task;
+  return Promise.race([task, new Promise<null>((r) => setTimeout(() => r(null), ms))]);
 }
 
 let adminDb: admin.firestore.Firestore | null = null;
@@ -300,6 +308,12 @@ export async function handleWatchAlertTrigger(params: {
   landmark?: string | null;
   formattedAddress?: string | null;
   serverBaseUrl?: string;
+  /**
+   * Return after this long even if some channels are still sending (an SMS
+   * through the textbee phone can take ~20 s to confirm). The watch times out
+   * after 30 s and retries, so the server must answer it quickly.
+   */
+  waitForDeliveryMs?: number;
 }): Promise<IncidentDispatchResult> {
   const { event, landmark, formattedAddress } = params;
   const serverBaseUrl =
@@ -425,17 +439,24 @@ export async function handleWatchAlertTrigger(params: {
     return 0;
   });
 
-  const [sentCount, telegramCount, pushCount] = await Promise.all([smsTask, telegramTask, pushTask]);
-  if (sentCount + telegramCount + pushCount === 0) {
-    console.error(`[WEARABLE_INCIDENT] ALERT ${incidentId} REACHED NOBODY: no SMS sent, no Telegram chat or phone linked.`);
-  }
+  const delivery = Promise.all([smsTask, telegramTask, pushTask]).then(([sms, telegram, push]) => {
+    console.log(`[WEARABLE_INCIDENT] ${incidentId} delivered: SMS ${sms}, Telegram ${telegram}, phones ${push}`);
+    if (sms + telegram + push === 0) {
+      console.error(`[WEARABLE_INCIDENT] ALERT ${incidentId} REACHED NOBODY: no SMS sent, no Telegram chat or phone linked.`);
+    }
+    return { sms, telegram, push };
+  });
 
+  const done = await within(delivery, params.waitForDeliveryMs);
+  if (!done) {
+    return { incidentId, smsDispatched: false, contactsNotified: 0, telegramChatsNotified: 0, pushDevicesNotified: 0, deliveryPending: true };
+  }
   return {
     incidentId,
-    smsDispatched: sentCount > 0,
-    contactsNotified: sentCount,
-    telegramChatsNotified: telegramCount,
-    pushDevicesNotified: pushCount,
+    smsDispatched: done.sms > 0,
+    contactsNotified: done.sms,
+    telegramChatsNotified: done.telegram,
+    pushDevicesNotified: done.push,
   };
 }
 
@@ -501,6 +522,7 @@ export async function handleWatchAlertCancel(
   incidentId: string,
   deviceId: string,
   serverBaseUrl?: string,
+  opts: { waitForDeliveryMs?: number } = {},
 ): Promise<void> {
   const now = Date.now();
   const baseUrl =
@@ -537,7 +559,7 @@ export async function handleWatchAlertCancel(
 
   const contactsToNotify = smsAlertRecipients(profile.emergencyContacts);
 
-  await Promise.all([
+  const delivery = Promise.all([
     ...contactsToNotify.map(async (contact) => {
       try {
         await sendSms({ to: contact.phone, body: resolvedBody });
@@ -555,6 +577,7 @@ export async function handleWatchAlertCancel(
       console.warn('[WEARABLE_INCIDENT] Telegram resolve failed:', e.message),
     ),
   ]);
+  await within(delivery, opts.waitForDeliveryMs);
 }
 
 /**

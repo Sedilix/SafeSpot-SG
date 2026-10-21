@@ -251,6 +251,56 @@ describe('wearableIncidentService', () => {
       expect(sendSpy).toHaveBeenCalled();
     });
 
+    it('answers within waitForDeliveryMs while a slow SMS keeps sending in the background', async () => {
+      await pairWearableDevice({
+        deviceId: 'SS-SLOW-0000-0001',
+        elderName: 'Uncle Tan',
+        emergencyContacts: [
+          { id: 'mei', name: 'Mei', relationship: 'Daughter', phone: '91234567', emoji: '', bgColor: '', isPrimary: true },
+        ],
+      });
+      let finishSms!: () => void;
+      const sendSpy = vi.spyOn(notifications, 'sendSms').mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishSms = () => resolve({ success: true, carrierStatus: 'SENT_TEXTBEE', recipient: '+6591234567' });
+          }),
+      );
+
+      const t0 = Date.now();
+      const res = await handleWatchAlertTrigger({
+        event: { deviceId: 'SS-SLOW-0000-0001', eventType: 'SOS_TRIGGER', lat: 1.35, lng: 103.85, timestamp: 1700000000 },
+        waitForDeliveryMs: 30,
+      });
+      expect(Date.now() - t0).toBeLessThan(1000);
+      expect(res.deliveryPending).toBe(true);
+      expect(res.incidentId).toMatch(/^inc_w_/);
+      expect(sendSpy).toHaveBeenCalledTimes(1); // started, not abandoned
+      expect((await getIncidentById(res.incidentId))?.status).toBe('active');
+
+      const log = vi.spyOn(console, 'log');
+      finishSms();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(log.mock.calls.some((c) => String(c[0]).includes(`${res.incidentId} delivered: SMS 1`))).toBe(true);
+    });
+
+    it('reports delivery normally when everything finishes within the wait', async () => {
+      vi.spyOn(notifications, 'sendSms').mockResolvedValue({ success: true, carrierStatus: 'SENT_TEXTBEE', recipient: '+6591234567' });
+      await pairWearableDevice({
+        deviceId: 'SS-FAST-0000-0001',
+        elderName: 'Uncle Tan',
+        emergencyContacts: [
+          { id: 'mei', name: 'Mei', relationship: 'Daughter', phone: '91234567', emoji: '', bgColor: '', isPrimary: true },
+        ],
+      });
+      const res = await handleWatchAlertTrigger({
+        event: { deviceId: 'SS-FAST-0000-0001', eventType: 'SOS_TRIGGER', lat: 1.35, lng: 103.85, timestamp: 1700000000 },
+        waitForDeliveryMs: 5000,
+      });
+      expect(res.deliveryPending).toBeUndefined();
+      expect(res.contactsNotified).toBe(1);
+    });
+
     it('retrieves active incident for device when an alert is live', async () => {
       const res = await handleWatchAlertTrigger({
         event: {
