@@ -55,22 +55,41 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
 
   const mapsApiKey = dynamicKey;
 
+  // The Google map draws its marker and accuracy ring itself, so it needs
+  // real colour values: read the theme's pine token instead of hard-coding
+  // a hue, and re-read when the contrast theme changes. The theme class is
+  // applied by App's effect, which runs after this one, so wait a frame.
+  const [pinColors, setPinColors] = useState<{ pin?: string; glyph?: string }>({});
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      const css = getComputedStyle(document.body);
+      setPinColors({
+        pin: css.getPropertyValue('--ss-pine').trim() || undefined,
+        glyph: css.getPropertyValue('--ss-on-pine').trim() || undefined,
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [settings.contrastTheme]);
+
   // Google Maps Embed / Search link
   const openInGoogleMaps = () => {
-    window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank');
+    window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank', 'noopener');
   };
 
   if (lat === null || lng === null) {
     return (
       <section id="card-interactive-map" className="card p-6 sm:p-7">
         <div className="mb-4 flex items-center gap-3">
-          <div className="icon-tile">
+          <div className="icon-tile" aria-hidden="true">
             <Navigation className="h-5 w-5" />
           </div>
-          <h3 className="font-display text-2xl leading-none font-bold tracking-tight">{t('map.title', lang)}</h3>
+          <h2 className="font-display text-2xl leading-none font-bold tracking-tight">{t('map.title', lang)}</h2>
         </div>
-        <div className="border-line text-ink-soft flex h-40 items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 text-center text-base font-semibold">
-          <MapPin className="h-5 w-5 shrink-0" />
+        <div
+          role="status"
+          className="border-line-strong text-ink-soft flex h-40 items-center justify-center gap-2 rounded-xl border border-dashed px-4 text-center text-base font-semibold"
+        >
+          <MapPin aria-hidden="true" className="h-5 w-5 shrink-0" />
           <span>{t('map.waiting', lang)}</span>
         </div>
       </section>
@@ -82,29 +101,29 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
       {/* Header bar */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="icon-tile">
+          <div className="icon-tile" aria-hidden="true">
             <Navigation className="h-5 w-5" />
           </div>
-          <div>
-            <h3 className="font-display text-2xl leading-none font-bold tracking-tight">
+          <div className="min-w-0">
+            <h2 className="font-display text-2xl leading-none font-bold tracking-tight">
               {t('map.title', lang)}
-            </h3>
-            <p className="text-ink-soft mt-1 text-sm font-normal sm:text-base">
+            </h2>
+            <p className="text-ink-soft mt-1 text-sm font-normal tabular-nums sm:text-base">
               {t('map.precision', lang)} {lat.toFixed(5)}, {lng.toFixed(5)}
               {accuracyMeters != null && ` • ±${Math.round(accuracyMeters)}m`}
-              {verification?.refinedByCandidate && ' • panorama-refined'}
+              {verification?.refinedByCandidate && ` • ${t('map.streetViewChecked', lang)}`}
             </p>
           </div>
         </div>
 
-        <button onClick={openInGoogleMaps} className="btn btn-md btn-secondary" title="Open coordinates in external Google Maps application">
+        <button type="button" onClick={openInGoogleMaps} className="btn btn-md btn-secondary">
           <span>{t('map.openFull', lang)}</span>
-          <ExternalLink className="text-ink-soft h-4 w-4" />
+          <ExternalLink aria-hidden="true" className="text-ink-soft h-4 w-4" />
         </button>
       </div>
 
       {/* Map Container */}
-      <div className="border-line-strong/60 relative h-72 w-full overflow-hidden rounded-xl border-2 bg-slate-950 shadow-inner sm:h-96">
+      <div className="border-line-strong/60 bg-well relative h-72 w-full overflow-hidden rounded-xl border-2 shadow-inner sm:h-96">
         {mapsApiKey ? (
           <APIProvider apiKey={mapsApiKey}>
             <Map
@@ -118,16 +137,16 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
               style={{ width: '100%', height: '100%' }}
             >
               <AdvancedMarker position={{ lat, lng }}>
-                <Pin background="#16a34a" glyphColor="#ffffff" borderColor="#ffffff" />
+                <Pin background={pinColors.pin} glyphColor={pinColors.glyph} borderColor={pinColors.glyph} />
               </AdvancedMarker>
               {accuracyMeters != null && accuracyMeters > 0 && (
                 <Circle
                   center={{ lat, lng }}
                   radius={Math.min(Math.max(accuracyMeters, 5), 80)}
-                  strokeColor="#16a34a"
+                  strokeColor={pinColors.pin}
                   strokeOpacity={0.8}
                   strokeWeight={2}
-                  fillColor="#16a34a"
+                  fillColor={pinColors.pin}
                   fillOpacity={0.15}
                 />
               )}
@@ -137,7 +156,8 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
           /* Fallback interactive tile map with verified pin overlay */
           <div className="relative h-full w-full">
             <iframe
-              title="Interactive Pickup Map"
+              title={t('map.title', lang)}
+              loading="lazy"
               width="100%"
               height="100%"
               frameBorder="0"
@@ -149,39 +169,37 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
             />
 
             {/* Custom Overlay Pin & Pulsing Radius */}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            {/* Static "you are here" marker: the position is a single fix,
+                not a live stream, so it does not pulse. */}
+            <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div className="relative flex items-center justify-center">
-                <div className="bg-pine/20 border-pine absolute h-20 w-20 animate-ping rounded-full border-2"></div>
+                <div className="bg-pine/15 border-pine/60 absolute h-20 w-20 rounded-full border-2"></div>
                 <div className="bg-pine/30 border-pine-deep absolute h-14 w-14 rounded-full border"></div>
-                <div className="bg-pine text-on-pine z-10 -translate-y-3 rounded-full border-2 border-white p-2 shadow-xl">
+                <div className="bg-pine text-on-pine border-on-pine z-10 -translate-y-3 rounded-full border-2 p-2 shadow-xl">
                   <MapPin className="h-7 w-7" />
                 </div>
               </div>
             </div>
 
-            {/* In-Map Info Overlay Pill */}
-            <div className="absolute top-3 left-3 right-3 flex items-center gap-2 rounded-xl border border-white/20 bg-black/85 px-3.5 py-2 text-sm font-semibold text-white shadow-md backdrop-blur-md sm:right-auto">
+            {/* In-map info pill */}
+            <div className="border-line bg-surface/95 text-ink absolute top-3 right-3 left-3 flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-semibold shadow-md backdrop-blur-md sm:right-auto">
               {isVerified ? (
-                <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-400" />
+                <ShieldCheck aria-hidden="true" className="text-pine h-5 w-5 shrink-0" />
               ) : (
-                <MapPin className="h-5 w-5 shrink-0 text-sky-300" />
+                <MapPin aria-hidden="true" className="text-sky h-5 w-5 shrink-0" />
               )}
-              <div className="truncate">
-                <span className={isVerified ? 'text-emerald-400' : 'text-sky-300'}>
+              <div className="min-w-0 truncate">
+                <span className={`font-bold ${isVerified ? 'text-pine-deep' : 'text-sky'}`}>
                   {t(isVerified ? 'map.verifiedPin' : 'map.gpsPin', lang)}
                 </span>{' '}
                 {address}
               </div>
             </div>
 
-            {/* Zoom / Re-center Overlay Controls */}
-            <div className="pointer-events-auto absolute bottom-3 right-3 flex flex-col gap-1.5">
-              <button
-                onClick={openInGoogleMaps}
-                className="btn btn-md border-line bg-surface text-ink hover:bg-well border shadow-md"
-                title="Open directly in Google Maps"
-              >
-                <ExternalLink className="text-sky h-4 w-4" />
+            {/* Open externally */}
+            <div className="pointer-events-auto absolute right-3 bottom-3 flex flex-col gap-1.5">
+              <button type="button" onClick={openInGoogleMaps} className="btn btn-md btn-secondary shadow-md">
+                <ExternalLink aria-hidden="true" className="text-sky h-4 w-4" />
                 <span>Google Maps</span>
               </button>
             </div>
@@ -191,9 +209,11 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
 
       {/* Driver Coordinates & Notes bar */}
       <div className="text-ink-soft mt-3.5 flex flex-wrap items-center justify-between gap-2 text-sm font-semibold sm:text-base">
-        <div className="flex items-center gap-1.5">
-          <Compass className="text-pine h-5 w-5" />
-          <span>{t('map.coordinates', lang)} {lat.toFixed(6)}, {lng.toFixed(6)}</span>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Compass aria-hidden="true" className="text-pine h-5 w-5 shrink-0" />
+          <span className="tabular-nums break-all">
+            {t('map.coordinates', lang)} {lat.toFixed(6)}, {lng.toFixed(6)}
+          </span>
         </div>
         <div>
           <span>{t('map.navReady', lang)}</span>

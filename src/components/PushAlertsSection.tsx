@@ -31,7 +31,7 @@ export const PushAlertsSection: React.FC<{
   const [thisEndpoint, setThisEndpoint] = useState<string | null>(null);
   const [invite, setInvite] = useState<{ url: string; expiresAt: number } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'yes' | 'failed' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const support = pushSupport();
 
@@ -93,43 +93,51 @@ export const PushAlertsSection: React.FC<{
     if (navigator.share) {
       await navigator.share({ title: 'SafeSpot alerts', text, url: invite.url }).catch(() => {});
     } else {
-      await navigator.clipboard?.writeText(`${text} ${invite.url}`);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
+      await copyText(`${text} ${invite.url}`);
     }
+  };
+
+  // Only say "Copied" when the clipboard write actually succeeded.
+  const copyText = async (value: string) => {
+    try {
+      if (!navigator.clipboard) throw new Error('no clipboard');
+      await navigator.clipboard.writeText(value);
+      setCopied('yes');
+    } catch {
+      setCopied('failed');
+    }
+    setTimeout(() => setCopied(null), 2500);
   };
 
   const copyInvite = async () => {
     if (!invite) return;
-    await navigator.clipboard?.writeText(invite.url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+    await copyText(invite.url);
   };
 
   const thisIsOn = Boolean(thisEndpoint && devices.some((d) => d.endpoint === thisEndpoint));
 
   return (
-    <div className="space-y-3 border-t border-line pt-3">
+    <section aria-labelledby="push-alerts-heading" className="border-line space-y-3 border-t pt-4">
       <div className="flex items-center gap-2">
-        <Bell className="text-sky h-5 w-5" />
-        <span className="text-base font-bold">{t('push.title', lang)}</span>
+        <Bell className="text-sky h-5 w-5 shrink-0" />
+        <h4 id="push-alerts-heading" className="font-body text-base font-bold">{t('push.title', lang)}</h4>
       </div>
       <p className="text-ink-soft text-sm">{t('push.desc', lang)}</p>
 
       {devices.length > 0 && (
         <ul className="space-y-2">
           {devices.map((d) => (
-            <li key={d.id} className="bg-paper border-line flex items-center justify-between gap-3 rounded-xl border p-3">
+            <li key={d.id} className="bg-surface border-line flex items-center justify-between gap-3 rounded-xl border p-3">
               <div className="flex min-w-0 items-center gap-2">
-                <Smartphone className="text-sky-deep h-5 w-5 shrink-0" />
+                <Smartphone className="text-sky h-5 w-5 shrink-0" />
                 <span className="truncate font-bold">{d.label}</span>
-                {d.endpoint === thisEndpoint && <span className="text-ink-soft text-xs">({t('push.thisPhone', lang)})</span>}
+                {d.endpoint === thisEndpoint && <span className="text-ink-soft shrink-0 text-sm">({t('push.thisPhone', lang)})</span>}
               </div>
               <button
                 type="button"
                 onClick={() => remove(d)}
                 disabled={busy !== null}
-                className="btn btn-sm btn-secondary text-brick border-brick/30 shrink-0"
+                className="btn btn-sm btn-secondary text-brick border-brick/30 hover:text-brick-deep shrink-0"
                 aria-label={`${t('push.remove', lang)} ${d.label}`}
               >
                 {busy === d.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
@@ -154,27 +162,37 @@ export const PushAlertsSection: React.FC<{
       </div>
 
       {support === 'needs-install' && !thisIsOn && (
-        <p className="text-ink-soft flex items-start gap-2 text-xs">
+        <p className="text-ink-soft flex items-start gap-2 text-sm">
           <BellOff className="mt-0.5 h-4 w-4 shrink-0" />
           {t('push.iphoneHint', lang)}
         </p>
       )}
 
+      {support === 'unsupported' && !thisIsOn && (
+        <p className="text-ink-soft flex items-start gap-2 text-sm">
+          <BellOff className="mt-0.5 h-4 w-4 shrink-0" />
+          {t('push.unsupported', lang)}
+        </p>
+      )}
+
       {invite && (
-        <div className="bg-paper border-line space-y-2 rounded-xl border p-3">
+        <div className="bg-surface border-line space-y-2 rounded-xl border p-3">
           <p className="text-sm font-semibold">{t('push.inviteReady', lang)}</p>
-          <p className="bg-well truncate rounded-lg px-2 py-1 font-mono text-xs">{invite.url}</p>
+          <p className="bg-well border-line truncate rounded-lg border px-2.5 py-1.5 font-mono text-sm" title={invite.url}>{invite.url}</p>
           <div className="grid grid-cols-2 gap-2">
             <button type="button" onClick={shareInvite} className="btn btn-md btn-primary">
               <Share2 className="h-5 w-5" />
               <span>{t('push.share', lang)}</span>
             </button>
             <button type="button" onClick={copyInvite} className="btn btn-md btn-secondary">
-              {copied ? <Check className="text-pine h-5 w-5" /> : <Copy className="h-5 w-5" />}
-              <span>{copied ? t('push.copied', lang) : t('push.copy', lang)}</span>
+              {copied === 'yes' ? <Check className="text-pine h-5 w-5" /> : <Copy className="h-5 w-5" />}
+              <span>{copied === 'yes' ? t('push.copied', lang) : t('push.copy', lang)}</span>
             </button>
           </div>
-          <p className="text-ink-soft text-xs">{t('push.inviteExpiry', lang)}</p>
+          <p aria-live="polite" className="text-brick-deep text-sm font-semibold empty:hidden">
+            {copied === 'failed' ? t('common.copyFailed', lang) : ''}
+          </p>
+          <p className="text-ink-soft text-sm">{t('push.inviteExpiry', lang)}</p>
         </div>
       )}
 
@@ -183,6 +201,6 @@ export const PushAlertsSection: React.FC<{
           {error}
         </p>
       )}
-    </div>
+    </section>
   );
 };

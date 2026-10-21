@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useId } from 'react';
 import {
   MapPin,
   Building2,
@@ -13,9 +13,9 @@ import {
   Loader2,
   X,
   Check,
-  Search,
 } from 'lucide-react';
-import { AddressSuggestion, SavedPlaceKind } from '../types';
+import { AddressSuggestion, Language, SavedPlaceKind } from '../types';
+import { t } from '../locales/translations';
 
 interface AddressAutocompleteInputProps {
   id?: string;
@@ -24,59 +24,88 @@ interface AddressAutocompleteInputProps {
   placeholder?: string;
   category?: SavedPlaceKind | 'general';
   label?: string;
+  /** Kept for API compatibility; the category icon inside the field now marks the place type. */
   emoji?: string;
   disabled?: boolean;
   required?: boolean;
   className?: string;
   autoFocus?: boolean;
+  /** UI language for the field's own helper text. */
+  lang?: Language;
 }
 
 export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> = ({
   id,
   value,
   onChange,
-  placeholder = 'Search address, building, or 6-digit postal code...',
+  placeholder,
   category = 'general',
   label,
-  emoji,
   disabled = false,
   required = false,
   className = '',
   autoFocus = false,
+  lang: langProp,
 }) => {
+  const lang: Language = langProp ?? 'en';
+  const autoId = useId();
+  const inputId = id || `address-${autoId}`;
+  const listboxId = `${inputId}-listbox`;
+  const hintId = `${inputId}-hint`;
+
   const [query, setQuery] = useState(value || '');
   const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
+  // Feedback when a search finds nothing or the search service is down, so a
+  // closed dropdown is never mistaken for "still searching".
+  const [searchHint, setSearchHint] = useState<'none' | 'error' | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Only the newest request may update the list; slower, older replies are dropped.
+  const requestSeqRef = useRef(0);
 
   // Sync external value updates
   useEffect(() => {
     setQuery(value || '');
   }, [value]);
 
+  useEffect(
+    () => () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    },
+    []
+  );
+
   const fetchSuggestions = useCallback(
     async (searchTerm: string) => {
+      const seq = ++requestSeqRef.current;
       setIsLoading(true);
       try {
         const res = await fetch(
           `/api/places/autocomplete?q=${encodeURIComponent(searchTerm)}&category=${encodeURIComponent(category)}`
         );
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.suggestions)) {
-            setSuggestions(data.suggestions);
-            setIsOpen(data.suggestions.length > 0);
-          }
+        if (seq !== requestSeqRef.current) return;
+        if (!res.ok) {
+          setSearchHint(searchTerm.trim() ? 'error' : null);
+          return;
+        }
+        const data = await res.json();
+        if (seq !== requestSeqRef.current) return;
+        if (Array.isArray(data.suggestions)) {
+          setSuggestions(data.suggestions);
+          setIsOpen(data.suggestions.length > 0);
+          setSelectedIndex(-1);
+          setSearchHint(data.suggestions.length === 0 && searchTerm.trim().length >= 3 ? 'none' : null);
         }
       } catch (err) {
         console.warn('Failed to fetch address suggestions:', err);
+        if (seq === requestSeqRef.current) setSearchHint(searchTerm.trim() ? 'error' : null);
       } finally {
-        setIsLoading(false);
+        if (seq === requestSeqRef.current) setIsLoading(false);
       }
     },
     [category]
@@ -86,6 +115,7 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
     const val = e.target.value;
     setQuery(val);
     onChange(val);
+    setSearchHint(null);
 
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
@@ -96,6 +126,8 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
       if (category === 'healthcare' || category === 'work') {
         fetchSuggestions('');
       } else {
+        requestSeqRef.current++;
+        setIsLoading(false);
         setSuggestions([]);
         setIsOpen(false);
       }
@@ -118,6 +150,7 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
     // Google suggestions have no coordinates; look them up (and confirm the
     // official address via OneMap) so a saved place is always usable.
     if (s.source === 'google' && (s.lat == null || s.lng == null) && s.id?.startsWith('google-')) {
+      setIsLoading(true);
       try {
         const res = await fetch(`/api/places/resolve?placeId=${encodeURIComponent(s.id.slice('google-'.length))}`);
         if (res.ok) {
@@ -126,19 +159,25 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
         }
       } catch {
         // keep the unresolved suggestion; it can still be geocoded later
+      } finally {
+        setIsLoading(false);
       }
     }
     const chosenAddress = chosen.fullAddress || chosen.title;
     setQuery(chosenAddress);
     setIsOpen(false);
     setSelectedIndex(-1);
+    setSearchHint(null);
     onChange(chosenAddress, chosen);
   };
 
   const handleClear = () => {
+    requestSeqRef.current++;
+    setIsLoading(false);
     setQuery('');
     setSuggestions([]);
     setIsOpen(false);
+    setSearchHint(null);
     onChange('');
     inputRef.current?.focus();
   };
@@ -170,49 +209,67 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
         handleSelect(suggestions[selectedIndex]);
       }
     } else if (e.key === 'Escape') {
+      // Close the list without also closing a dialog this field sits in.
+      e.stopPropagation();
+      setIsOpen(false);
+    } else if (e.key === 'Tab') {
       setIsOpen(false);
     }
   };
 
   // Icon for category
   const renderCategoryIcon = () => {
-    if (category === 'home') return <Home className="h-5 w-5 text-pine" />;
-    if (category === 'work') return <Briefcase className="h-5 w-5 text-sky" />;
-    if (category === 'healthcare') return <Hospital className="h-5 w-5 text-brick" />;
-    return <MapPin className="h-5 w-5 text-pine" />;
+    if (category === 'home') return <Home className="h-5 w-5 text-ink-soft" aria-hidden="true" />;
+    if (category === 'work') return <Briefcase className="h-5 w-5 text-ink-soft" aria-hidden="true" />;
+    if (category === 'healthcare') return <Hospital className="h-5 w-5 text-ink-soft" aria-hidden="true" />;
+    return <MapPin className="h-5 w-5 text-ink-soft" aria-hidden="true" />;
   };
 
   // Icon for individual suggestion
   const getSuggestionIcon = (s: AddressSuggestion) => {
+    const cls = 'h-5 w-5 shrink-0 mt-0.5';
     if (s.category === 'healthcare' || s.title.toLowerCase().includes('hospital') || s.title.toLowerCase().includes('polyclinic')) {
-      return <Hospital className="h-5 w-5 text-brick shrink-0 mt-0.5" />;
+      return <Hospital className={cls} aria-hidden="true" />;
     }
     if (s.category === 'work' || s.title.toLowerCase().includes('block71') || s.title.toLowerCase().includes('tower')) {
-      return <Building2 className="h-5 w-5 text-sky shrink-0 mt-0.5" />;
+      return <Building2 className={cls} aria-hidden="true" />;
     }
     if (s.category === 'home' || s.title.toLowerCase().startsWith('blk')) {
-      return <Home className="h-5 w-5 text-pine shrink-0 mt-0.5" />;
+      return <Home className={cls} aria-hidden="true" />;
     }
-    return <MapPin className="h-5 w-5 text-ink-soft shrink-0 mt-0.5" />;
+    return <MapPin className={cls} aria-hidden="true" />;
   };
+
+  const listHeading =
+    category === 'healthcare'
+      ? t('address.suggestHealthcare', lang)
+      : category === 'work'
+      ? t('address.suggestWork', lang)
+      : t('address.suggestGeneral', lang);
+
+  const showList = isOpen && suggestions.length > 0;
+  const activeOptionId = showList && selectedIndex >= 0 ? `${listboxId}-opt-${selectedIndex}` : undefined;
 
   return (
     <div ref={containerRef} className={`relative w-full ${className}`}>
       {label && (
-        <label className="label flex items-center justify-between" htmlFor={id}>
-          <span>
-            {emoji && <span className="mr-1.5" aria-hidden="true">{emoji}</span>}
+        <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+          <label className="label mb-0" htmlFor={inputId}>
             {label}
-            {required && <span className="text-brick ml-1">*</span>}
-          </span>
-          <span className="text-xs font-normal text-ink-faint">Google & OneMap Verified</span>
-        </label>
+            {required && (
+              <span className="text-brick ml-1" aria-hidden="true">
+                *
+              </span>
+            )}
+          </label>
+          <span className="text-ink-soft text-xs">{t('address.sources', lang)}</span>
+        </div>
       )}
 
       <div className="relative">
-        <div className="text-ink-faint pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
+        <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
           {isLoading ? (
-            <Loader2 className="h-5 w-5 animate-spin text-pine" />
+            <Loader2 className="h-5 w-5 animate-spin text-pine" aria-hidden="true" />
           ) : (
             renderCategoryIcon()
           )}
@@ -220,79 +277,83 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
 
         <input
           ref={inputRef}
-          id={id}
+          id={inputId}
           type="text"
           value={query}
           onChange={handleInputChange}
           onFocus={handleFocus}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder}
+          placeholder={placeholder ?? t('address.placeholder', lang)}
           disabled={disabled}
+          required={required}
           autoFocus={autoFocus}
           autoComplete="off"
-          className="input pl-11 pr-10 text-base font-semibold"
-          aria-autocomplete="list"
-          aria-expanded={isOpen}
+          className="input pl-11 pr-12 text-base font-semibold"
           role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={showList}
+          aria-controls={listboxId}
+          aria-activedescendant={activeOptionId}
+          aria-busy={isLoading || undefined}
+          aria-describedby={searchHint ? hintId : undefined}
         />
 
-        {query && (
+        {query && !disabled && (
           <button
             type="button"
             onClick={handleClear}
-            className="text-ink-faint hover:text-ink hover:bg-well absolute inset-y-0 right-0 flex items-center pr-3 my-1.5 mr-1.5 rounded-lg transition-colors"
-            title="Clear address"
-            aria-label="Clear address input"
+            className="text-ink-soft hover:text-ink hover:bg-well absolute top-1/2 right-0.5 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-pine"
+            aria-label={t('address.clear', lang)}
           >
-            <X className="h-4 w-4" />
+            <X className="h-5 w-5" aria-hidden="true" />
           </button>
         )}
       </div>
 
-      {/* Autocomplete Dropdown Popover */}
-      {isOpen && suggestions.length > 0 && (
-        <div className="absolute left-0 right-0 top-full z-50 mt-1.5 max-h-72 overflow-y-auto rounded-2xl border border-line bg-surface p-1.5 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-150">
-          <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-ink-faint flex items-center justify-between border-b border-line/60 mb-1">
-            <span>Suggestions for {category === 'healthcare' ? 'Hospitals & Polyclinics' : category === 'work' ? 'Offices & Business Hubs' : 'Singapore Addresses'}</span>
-            <span className="text-pine font-bold">Tap to fill</span>
+      {searchHint && !showList && (
+        <p id={hintId} role="status" className="text-ink-soft mt-1.5 text-sm">
+          {t(searchHint === 'none' ? 'address.noMatches' : 'address.searchError', lang)}
+        </p>
+      )}
+
+      {/* Autocomplete dropdown */}
+      {showList && (
+        <div className="border-line bg-surface animate-fade-in absolute top-full right-0 left-0 z-50 mt-1.5 overflow-hidden rounded-2xl border shadow-lg">
+          <div className="border-line text-ink-soft flex items-center justify-between gap-3 border-b px-3.5 py-2 text-xs font-bold">
+            <span className="truncate">{listHeading}</span>
+            <span className="text-pine-deep shrink-0">{t('address.tapToFill', lang)}</span>
           </div>
 
-          <div className="space-y-0.5">
+          <div id={listboxId} role="listbox" aria-label={listHeading} className="max-h-72 space-y-0.5 overflow-y-auto overscroll-contain p-1.5">
             {suggestions.map((s, idx) => {
               const isSelected = idx === selectedIndex;
               return (
                 <button
                   key={s.id || `${s.title}-${idx}`}
+                  id={`${listboxId}-opt-${idx}`}
                   type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  tabIndex={-1}
                   onClick={() => handleSelect(s)}
                   onMouseEnter={() => setSelectedIndex(idx)}
-                  className={`w-full text-left flex items-start gap-3 rounded-xl p-2.5 transition-all ${
-                    isSelected
-                      ? 'bg-pine-soft text-pine-deep font-semibold shadow-xs'
-                      : 'hover:bg-well/80 text-ink'
+                  className={`flex min-h-12 w-full items-start gap-3 rounded-xl p-2.5 text-left transition-colors ${
+                    isSelected ? 'bg-pine-soft text-pine-deep' : 'text-ink hover:bg-well'
                   }`}
                 >
-                  {getSuggestionIcon(s)}
+                  <span className={isSelected ? 'text-pine-deep' : 'text-ink-soft'}>{getSuggestionIcon(s)}</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="truncate text-sm sm:text-base font-bold">
-                        {s.title}
-                      </span>
+                      <span className="truncate text-sm font-bold sm:text-base">{s.title}</span>
                       {s.postalCode && (
-                        <span className="shrink-0 chip bg-well text-ink-soft text-[10px] px-1.5 py-0.5 font-mono font-bold">
+                        <span className="chip border-line bg-well text-ink-soft shrink-0 px-2 py-0.5 tabular-nums">
                           S{s.postalCode}
                         </span>
                       )}
                     </div>
-                    {s.subtitle && (
-                      <p className="text-xs text-ink-soft truncate mt-0.5">
-                        {s.subtitle}
-                      </p>
-                    )}
+                    {s.subtitle && <p className="text-ink-soft mt-0.5 truncate text-sm">{s.subtitle}</p>}
                   </div>
-                  {isSelected && (
-                    <Check className="h-4 w-4 text-pine shrink-0 self-center" />
-                  )}
+                  {isSelected && <Check className="text-pine h-4 w-4 shrink-0 self-center" aria-hidden="true" />}
                 </button>
               );
             })}

@@ -69,6 +69,10 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
   };
 
   const lang = settings.language || 'en';
+  const fontSizeShort =
+    settings.fontSize === 'extra-large' ? 'XL' : settings.fontSize === 'large' ? 'Large' : 'Med';
+  const profileName =
+    profile?.actualName || user?.displayName || (user?.isAnonymous ? 'Guest' : 'My Profile');
 
   // Only the brand + SOS row is pinned. The utility controls sit in their own
   // bar below it that scrolls away and wraps, so on a phone every control is
@@ -121,7 +125,7 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
       the 48px accessible minimum either way — only the labels are dropped.
     */}
     <div className="border-line bg-surface/60 border-b px-3 py-2 sm:px-8 sm:py-2.5">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-1.5 sm:gap-2.5">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2 sm:gap-2.5">
           {/* Mobile-Optimized Language Dropdown (EN / 中文 / Melayu / தமிழ்) */}
           <div className="relative inline-flex items-center shrink-0">
             <label htmlFor="select-language-dropdown" className="sr-only">
@@ -134,8 +138,7 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
               id="select-language-dropdown"
               value={lang}
               onChange={(e) => onUpdateSettings((prev) => ({ ...prev, language: e.target.value as Language }))}
-              className="btn btn-md btn-secondary cursor-pointer appearance-none pl-9 pr-7 text-sm font-bold sm:pl-10 sm:pr-8 sm:text-sm"
-              aria-label={t('header.language', lang)}
+              className="btn btn-md btn-secondary cursor-pointer appearance-none pr-8 pl-9 text-base font-bold sm:pl-10"
             >
               {LANGUAGE_OPTIONS.map((opt) => (
                 <option key={opt.id} value={opt.id} className="bg-surface text-ink py-1">
@@ -143,8 +146,8 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
                 </option>
               ))}
             </select>
-            <div className="pointer-events-none absolute right-2 z-10 text-ink-soft">
-              <ChevronDown className="h-3.5 w-3.5" />
+            <div className="pointer-events-none absolute right-2.5 z-10 text-ink-soft">
+              <ChevronDown className="h-4 w-4" />
             </div>
           </div>
 
@@ -154,7 +157,7 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
             onClick={onOpenVoiceCommand}
             className="btn btn-md btn-primary shrink-0 px-3 sm:px-4"
             title="Voice Commands (Say 'Where am I' or 'Send location')"
-            aria-label="Activate voice commands"
+            aria-label={t('header.voiceAssistant', lang)}
           >
             <Mic className="h-5 w-5" />
             <span className="hidden sm:inline">{t('header.voiceAssistant', lang)}</span>
@@ -166,11 +169,12 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
             onClick={toggleVoiceGuidance}
             className={`btn btn-md shrink-0 px-3 sm:px-4 ${
               settings.spokenGuidance
-                ? 'border-pine/40 bg-pine-soft text-pine-deep'
+                ? 'border-pine/40 bg-pine-soft text-pine-deep border'
                 : 'btn-secondary text-ink-soft'
             }`}
             title={settings.spokenGuidance ? 'Voice Speech Guidance Active (Tap to mute)' : 'Turn Voice Guidance On'}
-            aria-label={settings.spokenGuidance ? 'Mute voice guidance' : 'Turn voice guidance on'}
+            aria-pressed={settings.spokenGuidance}
+            aria-label={settings.spokenGuidance ? t('header.voiceOn', lang) : t('header.voiceOff', lang)}
           >
             {settings.spokenGuidance ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
             <span className="hidden sm:inline">
@@ -184,11 +188,11 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
             onClick={onOpenSettings}
             className="btn btn-md btn-secondary shrink-0 px-3 sm:px-4"
             title="Open Speechmatics Voices & Accessibility Settings"
-            aria-label="Settings and Speechmatics voice selection"
+            aria-label={t('header.settings', lang)}
           >
             <Settings className="text-ink-soft h-5 w-5" />
             <span className="hidden sm:inline">{t('header.settings', lang)}</span>
-            <span className="chip border-pine/40 bg-pine-soft text-pine-deep hidden px-2 py-0.5 text-[11px] uppercase lg:inline-flex">
+            <span className="chip border-pine/40 bg-pine-soft text-pine-deep hidden px-2 py-0.5 capitalize lg:inline-flex">
               {settings.speechmaticsVoice ? settings.speechmaticsVoice : 'sarah'}
             </span>
           </button>
@@ -199,7 +203,7 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
             onClick={toggleTheme}
             className="btn btn-md btn-secondary shrink-0 px-3 sm:px-4"
             title="Toggle High Contrast Display Mode"
-            aria-label="Toggle high contrast display mode"
+            aria-label={t('header.contrast', lang)}
           >
             <Eye className="text-ink-soft h-5 w-5" />
             <span className="hidden sm:inline">{t('header.contrast', lang)}</span>
@@ -211,12 +215,11 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
             onClick={toggleFontSize}
             className="btn btn-md btn-secondary shrink-0 px-3 sm:px-4"
             title="Increase or reset text size"
-            aria-label={`Text size, current: ${settings.fontSize}`}
+            aria-label={`${t('header.text', lang)}: ${fontSizeShort}`}
           >
             <Type className="text-ink-soft h-5 w-5" />
             <span className="hidden sm:inline">
-              {t('header.text', lang)}:{' '}
-              {settings.fontSize === 'extra-large' ? 'XL' : settings.fontSize === 'large' ? 'Large' : 'Med'}
+              {t('header.text', lang)}: {fontSizeShort}
             </span>
           </button>
 
@@ -227,20 +230,24 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
               onClick={onOpenProfile}
               className="btn btn-md btn-secondary shrink-0 px-3 sm:px-4"
               title="Open User Medical Profile & Emergency Contacts"
+              aria-label={profileName}
             >
               {profile?.selfiePhotoUrl ? (
                 <img
                   src={profile.selfiePhotoUrl}
-                  alt="Selfie"
+                  alt=""
                   className="border-pine h-7 w-7 rounded-full border-2 object-cover"
                 />
               ) : (
-                <span className="bg-pine text-on-pine flex h-7 w-7 items-center justify-center rounded-full text-sm">
+                <span
+                  aria-hidden="true"
+                  className="bg-pine text-on-pine flex h-7 w-7 items-center justify-center rounded-full text-sm"
+                >
                   {profile?.actualName?.charAt(0) || user.displayName?.charAt(0) || <UserIcon className="h-4 w-4" />}
                 </span>
               )}
               <span className="hidden max-w-[110px] truncate sm:inline">
-                {profile?.actualName || user.displayName || (user.isAnonymous ? 'Guest' : 'My Profile')}
+                {profileName}
               </span>
               {profile?.bloodType && profile.bloodType !== 'Unknown' && (
                 <span className="chip border-brick/40 bg-brick-soft text-brick-deep hidden px-2 py-0.5 text-[11px] lg:inline-flex">
@@ -254,7 +261,7 @@ export const HeaderAccessibility: React.FC<HeaderAccessibilityProps> = ({
               onClick={onOpenAuth}
               className="btn btn-md bg-ink text-bg hover:bg-ink-soft shrink-0 px-3 sm:px-4"
               title="Sign In with Google or Phone"
-              aria-label="Sign in"
+              aria-label={t('header.signIn', lang)}
             >
               <LogIn className="h-5 w-5" />
               <span className="hidden sm:inline">{t('header.signIn', lang)}</span>

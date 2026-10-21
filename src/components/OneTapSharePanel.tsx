@@ -53,6 +53,18 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
   const [telegramChatCount, setTelegramChatCount] = useState(0);
   const [telegramState, setTelegramState] = useState<'idle' | 'sending' | 'sent'>('idle');
 
+  const lang = settings.language || 'en';
+
+  const shareUrls = verification?.shareUrls;
+  const address = verification?.formattedAddress || 'My Current Location';
+  // Map link for this spot; null until there is a real position to share,
+  // so the share controls never hand out a generic Google Maps homepage.
+  const mapsUrl =
+    shareUrls?.googleMapsUrl ||
+    (verification?.verifiedCoordinates
+      ? `https://www.google.com/maps/search/?api=1&query=${verification.verifiedCoordinates.lat},${verification.verifiedCoordinates.lng}`
+      : null);
+
   // Show "Send to Telegram" only when this account has linked chats.
   useEffect(() => {
     if (!auth.currentUser) return;
@@ -89,27 +101,28 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
     }
   };
 
-  const lang = settings.language || 'en';
-
-  const shareUrls = verification?.shareUrls;
-  const address = verification?.formattedAddress || 'My Current Location';
-
   const handleCopyLink = () => {
-    if (!shareUrls?.googleMapsUrl) return;
-    navigator.clipboard.writeText(
-      `Pickup Location for Senior: ${address}\nNavigation Link: ${shareUrls.googleMapsUrl}\nInstructions: ${verification?.pickupInstructionsForDriver || 'Please pickup here'}`
-    );
-    setCopied(true);
-    setTimeout(() => setCopied(false), 3000);
+    if (!mapsUrl) return;
+    // Only claim "Copied" once the clipboard write actually succeeded.
+    navigator.clipboard
+      ?.writeText(
+        `Pickup Location for Senior: ${address}\nNavigation Link: ${mapsUrl}\nInstructions: ${verification?.pickupInstructionsForDriver || 'Please pickup here'}`
+      )
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 3000);
+      })
+      .catch((e) => console.warn('Copy to clipboard failed:', e));
   };
 
   const handleNativeShare = async () => {
-    if (navigator.share && shareUrls) {
+    if (!mapsUrl) return;
+    if (navigator.share) {
       try {
         await navigator.share({
           title: 'SafeSpot.SG Live Pickup Location',
           text: `I need a pickup at: ${address}. Driver instructions: ${verification?.pickupInstructionsForDriver || ''}`,
-          url: shareUrls.googleMapsUrl,
+          url: mapsUrl,
         });
       } catch (e) {
         console.warn('Share cancelled or not supported:', e);
@@ -141,7 +154,7 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
           contactName: contact.name,
           phone: contact.phone,
           address: verification?.formattedAddress || address,
-          googleMapsUrl: shareUrls?.googleMapsUrl || (verification ? `https://www.google.com/maps/search/?api=1&query=${verification.verifiedCoordinates.lat},${verification.verifiedCoordinates.lng}` : 'https://www.google.com/maps'),
+          googleMapsUrl: mapsUrl || 'https://www.google.com/maps',
           driverHint: verification?.pickupInstructionsForDriver,
           blePrecision,
           incidentId: localStorage.getItem('senior_safespot_active_incident') || undefined,
@@ -185,13 +198,13 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
       {/* Title Bar */}
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="icon-tile">
+          <div className="icon-tile" aria-hidden="true">
             <HeartHandshake className="h-5 w-5" />
           </div>
           <div>
-            <h3 className="font-display text-2xl leading-none font-bold tracking-tight">
+            <h2 className="font-display text-2xl leading-none font-bold tracking-tight">
               {t('share.title', lang)}
-            </h3>
+            </h2>
             <p className="text-ink-soft mt-1 text-sm font-normal sm:text-base">
               {t('share.subtitle', lang)}
             </p>
@@ -202,46 +215,56 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
         <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
           <button
             id="btn-alert-family-live-track"
+            type="button"
             onClick={onAlertFamily}
             disabled={isAlertingFamily}
+            aria-busy={isAlertingFamily}
             className="btn btn-md btn-danger"
-            title="Create a live tracking incident and send the link to your family"
           >
-            {isAlertingFamily ? <Loader2 className="h-5 w-5 animate-spin" /> : <Radio className="h-5 w-5" />}
+            {isAlertingFamily ? (
+              <Loader2 aria-hidden="true" className="h-5 w-5 animate-spin" />
+            ) : (
+              <Radio aria-hidden="true" className="h-5 w-5" />
+            )}
             <span>{t('share.alertFamily', lang)}</span>
           </button>
 
           <button
             id="btn-preview-caregiver-view"
+            type="button"
             onClick={onOpenCaregiverPreview}
             className="btn btn-md btn-secondary"
           >
-            <Car className="text-pine h-5 w-5" />
+            <Car aria-hidden="true" className="text-pine h-5 w-5" />
             <span>{t('share.driverScreen', lang)}</span>
           </button>
 
           <button
             id="btn-manage-contacts"
+            type="button"
             onClick={onOpenManageContacts}
             className="btn btn-md btn-secondary"
           >
-            <UserPlus className="text-ink-soft h-5 w-5" />
+            <UserPlus aria-hidden="true" className="text-ink-soft h-5 w-5" />
             <span>{t('share.editContacts', lang)}</span>
           </button>
         </div>
       </div>
 
       {/* Instant Confirmation Feedback Banner */}
-      {lastSentTo && (
-        <div className="mb-4 flex items-center justify-center gap-2 rounded-2xl bg-pine-soft border-2 border-pine text-pine-deep p-4 text-base font-extrabold sm:text-lg shadow-sm animate-in fade-in duration-200">
-          <Check className="h-6 w-6 stroke-[3] text-pine" />
-          <span>{t('share.pinSentToBanner', lang)} {lastSentTo}!</span>
-        </div>
-      )}
+      {/* Always mounted so screen readers announce the confirmation. */}
+      <div role="status" aria-live="polite">
+        {lastSentTo && (
+          <div className="border-pine/50 bg-pine-soft text-pine-deep animate-in mb-4 flex items-center justify-center gap-2 rounded-2xl border p-4 text-base font-bold sm:text-lg">
+            <Check aria-hidden="true" className="text-pine h-6 w-6 shrink-0 stroke-[3]" />
+            <span>{t('share.pinSentToBanner', lang)} {lastSentTo}!</span>
+          </div>
+        )}
+      </div>
 
       {sendError && (
-        <div role="alert" className="mb-4 flex items-center gap-2 rounded-2xl border-2 border-brick bg-brick-soft p-4 text-base font-bold text-brick-deep">
-          <AlertTriangle className="h-5 w-5 shrink-0" />
+        <div role="alert" className="border-brick/40 bg-brick-soft text-brick-deep mb-4 flex items-start gap-2 rounded-2xl border p-4 text-base font-bold">
+          <AlertTriangle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" />
           <span>{sendError}</span>
         </div>
       )}
@@ -251,15 +274,16 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
           id="btn-send-telegram"
           type="button"
           onClick={handleSendTelegram}
-          disabled={telegramState === 'sending'}
+          disabled={telegramState !== 'idle'}
+          aria-busy={telegramState === 'sending'}
           className="btn btn-md btn-secondary mb-4 w-full"
         >
           {telegramState === 'sending' ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
+            <Loader2 aria-hidden="true" className="h-5 w-5 animate-spin" />
           ) : telegramState === 'sent' ? (
-            <Check className="text-pine h-5 w-5" />
+            <Check aria-hidden="true" className="text-pine h-5 w-5" />
           ) : (
-            <Send className="text-sky h-5 w-5" />
+            <Send aria-hidden="true" className="text-sky h-5 w-5" />
           )}
           <span>
             {telegramState === 'sent'
@@ -286,7 +310,10 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
             >
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="border-line bg-surface text-3xl rounded-xl border p-2 shadow-xs shrink-0">
+                  <div
+                    aria-hidden="true"
+                    className="border-line bg-surface flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border text-3xl shadow-xs"
+                  >
                     {contact.emoji}
                   </div>
                   <div className="min-w-0">
@@ -296,7 +323,7 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
                       </span>
                       {contact.isPrimary && !contact.locked && (
                         <span className="chip border-pine/60 bg-pine-soft text-pine-deep text-xs font-bold py-0.5 px-2 shrink-0">
-                          <Star className="h-3 w-3 fill-pine text-pine" />
+                          <Star aria-hidden="true" className="h-3 w-3 fill-pine text-pine" />
                           {t('share.preferred', lang)}
                         </span>
                       )}
@@ -312,33 +339,33 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
               <div className="mt-1 grid grid-cols-2 gap-2.5">
                 <button
                   id={`btn-send-sms-${contact.id}`}
+                  type="button"
                   onClick={() => handleDirectSendPin(contact)}
-                  disabled={isSending}
-                  className={`btn btn-lg font-bold transition-all ${
-                    isSent
-                      ? 'bg-pine-deep text-white shadow-md'
-                      : 'btn-primary'
-                  }`}
-                  aria-label={`Send location pin directly to ${contact.name}`}
+                  disabled={isSending || isSent}
+                  aria-busy={isSending}
+                  className={`btn btn-lg ${isSent ? 'bg-pine-deep text-on-pine disabled:opacity-100' : 'btn-primary'}`}
                 >
                   {isSending ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <Loader2 aria-hidden="true" className="h-5 w-5 animate-spin" />
                   ) : isSent ? (
-                    <Check className="h-5 w-5 stroke-[3]" />
+                    <Check aria-hidden="true" className="h-5 w-5 stroke-[3]" />
                   ) : (
-                    <Send className="h-5 w-5" />
+                    <Send aria-hidden="true" className="h-5 w-5" />
                   )}
                   <span>{isSending ? t('share.sending', lang) : isSent ? t('share.pinSent', lang) : t('share.sendPin', lang)}</span>
+                  {/* Visible label stays short; the name tells screen readers which card. */}
+                  <span className="sr-only">: {contact.name}</span>
                 </button>
 
                 <button
                   id={`btn-call-${contact.id}`}
+                  type="button"
                   onClick={() => handleCallContact(contact)}
-                  className="btn btn-lg btn-secondary font-bold"
-                  aria-label={`Call ${contact.name}`}
+                  className="btn btn-lg btn-secondary"
                 >
-                  <Phone className="text-ink-soft h-5 w-5" />
+                  <Phone aria-hidden="true" className="text-ink-soft h-5 w-5" />
                   <span>{t('share.call', lang)}</span>
+                  <span className="sr-only">: {contact.name}</span>
                 </button>
               </div>
             </div>
@@ -348,36 +375,54 @@ export const OneTapSharePanel: React.FC<OneTapSharePanelProps> = ({
 
       {/* Universal Quick Action Row */}
       <div className="border-line mt-5 grid grid-cols-1 gap-2.5 border-t pt-4 sm:grid-cols-3">
-        <a
-          id="btn-open-google-maps-navigation"
-          href={shareUrls?.googleMapsUrl || `https://www.google.com/maps`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="btn btn-md btn-secondary"
-        >
-          <Navigation className="text-sky h-5 w-5" />
-          <span>{t('share.openMaps', lang)}</span>
-          <ExternalLink className="h-4 w-4 opacity-60" />
-        </a>
+        {mapsUrl ? (
+          <a
+            id="btn-open-google-maps-navigation"
+            href={mapsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-md btn-secondary"
+          >
+            <Navigation aria-hidden="true" className="text-sky h-5 w-5" />
+            <span>{t('share.openMaps', lang)}</span>
+            <ExternalLink aria-hidden="true" className="h-4 w-4 opacity-60" />
+          </a>
+        ) : (
+          <button id="btn-open-google-maps-navigation" type="button" disabled className="btn btn-md btn-secondary">
+            <Navigation aria-hidden="true" className="text-sky h-5 w-5" />
+            <span>{t('share.openMaps', lang)}</span>
+          </button>
+        )}
 
         <button
           id="btn-copy-share-pin-link"
+          type="button"
           onClick={handleCopyLink}
+          disabled={!mapsUrl}
           className="btn btn-md btn-secondary"
         >
-          {copied ? <Check className="text-pine h-5 w-5" /> : <Copy className="text-ink-soft h-5 w-5" />}
-          <span>{copied ? t('share.copied', lang) : t('share.copyLink', lang)}</span>
+          {copied ? (
+            <Check aria-hidden="true" className="text-pine h-5 w-5" />
+          ) : (
+            <Copy aria-hidden="true" className="text-ink-soft h-5 w-5" />
+          )}
+          <span role="status">{copied ? t('share.copied', lang) : t('share.copyLink', lang)}</span>
         </button>
 
         <button
           id="btn-universal-share-sheet"
+          type="button"
           onClick={handleNativeShare}
+          disabled={!mapsUrl}
           className="btn btn-md btn-secondary"
         >
-          <Share2 className="text-sky h-5 w-5" />
+          <Share2 aria-hidden="true" className="text-sky h-5 w-5" />
           <span>{t('share.shareToAnyApp', lang)}</span>
         </button>
       </div>
+      {!mapsUrl && (
+        <p className="text-ink-soft mt-2 text-sm font-semibold">{t('share.waitingForLocation', lang)}</p>
+      )}
     </section>
   );
 };

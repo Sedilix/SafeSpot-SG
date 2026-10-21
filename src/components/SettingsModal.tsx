@@ -16,7 +16,10 @@ import {
   Users, 
   Waves, 
   CheckCircle2,
-  ShieldAlert
+  ShieldAlert,
+  Car,
+  Footprints,
+  ChevronRight,
 } from 'lucide-react';
 import { 
   AccessibilitySettings, 
@@ -82,16 +85,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   ) || SPEECHMATICS_VOICE_OPTIONS[0];
 
   return (
-    <div id="modal-settings-backdrop" className="modal-backdrop" role="dialog" aria-modal="true">
+    <div
+      id="modal-settings-backdrop"
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-settings-title"
+    >
       <div id="modal-settings-content" className="modal-panel max-w-2xl">
         {/* Header Bar */}
         <div className="modal-head">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="icon-tile">
               <Sliders className="h-5 w-5" />
             </div>
-            <div>
-              <h2 className="font-display text-2xl leading-none font-bold tracking-tight">
+            <div className="min-w-0">
+              <h2 id="modal-settings-title" className="font-display text-2xl leading-none font-bold tracking-tight">
                 {t('settings.title', lang)}
               </h2>
               <p className="text-ink-soft mt-1 text-sm sm:text-base">
@@ -102,13 +111,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           <button
             id="btn-close-settings-modal"
+            type="button"
             onClick={() => {
               stopSpeaking();
               setPlayingVoiceId(null);
               onClose();
             }}
-            className="accessible-tap text-ink-soft hover:bg-well hover:text-ink rounded-xl p-2 transition-colors"
-            aria-label="Close settings"
+            className="accessible-tap text-ink-soft hover:bg-well hover:text-ink shrink-0 rounded-xl p-2 transition-colors"
+            aria-label={t('common.close', lang)}
           >
             <X className="h-6 w-6" />
           </button>
@@ -151,7 +161,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div>
                       <div className="mb-1.5 flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2">
-                          <span className="text-2xl" role="img" aria-label={v.accent}>
+                          {/* The accent is spelled out below, so the flag is decorative. */}
+                          <span className="text-2xl" aria-hidden="true">
                             {v.flag}
                           </span>
                           <div>
@@ -184,6 +195,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <button
                         type="button"
                         onClick={() => handleSelectVoice(v.id)}
+                        aria-pressed={isSelected}
+                        aria-label={`${t('settings.selectVoice', lang)}: ${v.name}`}
                         className={`btn btn-md flex-1 ${
                           isSelected ? 'btn-primary' : 'btn-secondary'
                         }`}
@@ -201,21 +214,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <button
                         type="button"
                         onClick={() => handleTestVoice(v)}
-                        className={`btn btn-md shrink-0 ${
-                          isPlaying
-                            ? 'bg-brick text-on-brick hover:bg-brick-deep animate-pulse'
-                            : 'btn-secondary'
-                        }`}
-                        title={`Listen to sample of ${v.name}`}
+                        className={`btn btn-md shrink-0 ${isPlaying ? 'btn-danger' : 'btn-secondary'}`}
+                        aria-label={`${isPlaying ? t('settings.stop', lang) : t('settings.listen', lang)}: ${v.name}`}
                       >
                         {isPlaying ? (
                           <>
-                            <Square className="h-3.5 w-3.5 fill-current" />
+                            <Square className="h-4 w-4 fill-current" />
                             <span>{t('settings.stop', lang)}</span>
                           </>
                         ) : (
                           <>
-                            <Play className="text-pine h-3.5 w-3.5 fill-current" />
+                            <Play className="text-pine h-4 w-4 fill-current" />
                             <span>{t('settings.listen', lang)}</span>
                           </>
                         )}
@@ -238,8 +247,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               {/* Spoken Guidance Toggle */}
               <div className="border-line bg-well/60 flex items-center justify-between gap-3 rounded-xl border p-4">
                 <div>
-                  <div className="text-base font-bold sm:text-lg">{t('settings.autoSpoken', lang)}</div>
-                  <div className="text-ink-soft text-sm">
+                  <div id="settings-spoken-label" className="text-base font-bold sm:text-lg">{t('settings.autoSpoken', lang)}</div>
+                  <div id="settings-spoken-desc" className="text-ink-soft text-sm">
                     {t('settings.autoSpokenDesc', lang)}
                   </div>
                 </div>
@@ -248,16 +257,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   type="button"
                   role="switch"
                   aria-checked={settings.spokenGuidance}
+                  aria-labelledby="settings-spoken-label"
+                  aria-describedby="settings-spoken-desc"
                   onClick={() => onUpdateSettings((prev) => ({ ...prev, spokenGuidance: !prev.spokenGuidance }))}
-                  className={`relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-pine ${
-                    settings.spokenGuidance ? 'bg-pine' : 'bg-line-strong'
-                  }`}
+                  className={`toggle-switch ${settings.spokenGuidance ? 'toggle-switch--on' : 'toggle-switch--off'}`}
                 >
-                  <span
-                    className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow-lg transition duration-200 ease-in-out ${
-                      settings.spokenGuidance ? 'translate-x-6' : 'translate-x-0'
-                    }`}
-                  />
+                  <span className="toggle-switch-knob" />
                 </button>
               </div>
 
@@ -270,9 +275,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2" role="group" aria-label={t('settings.cadence', lang)}>
                   <button
                     type="button"
+                    aria-pressed={(settings.speechmaticsRate ?? 0.85) <= 0.9}
                     onClick={() => onUpdateSettings((prev) => ({ ...prev, speechmaticsRate: 0.85 }))}
                     className={`btn btn-md ${
                       (settings.speechmaticsRate ?? 0.85) <= 0.9 ? 'btn-primary' : 'btn-secondary'
@@ -282,6 +288,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                   <button
                     type="button"
+                    aria-pressed={(settings.speechmaticsRate ?? 0.85) > 0.9}
                     onClick={() => onUpdateSettings((prev) => ({ ...prev, speechmaticsRate: 1.0 }))}
                     className={`btn btn-md ${
                       (settings.speechmaticsRate ?? 0.85) > 0.9 ? 'btn-primary' : 'btn-secondary'
@@ -314,8 +321,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <button
                     key={theme.id}
                     type="button"
+                    aria-pressed={isSelected}
                     onClick={() => onUpdateSettings((prev) => ({ ...prev, contrastTheme: theme.id as HighContrastTheme }))}
-                    className={`rounded-xl border p-3 text-left transition-all active:scale-[0.98] ${
+                    className={`focus-visible:outline-pine min-h-12 rounded-xl border p-3 text-left transition-all focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-[0.98] ${
                       isSelected
                         ? 'border-pine bg-pine text-on-pine'
                         : 'border-line bg-surface text-ink hover:bg-well'
@@ -349,8 +357,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <button
                     key={size.id}
                     type="button"
+                    aria-pressed={isSelected}
                     onClick={() => onUpdateSettings((prev) => ({ ...prev, fontSize: size.id as FontSizeLevel }))}
-                    className={`rounded-xl border p-3 text-center transition-all active:scale-[0.98] ${
+                    className={`focus-visible:outline-pine min-h-12 rounded-xl border p-3 text-center transition-all focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-[0.98] ${
                       isSelected
                         ? 'border-pine bg-pine text-on-pine'
                         : 'border-line bg-surface text-ink hover:bg-well'
@@ -368,43 +377,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Section 5: Crash & Fall Detection (iOS & Android) */}
           <section id="section-crash-fall-safety" className="border-line space-y-4 border-t pt-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <ShieldAlert className="text-brick h-5 w-5" />
-                <h3 className="text-lg font-bold sm:text-xl">{t('settings.motionHeading', lang)}</h3>
-              </div>
-              <span className="chip border-pine/40 bg-pine-soft text-pine-deep text-xs font-bold">
-                iOS & Android Sensor Fusion
-              </span>
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="text-brick h-5 w-5" />
+              <h3 className="text-lg font-bold sm:text-xl">{t('settings.motionHeading', lang)}</h3>
             </div>
 
-            <p className="text-ink-soft text-xs sm:text-sm">
+            <p className="text-ink-soft text-sm">
               {t('settings.motionDesc', lang)}
             </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {/* Vehicle Crash Detection Toggle */}
               <button
                 type="button"
+                role="checkbox"
+                aria-checked={settings.crashDetection ?? true}
                 onClick={() => onUpdateSettings((prev) => ({ ...prev, crashDetection: !(prev.crashDetection ?? true) }))}
-                className={`p-3.5 rounded-xl border text-left flex items-start justify-between gap-3 transition-all ${
+                className={`focus-visible:outline-pine flex items-start justify-between gap-3 rounded-xl border p-4 text-left transition-all focus-visible:outline-2 focus-visible:outline-offset-2 ${
                   (settings.crashDetection ?? true)
                     ? 'border-brick/40 bg-brick-soft text-ink'
                     : 'border-line bg-surface text-ink-soft'
                 }`}
               >
                 <div>
-                  <div className="font-bold text-sm sm:text-base flex items-center gap-1.5">
-                    <span>🚗 {t('settings.vehicleCrash', lang)}</span>
+                  <div className="flex items-center gap-2 text-sm font-bold sm:text-base">
+                    <Car className="text-brick h-5 w-5 shrink-0" aria-hidden="true" />
+                    <span>{t('settings.vehicleCrash', lang)}</span>
                   </div>
-                  <div className="text-xs text-ink-soft mt-1">
+                  <div className="text-ink-soft mt-1 text-sm">
                     {t('settings.vehicleCrashDesc', lang)}
                   </div>
                 </div>
-                <div className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5 border ${
+                <div aria-hidden="true" className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5 border ${
                   (settings.crashDetection ?? true)
                     ? 'bg-brick text-on-brick border-brick'
-                    : 'border-line bg-well'
+                    : 'border-line-strong bg-well'
                 }`}>
                   {(settings.crashDetection ?? true) && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                 </div>
@@ -413,25 +420,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               {/* Slip & Fall Detection Toggle */}
               <button
                 type="button"
+                role="checkbox"
+                aria-checked={settings.fallDetection ?? true}
                 onClick={() => onUpdateSettings((prev) => ({ ...prev, fallDetection: !(prev.fallDetection ?? true) }))}
-                className={`p-3.5 rounded-xl border text-left flex items-start justify-between gap-3 transition-all ${
+                className={`focus-visible:outline-pine flex items-start justify-between gap-3 rounded-xl border p-4 text-left transition-all focus-visible:outline-2 focus-visible:outline-offset-2 ${
                   (settings.fallDetection ?? true)
                     ? 'border-ochre/40 bg-ochre-soft text-ink'
                     : 'border-line bg-surface text-ink-soft'
                 }`}
               >
                 <div>
-                  <div className="font-bold text-sm sm:text-base flex items-center gap-1.5">
-                    <span>🚶 {t('settings.slipFall', lang)}</span>
+                  <div className="flex items-center gap-2 text-sm font-bold sm:text-base">
+                    <Footprints className="text-ochre h-5 w-5 shrink-0" aria-hidden="true" />
+                    <span>{t('settings.slipFall', lang)}</span>
                   </div>
-                  <div className="text-xs text-ink-soft mt-1">
+                  <div className="text-ink-soft mt-1 text-sm">
                     {t('settings.slipFallDesc', lang)}
                   </div>
                 </div>
-                <div className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5 border ${
+                <div aria-hidden="true" className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5 border ${
                   (settings.fallDetection ?? true)
-                    ? 'bg-ochre text-white border-ochre'
-                    : 'border-line bg-well'
+                    ? 'bg-ochre text-bg border-ochre'
+                    : 'border-line-strong bg-well'
                 }`}>
                   {(settings.fallDetection ?? true) && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                 </div>
@@ -441,7 +451,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Section 6: Emergency Contacts & Diagnostics */}
           <section id="section-family-diagnostics" className="border-line space-y-3 border-t pt-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Users className="text-pine h-5 w-5" />
                 <h3 className="text-lg font-bold sm:text-xl">{t('settings.contactsHeading', lang)}</h3>
@@ -454,9 +464,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onClose();
                     onOpenManageContacts();
                   }}
-                  className="text-pine-deep text-sm font-bold hover:underline"
+                  className="btn btn-md btn-secondary"
                 >
-                  {t('settings.editContacts', lang)}
+                  <span>{t('settings.editContacts', lang)}</span>
+                  <ChevronRight className="h-4 w-4" />
                 </button>
               )}
             </div>
@@ -493,10 +504,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Footer */}
         <div className="modal-foot">
-          <div className="text-ink-soft text-sm">
-            Selected Voice: <strong className="text-ink">{activeVoice.name} ({activeVoice.accent})</strong>
+          <div className="text-ink-soft min-w-0 text-sm">
+            {t('settings.selectedVoice', lang)}{' '}
+            <strong className="text-ink">{activeVoice.name} ({activeVoice.accent})</strong>
           </div>
 
+          {/* Changes apply as soon as they are tapped, so this only closes. */}
           <button
             type="button"
             onClick={() => {
@@ -504,9 +517,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               setPlayingVoiceId(null);
               onClose();
             }}
-            className="btn btn-md btn-primary"
+            className="btn btn-md btn-primary shrink-0"
           >
-            Done & Save
+            <Check className="h-5 w-5" />
+            <span>{t('common.done', lang)}</span>
           </button>
         </div>
       </div>

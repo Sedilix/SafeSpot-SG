@@ -65,15 +65,27 @@ export const AlertJoinPage: React.FC<{ code: string }> = ({ code }) => {
   };
 
   const name = invite?.name || '';
+  // Without the server's push key the button could never work, so say so
+  // instead of showing a button that silently does nothing.
+  const pushConfigured = Boolean(invite?.vapidPublicKey);
 
   return (
-    <main className="bg-surface text-ink flex min-h-screen items-center justify-center px-4 py-10">
-      <div className="card w-full max-w-md space-y-5 p-6 text-center">
-        <div className="icon-tile mx-auto">
-          <Bell className="h-6 w-6" />
-        </div>
+    <main className="bg-bg text-ink flex min-h-dvh items-center justify-center px-4 py-10">
+      <div className="card w-full max-w-md space-y-5 p-6 text-center" aria-live="polite">
+        {state === 'done' ? (
+          <CheckCircle2 className="text-pine mx-auto h-12 w-12" aria-hidden="true" />
+        ) : (
+          <div className="icon-tile mx-auto">
+            <Bell className="h-6 w-6" aria-hidden="true" />
+          </div>
+        )}
 
-        {state === 'loading' && <Loader2 className="text-sky mx-auto h-8 w-8 animate-spin" />}
+        {state === 'loading' && (
+          <div role="status" className="text-ink-soft flex items-center justify-center gap-2 font-semibold">
+            <Loader2 className="text-pine h-6 w-6 shrink-0 motion-safe:animate-spin" aria-hidden="true" />
+            <span>{t('join.loading', lang)}</span>
+          </div>
+        )}
 
         {state === 'invalid' && (
           <>
@@ -84,7 +96,6 @@ export const AlertJoinPage: React.FC<{ code: string }> = ({ code }) => {
 
         {state === 'done' && (
           <>
-            <CheckCircle2 className="text-pine mx-auto h-12 w-12" />
             <h1 className="text-xl font-extrabold">{t('join.doneTitle', lang)}</h1>
             <p className="text-ink-soft">{t('join.doneBody', lang).replace('{name}', name)}</p>
           </>
@@ -95,25 +106,42 @@ export const AlertJoinPage: React.FC<{ code: string }> = ({ code }) => {
             <h1 className="text-xl font-extrabold">{t('join.title', lang).replace('{name}', name)}</h1>
             <p className="text-ink-soft">{t('join.body', lang).replace('{name}', name)}</p>
 
-            {support === 'supported' && (
-              <button type="button" onClick={join} disabled={state === 'busy'} className="btn btn-lg btn-primary w-full">
-                {state === 'busy' ? <Loader2 className="h-6 w-6 animate-spin" /> : <Bell className="h-6 w-6" />}
+            {support === 'supported' && pushConfigured && (
+              <button
+                type="button"
+                onClick={join}
+                disabled={state === 'busy'}
+                aria-busy={state === 'busy'}
+                className="btn btn-lg btn-primary w-full"
+              >
+                {state === 'busy' ? (
+                  <Loader2 className="h-6 w-6 shrink-0 motion-safe:animate-spin" aria-hidden="true" />
+                ) : (
+                  <Bell className="h-6 w-6 shrink-0" aria-hidden="true" />
+                )}
                 <span>{t('join.button', lang)}</span>
               </button>
+            )}
+
+            {support === 'supported' && !pushConfigured && (
+              <p className="text-brick-deep flex items-start gap-2 text-left text-sm font-bold">
+                <ShieldAlert className="h-5 w-5 shrink-0" aria-hidden="true" />
+                <span>{t('join.notConfigured', lang)}</span>
+              </p>
             )}
 
             {support === 'needs-install' && (
               <ol className="bg-well space-y-3 rounded-xl p-4 text-left text-base">
                 <li className="flex items-start gap-3">
-                  <Share className="text-sky-deep mt-0.5 h-5 w-5 shrink-0" />
+                  <Share className="text-sky mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
                   <span>{t('join.ios1', lang)}</span>
                 </li>
                 <li className="flex items-start gap-3">
-                  <SquarePlus className="text-sky-deep mt-0.5 h-5 w-5 shrink-0" />
+                  <SquarePlus className="text-sky mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
                   <span>{t('join.ios2', lang)}</span>
                 </li>
                 <li className="flex items-start gap-3">
-                  <Bell className="text-sky-deep mt-0.5 h-5 w-5 shrink-0" />
+                  <Bell className="text-sky mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
                   <span>{t('join.ios3', lang)}</span>
                 </li>
               </ol>
@@ -121,8 +149,8 @@ export const AlertJoinPage: React.FC<{ code: string }> = ({ code }) => {
 
             {support === 'unsupported' && (
               <p className="text-brick-deep flex items-start gap-2 text-left text-sm font-bold">
-                <ShieldAlert className="h-5 w-5 shrink-0" />
-                {t('join.unsupported', lang)}
+                <ShieldAlert className="h-5 w-5 shrink-0" aria-hidden="true" />
+                <span>{t('join.unsupported', lang)}</span>
               </p>
             )}
 
