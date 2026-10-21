@@ -144,10 +144,12 @@ export class Router {
   private popItem = { edgeId: 0, elapsed: 0 };
   private best: Float64Array;
   private prev: Int32Array;
+  private enteredFromWay: Int32Array;
 
   constructor(private graph: RoadGraph) {
     this.best = new Float64Array(graph.edges.length);
     this.prev = new Int32Array(graph.edges.length);
+    this.enteredFromWay = new Int32Array(graph.edges.length);
   }
 
   /** Signed turn angle in degrees, positive = right, in (-180, 180]. */
@@ -212,11 +214,14 @@ export class Router {
     if (this.best.length !== edges.length) {
       this.best = new Float64Array(edges.length);
       this.prev = new Int32Array(edges.length);
+      this.enteredFromWay = new Int32Array(edges.length);
     }
     const best = this.best;
     const prev = this.prev;
+    const enteredFromWay = this.enteredFromWay;
     best.fill(Infinity);
     prev.fill(-1);
+    enteredFromWay.fill(0);
 
     const heap = this.heap;
     heap.clear();
@@ -286,8 +291,8 @@ export class Router {
         const turn = this.evaluateTurn(cur, next);
         if (!turn.allowed) continue;
 
-        const parentEdgeId = prev[topEdgeId];
-        if (parentEdgeId >= 0 && this.graph.isViaWayRestricted(this.graph.edgeWayId[parentEdgeId], cur.wayId, next.wayId)) {
+        const fromWayId = enteredFromWay[topEdgeId];
+        if (fromWayId > 0 && cur.wayId !== next.wayId && this.graph.isViaWayRestricted(fromWayId, cur.wayId, next.wayId)) {
           continue;
         }
 
@@ -332,6 +337,7 @@ export class Router {
         if (cost < best[nid]) {
           best[nid] = cost;
           prev[nid] = topEdgeId;
+          enteredFromWay[nid] = (next.wayId === cur.wayId) ? fromWayId : cur.wayId;
           heap.push(nid, cost, cost + h(next));
         }
       }
@@ -507,6 +513,7 @@ export class Router {
 
     const best = new Float64Array(edges.length).fill(Infinity);
     const prev = new Int32Array(edges.length).fill(-1);
+    const enteredFromWay = new Int32Array(edges.length);
     const heap = new FlatMinHeap();
     const popObj = { edgeId: 0, elapsed: 0 };
 
@@ -597,8 +604,8 @@ export class Router {
         const turn = this.evaluateTurn(cur, next);
         if (!turn.allowed) continue;
 
-        const parentEdgeId = prev[topEdgeId];
-        if (parentEdgeId >= 0 && this.graph.isViaWayRestricted(this.graph.edgeWayId[parentEdgeId], cur.wayId, next.wayId)) {
+        const fromWayId = enteredFromWay[topEdgeId];
+        if (fromWayId > 0 && cur.wayId !== next.wayId && this.graph.isViaWayRestricted(fromWayId, cur.wayId, next.wayId)) {
           continue;
         }
 
@@ -639,6 +646,7 @@ export class Router {
         if (cost < best[nid]) {
           best[nid] = cost;
           prev[nid] = topEdgeId;
+          enteredFromWay[nid] = (next.wayId === cur.wayId) ? fromWayId : cur.wayId;
           heap.push(nid, cost, cost);
         }
       }
