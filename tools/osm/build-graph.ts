@@ -12,6 +12,9 @@
  * - Every OSM way is split into one directed edge per geometry segment. Nodes
  *   are identified by coordinate (Overpass `geom` output carries no node ids),
  *   so two ways meet only where they share an exact coordinate.
+ * - `highway=traffic_signals` nodes come from a second Overpass query (cached in
+ *   data/graph/overpass-signals-cache.json) and are matched to graph nodes by the
+ *   same coordinate key; the router charges an expected signal wait there.
  * - Turn restrictions are resolved to the graph node of their `via` node.
  *   Restrictions whose via is a way, or whose via node isn't in the graph, are
  *   counted and skipped (reported below), not silently applied.
@@ -56,12 +59,15 @@ export interface RoadGraphData {
   edges: CompactEdge[];
   turnRestrictions: TurnRestriction[];
   viaWayRestrictions?: ViaWayRestriction[];
+  /** Graph node ids tagged highway=traffic_signals in OSM. */
+  trafficSignalNodes?: number[];
   generatedAt: string;
   stats: Record<string, number>;
 }
 
 const GRAPH_DIR = join(process.cwd(), 'data', 'graph');
 const CACHE_FILE = join(GRAPH_DIR, 'overpass-cache.json');
+const SIGNALS_CACHE_FILE = join(GRAPH_DIR, 'overpass-signals-cache.json');
 const OUTPUT_FILE = join(GRAPH_DIR, 'singapore-road-graph.json');
 
 const OVERPASS_ENDPOINTS = [
@@ -114,18 +120,24 @@ export function parseMaxspeed(val: string | undefined, highway: string): number 
   return DEFAULT_SPEEDS[highway] ?? 50;
 }
 
-async function fetchFromOverpass(): Promise<any> {
-  if (existsSync(CACHE_FILE)) {
-    console.log(`Using cached Overpass data: ${CACHE_FILE}`);
-    return JSON.parse(readFileSync(CACHE_FILE, 'utf8'));
-  }
-  const query = `[out:json][timeout:240];
+const ROADS_QUERY = `[out:json][timeout:240];
 area["ISO3166-1"="SG"]->.sg;
 (
   way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|living_street)$"]["access"!~"^(no|private)$"](area.sg);
   relation["type"="restriction"](area.sg);
 );
 out body geom qt;`;
+
+const SIGNALS_QUERY = `[out:json][timeout:120];
+area["ISO3166-1"="SG"]->.sg;
+node["highway"="traffic_signals"](area.sg);
+out body qt;`;
+
+async function fetchFromOverpass(query: string, cacheFile: string): Promise<any> {
+  if (existsSync(cacheFile)) {
+    console.log(`Using cached Overpass data: ${cacheFile}`);
+    return JSON.parse(readFileSync(cacheFile, 'utf8'));
+  }
   for (const url of OVERPASS_ENDPOINTS) {
     try {
       console.log(`Querying ${url} ...`);
@@ -138,7 +150,7 @@ out body geom qt;`;
       const json = (await res.json()) as any;
       if (json.elements?.length) {
         mkdirSync(GRAPH_DIR, { recursive: true });
-        writeFileSync(CACHE_FILE, JSON.stringify(json));
+        writeFileSync(cacheFile, JSON.stringify(json));
         return json;
       }
     } catch (err: any) {
@@ -154,6 +166,7 @@ export function buildGraphFromElements(elements: any[]): RoadGraphData {
   const edges: CompactEdge[] = [];
   const pending: Array<{ type: string; fromWayId: number; toWayId: number; viaKey: string }> = [];
   const pendingViaWay: Array<{ type: string; fromWayId: number; viaWayId: number; toWayId: number }> = [];
+  const signalKeys: string[] = [];
   let viaWaySkipped = 0, incompleteRestrictions = 0;
 
   const keyOf = (lat: number, lng: number) => `${lat.toFixed(6)},${lng.toFixed(6)}`;
@@ -169,6 +182,10 @@ export function buildGraphFromElements(elements: any[]): RoadGraphData {
   }
 
   for (const el of elements) {
+    if (el.type === 'node') {
+      if (el.tags?.highway === 'traffic_signals') signalKeys.push(keyOf(el.lat, el.lon));
+      continue;
+    }
     if (el.type === 'relation') {
       const type = el.tags?.restriction;
       if (!type) { incompleteRestrictions++; continue; }
@@ -258,9 +275,19 @@ export function buildGraphFromElements(elements: any[]): RoadGraphData {
     }
   }
 
+  // Signals on roads we excluded (service roads, car parks) have no graph node.
+  const signalSet = new Set<number>();
+  for (const key of signalKeys) {
+    const id = nodeMap.get(key);
+    if (id !== undefined) signalSet.add(id);
+  }
+  const trafficSignalNodes = [...signalSet].sort((a, b) => a - b);
+
   return {
-    nodes, edges, turnRestrictions, viaWayRestrictions, generatedAt: new Date().toISOString(),
+    nodes, edges, turnRestrictions, viaWayRestrictions, trafficSignalNodes, generatedAt: new Date().toISOString(),
     stats: {
+      trafficSignalsKept: trafficSignalNodes.length,
+      trafficSignalsNotOnGraph: signalKeys.length - trafficSignalNodes.length,
       nodes: nodes.length, edges: edges.length, restrictionsKept: turnRestrictions.length,
       restrictionsViaWayKept: viaWayRestrictions.length,
       restrictionsSkippedViaWay: viaWaySkipped, restrictionsSkippedIncomplete: incompleteRestrictions,
@@ -271,7 +298,9 @@ export function buildGraphFromElements(elements: any[]): RoadGraphData {
 }
 
 export async function buildRoadGraph(): Promise<RoadGraphData> {
-  const data = buildGraphFromElements((await fetchFromOverpass()).elements ?? []);
+  const roads = await fetchFromOverpass(ROADS_QUERY, CACHE_FILE);
+  const signals = await fetchFromOverpass(SIGNALS_QUERY, SIGNALS_CACHE_FILE);
+  const data = buildGraphFromElements([...(roads.elements ?? []), ...(signals.elements ?? [])]);
   mkdirSync(GRAPH_DIR, { recursive: true });
   const jsonStr = JSON.stringify(data);
   writeFileSync(OUTPUT_FILE, jsonStr);
