@@ -4,25 +4,27 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  X, 
-  LogIn, 
-  Phone, 
-  KeyRound, 
-  AlertCircle, 
-  ArrowRight, 
+import {
+  X,
+  LogIn,
+  Phone,
+  KeyRound,
+  AlertCircle,
+  ArrowRight,
   CheckCircle2,
-  RefreshCw
+  Loader2,
+  UserRound,
 } from 'lucide-react';
-import { 
-  signInWithGoogle, 
-  signInAsGuest, 
-  setupRecaptcha, 
-  sendPhoneOtp 
+import {
+  signInWithGoogle,
+  signInAsGuest,
+  setupRecaptcha,
+  sendPhoneOtp
 } from '../lib/firebase';
 import { ConfirmationResult, User as FirebaseUser } from 'firebase/auth';
 import { AccessibilitySettings } from '../types';
 import { useEscapeToClose } from '../utils/useEscapeToClose';
+import { t } from '../locales/translations';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -37,16 +39,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onAuthSuccess,
   settings,
 }) => {
+  const lang = settings.language || 'en';
   const [authMode, setAuthMode] = useState<'options' | 'phone_input' | 'phone_otp'>('options');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Which one-tap option is in flight, so only that button shows a spinner.
+  const [pendingOption, setPendingOption] = useState<'google' | 'guest' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const recaptchaContainerRef = useRef<HTMLDivElement | null>(null);
-
-  void settings;
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
@@ -56,11 +60,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setConfirmationResult(null);
       setErrorMessage(null);
       setIsLoading(false);
+      setPendingOption(null);
+    } else {
+      // Move focus into the dialog so keyboard and screen-reader users start there.
+      panelRef.current?.focus();
     }
   }, [isOpen]);
 
+  /** Firebase messages ("Firebase: Error (auth/...)") mean nothing to users; map the common ones. */
+  const friendlyError = (err: any, fallbackKey: string): string | null => {
+    const code: string | undefined = err?.code;
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return null;
+    if (code === 'auth/invalid-phone-number') return t('auth.errInvalidPhone', lang);
+    if (code === 'auth/too-many-requests') return t('auth.errTooMany', lang);
+    if (code === 'auth/network-request-failed') return t('auth.errNetwork', lang);
+    return t(fallbackKey, lang);
+  };
+
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
+    setPendingOption('google');
     setErrorMessage(null);
     try {
       const user = await signInWithGoogle();
@@ -68,14 +87,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       onClose();
     } catch (err: any) {
       console.error('Google Sign-In failed:', err);
-      setErrorMessage(err.message || 'Google sign-in was cancelled or failed.');
+      setErrorMessage(friendlyError(err, 'auth.errGoogle'));
     } finally {
       setIsLoading(false);
+      setPendingOption(null);
     }
   };
 
   const handleGuestSignIn = async () => {
     setIsLoading(true);
+    setPendingOption('guest');
     setErrorMessage(null);
     try {
       const user = await signInAsGuest();
@@ -83,16 +104,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       onClose();
     } catch (err: any) {
       console.error('Guest Sign-In failed:', err);
-      setErrorMessage(err.message || 'Guest sign-in failed.');
+      setErrorMessage(friendlyError(err, 'auth.errGuest'));
     } finally {
       setIsLoading(false);
+      setPendingOption(null);
     }
   };
 
   const handleSendPhoneOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phoneNumber.trim()) {
-      setErrorMessage('Please enter your mobile phone number.');
+      setErrorMessage(t('auth.errPhoneEmpty', lang));
       return;
     }
 
@@ -106,7 +128,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setAuthMode('phone_otp');
     } catch (err: any) {
       console.error('Phone OTP request failed:', err);
-      setErrorMessage(err.message || 'Failed to send SMS verification code. Please check the phone number.');
+      setErrorMessage(friendlyError(err, 'auth.errSendFailed'));
     } finally {
       setIsLoading(false);
     }
@@ -115,7 +137,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otpCode.trim() || !confirmationResult) {
-      setErrorMessage('Please enter the 6-digit code received via SMS.');
+      setErrorMessage(t('auth.errOtpEmpty', lang));
       return;
     }
 
@@ -130,10 +152,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
     } catch (err: any) {
       console.error('OTP confirmation failed:', err);
-      setErrorMessage('Invalid verification code. Please check the SMS and try again.');
+      setErrorMessage(t('auth.errOtpInvalid', lang));
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const switchMode = (mode: 'options' | 'phone_input' | 'phone_otp') => {
+    setErrorMessage(null);
+    setAuthMode(mode);
   };
 
   useEscapeToClose(isOpen, onClose);
@@ -141,98 +168,113 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div id="modal-auth-backdrop" className="modal-backdrop" role="dialog" aria-modal="true">
-      <div id="modal-auth-content" className="modal-panel max-w-lg">
+    <div
+      id="modal-auth-backdrop"
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="auth-modal-title"
+      aria-describedby="auth-modal-desc"
+    >
+      <div id="modal-auth-content" ref={panelRef} tabIndex={-1} className="modal-panel max-w-lg focus:outline-none">
         {/* Header */}
         <div className="modal-head">
-          <div className="flex items-center gap-3">
-            <div className="icon-tile">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="icon-tile" aria-hidden="true">
               <LogIn className="h-5 w-5" />
             </div>
-            <div>
-              <h2 className="font-display text-2xl leading-none font-bold tracking-tight">
-                Sign In & User Profile
+            <div className="min-w-0">
+              <h2 id="auth-modal-title" className="font-display text-2xl leading-tight font-bold tracking-tight">
+                {t('auth.title', lang)}
               </h2>
-              <p className="text-ink-soft mt-1 text-sm sm:text-base">
-                Save your medical ID, emergency contacts & selfie in Cloud
+              <p id="auth-modal-desc" className="text-ink-soft mt-1 text-sm sm:text-base">
+                {t('auth.subtitle', lang)}
               </p>
             </div>
           </div>
 
           <button
+            type="button"
             onClick={onClose}
-            className="accessible-tap text-ink-soft hover:bg-well hover:text-ink rounded-xl p-2 transition-colors"
-            aria-label="Close"
+            className="btn accessible-tap text-ink-soft hover:bg-well hover:text-ink -mr-2 shrink-0"
+            aria-label={t('auth.close', lang)}
           >
-            <X className="h-6 w-6" />
+            <X className="h-6 w-6" aria-hidden="true" />
           </button>
         </div>
 
-        {/* Body */}
-        <div className="space-y-5 p-6">
+        {/* Body — gutters match .modal-head so the content lines up with the title */}
+        <div className="space-y-5 overflow-y-auto px-4 py-5 sm:px-5">
           {errorMessage && (
-            <div className="border-brick/40 bg-brick-soft text-brick-deep flex items-start gap-2.5 rounded-xl border p-4 text-sm font-bold sm:text-base">
-              <AlertCircle className="text-brick mt-0.5 h-5 w-5 shrink-0" />
+            <div
+              role="alert"
+              className="border-brick/40 bg-brick-soft text-brick-deep flex items-start gap-3 rounded-xl border p-4 text-sm font-bold sm:text-base"
+            >
+              <AlertCircle className="text-brick mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
               <span>{errorMessage}</span>
             </div>
           )}
 
           {/* Mode 1: Main Selection (Google or Phone) */}
           {authMode === 'options' && (
-            <div className="space-y-3.5">
+            <div className="space-y-3">
               <button
                 id="btn-auth-google"
                 type="button"
                 disabled={isLoading}
                 onClick={handleGoogleSignIn}
-                className="btn btn-lg btn-secondary w-full border-2"
+                className="btn btn-lg btn-secondary w-full"
               >
-                {/* Google Icon SVG */}
-                <svg className="h-6 w-6" viewBox="0 0 24 24">
-                  <path
-                    fill="#4285F4"
-                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 10.04 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
-                  />
-                  <path
-                    fill="#EA4335"
-                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
-                  />
-                </svg>
-                <span>Continue with Google</span>
+                {pendingOption === 'google' ? (
+                  <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
+                ) : (
+                  /* Google's brand mark: its own colours are required by Google's branding rules. */
+                  <svg className="h-6 w-6" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 10.04 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                    />
+                  </svg>
+                )}
+                <span>{t('auth.google', lang)}</span>
               </button>
 
               <button
                 id="btn-auth-phone-start"
                 type="button"
                 disabled={isLoading}
-                onClick={() => {
-                  setErrorMessage(null);
-                  setAuthMode('phone_input');
-                }}
+                onClick={() => switchMode('phone_input')}
                 className="btn btn-lg btn-primary w-full"
               >
-                <Phone className="h-6 w-6" />
-                <span>Sign In / Up with Phone (SMS OTP)</span>
+                <Phone className="h-6 w-6" aria-hidden="true" />
+                <span>{t('auth.phoneStart', lang)}</span>
               </button>
 
-              <div className="pt-2 text-center">
-                <button
-                  type="button"
-                  disabled={isLoading}
-                  onClick={handleGuestSignIn}
-                  className="text-ink-soft hover:text-ink text-sm font-bold hover:underline sm:text-base"
-                >
-                  ⚡ Instant Access (Continue as Guest)
-                </button>
-              </div>
+              <button
+                type="button"
+                disabled={isLoading}
+                onClick={handleGuestSignIn}
+                className="btn btn-md text-ink-soft hover:bg-well hover:text-ink w-full"
+              >
+                {pendingOption === 'guest' ? (
+                  <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+                ) : (
+                  <UserRound className="h-5 w-5" aria-hidden="true" />
+                )}
+                <span>{t('auth.guest', lang)}</span>
+              </button>
             </div>
           )}
 
@@ -241,24 +283,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <form onSubmit={handleSendPhoneOtp} className="space-y-4">
               <div>
                 <label className="label" htmlFor="auth-phone-input">
-                  Mobile Phone Number (Singapore / International)
+                  {t('auth.phoneLabel', lang)}
                 </label>
                 <div className="relative">
                   <div className="text-ink-faint pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-                    <Phone className="h-5 w-5" />
+                    <Phone className="h-5 w-5" aria-hidden="true" />
                   </div>
                   <input
                     id="auth-phone-input"
                     type="tel"
                     value={phoneNumber}
                     onChange={(e) => setPhoneNumber(e.target.value)}
-                    placeholder="e.g. 9123 4567 or +65 9123 4567"
+                    placeholder={t('auth.phonePlaceholder', lang)}
                     className="input pl-11"
+                    autoComplete="tel"
+                    aria-describedby="auth-phone-help"
                     autoFocus
                   />
                 </div>
-                <p className="text-ink-soft mt-1.5 text-sm">
-                  We will send a 6-digit SMS verification code to confirm your number.
+                <p id="auth-phone-help" className="text-ink-soft mt-1.5 text-sm">
+                  {t('auth.phoneHelp', lang)}
                 </p>
               </div>
 
@@ -268,10 +312,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <div className="flex items-center gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => setAuthMode('options')}
+                  onClick={() => switchMode('options')}
+                  disabled={isLoading}
                   className="btn btn-md btn-secondary"
                 >
-                  Back
+                  {t('onboard.back', lang)}
                 </button>
 
                 <button
@@ -281,13 +326,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 >
                   {isLoading ? (
                     <>
-                      <RefreshCw className="h-5 w-5 animate-spin" />
-                      <span>Sending SMS Code...</span>
+                      <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+                      <span>{t('auth.sending', lang)}</span>
                     </>
                   ) : (
                     <>
-                      <span>Send Verification Code</span>
-                      <ArrowRight className="h-5 w-5" />
+                      <span>{t('auth.sendCode', lang)}</span>
+                      <ArrowRight className="h-5 w-5" aria-hidden="true" />
                     </>
                   )}
                 </button>
@@ -300,36 +345,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <form onSubmit={handleVerifyOtp} className="space-y-4">
               <div>
                 <label className="label" htmlFor="auth-otp-input">
-                  Enter 6-Digit SMS Verification Code
+                  {t('auth.otpLabel', lang)}
                 </label>
                 <div className="relative">
                   <div className="text-ink-faint pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-                    <KeyRound className="h-5 w-5" />
+                    <KeyRound className="h-5 w-5" aria-hidden="true" />
                   </div>
                   <input
                     id="auth-otp-input"
                     type="text"
                     inputMode="numeric"
-                    maxLength={6}
+                    autoComplete="one-time-code"
+                    pattern="[0-9]*"
                     value={otpCode}
-                    onChange={(e) => setOtpCode(e.target.value)}
+                    // Keep digits only, so a pasted "123 456" still fills all six.
+                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     placeholder="123456"
-                    className="input pl-11 text-center text-2xl font-bold tracking-widest"
+                    className="input pl-11 text-center text-2xl font-bold tracking-widest tabular-nums"
+                    aria-describedby="auth-otp-sent-to"
                     autoFocus
                   />
                 </div>
-                <p className="text-ink-soft mt-1.5 text-sm">
-                  Sent to: <strong className="text-ink">{phoneNumber}</strong>
+                <p id="auth-otp-sent-to" className="text-ink-soft mt-1.5 text-sm">
+                  {t('auth.sentTo', lang)} <strong className="text-ink">{phoneNumber}</strong>
                 </p>
               </div>
 
-              <div className="flex items-center gap-3 pt-2">
+              <div className="flex flex-wrap items-center gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => setAuthMode('phone_input')}
+                  onClick={() => switchMode('phone_input')}
+                  disabled={isLoading}
                   className="btn btn-md btn-secondary"
                 >
-                  Change Number
+                  {t('auth.changeNumber', lang)}
                 </button>
 
                 <button
@@ -339,13 +388,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 >
                   {isLoading ? (
                     <>
-                      <RefreshCw className="h-5 w-5 animate-spin" />
-                      <span>Verifying...</span>
+                      <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+                      <span>{t('auth.verifying', lang)}</span>
                     </>
                   ) : (
                     <>
-                      <CheckCircle2 className="h-5 w-5" />
-                      <span>Verify & Continue</span>
+                      <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+                      <span>{t('auth.verify', lang)}</span>
                     </>
                   )}
                 </button>

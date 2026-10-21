@@ -76,7 +76,7 @@ import { resolveSavedPlace } from './utils/places';
 import { auth, subscribeToUserProfile, saveUserProfile, createIncident, updateIncident } from './lib/firebase';
 import { authFetch } from './lib/authFetch';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { AlertCircle, PhoneCall, ShieldAlert, Sparkles, Check, RefreshCw } from 'lucide-react';
+import { AlertCircle, ShieldAlert, RefreshCw, Hand } from 'lucide-react';
 import { t } from './locales/translations';
 import { PrivacyPolicy } from './components/PrivacyPolicy';
 import { AlertJoinPage } from './components/AlertJoinPage';
@@ -405,15 +405,14 @@ function SeniorSafeSpotHome() {
           // happened and offer a retry.
           console.warn('Geolocation failed or permission denied:', err);
           setIsLoadingGPS(false);
-          setGpsError(
-            'We could not find your location. Please allow location access, then tap Try Again.'
-          );
+          // Stored as a translation key so the banner follows the language.
+          setGpsError('gps.notFound');
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
       );
     } else {
       setIsLoadingGPS(false);
-      setGpsError('Location services are not available on this device.');
+      setGpsError('gps.unsupported');
     }
   }, [currentPhoto, triggerLocationVerification]);
 
@@ -477,9 +476,7 @@ function SeniorSafeSpotHome() {
       // own saved place, a live GPS fix, or their last known real fix.
       if (!gps) {
         console.warn('Hero tap without any GPS fix available.');
-        setGpsError(
-          'We could not find your location. Please allow location access, then tap Try Again.'
-        );
+        setGpsError('gps.notFound');
         setHeroBusy(false);
         return;
       }
@@ -524,6 +521,12 @@ function SeniorSafeSpotHome() {
 
   // Speak address aloud
   const handleSpeakAddress = () => {
+    // The same button reads "Stop" while speaking, so a second tap stops.
+    if (isSpeaking) {
+      stopSpeaking();
+      setIsSpeaking(false);
+      return;
+    }
     const text = verification?.elderlyVoiceSummary || (verification ? `You are at ${verification.formattedAddress}.` : 'Finding your location.');
     setIsSpeaking(true);
     speakSpeechmaticsOrFallback(
@@ -879,7 +882,7 @@ function SeniorSafeSpotHome() {
   return (
     <div
       id="app-container-senior-safespot"
-      className="bg-bg text-ink flex min-h-screen flex-col transition-colors"
+      className="bg-bg text-ink flex min-h-dvh flex-col transition-colors"
     >
       {/* Top Accessibility Bar */}
       <HeaderAccessibility
@@ -900,12 +903,13 @@ function SeniorSafeSpotHome() {
       {emergencyCountdown !== null && (
         <div
           id="banner-emergency-countdown"
+          role="alert"
           className="bg-brick text-on-brick border-brick-deep sticky top-16 z-50 flex flex-wrap items-center justify-between gap-4 border-b p-4 shadow-xl sm:p-5"
         >
-          <div className="flex items-center gap-3">
-            <ShieldAlert className="h-7 w-7 sm:h-8 sm:w-8" />
-            <div>
-              <div className="font-display text-lg font-bold tracking-tight uppercase sm:text-xl">
+          <div className="flex min-w-0 items-center gap-3">
+            <ShieldAlert aria-hidden="true" className="h-7 w-7 shrink-0 sm:h-8 sm:w-8" />
+            <div className="min-w-0">
+              <div className="font-display text-lg font-bold tracking-tight tabular-nums sm:text-xl">
                 {t('sos.countdownTitle', lang)} {emergencyCountdown}s
               </div>
               <p className="text-sm font-medium opacity-90 sm:text-base">
@@ -914,14 +918,14 @@ function SeniorSafeSpotHome() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setEmergencyCountdown(null)}
-              className="bg-on-brick text-brick-deep btn btn-md hover:bg-on-brick/90"
-            >
-              {t('sos.cancel', lang)}
-            </button>
-          </div>
+          <button
+            type="button"
+            autoFocus
+            onClick={() => setEmergencyCountdown(null)}
+            className="btn btn-lg bg-on-brick text-brick-deep hover:bg-on-brick/90 w-full sm:w-auto"
+          >
+            {t('sos.cancel', lang)}
+          </button>
         </div>
       )}
 
@@ -929,28 +933,36 @@ function SeniorSafeSpotHome() {
       {fallCountdown !== null && (
         <div
           id="overlay-fall-detection-countdown"
-          className="bg-brick/95 backdrop-blur-md fixed inset-0 z-[60] flex flex-col items-center justify-center gap-6 p-6 text-center animate-fadeIn"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="fall-countdown-title"
+          aria-describedby="fall-countdown-desc"
+          className="bg-brick/95 backdrop-blur-md fixed inset-0 z-[60] flex flex-col items-center justify-center gap-6 overflow-y-auto p-6 text-center animate-fade-in"
         >
-          <div className="relative">
-            <div className="absolute -inset-4 bg-white/20 rounded-full animate-ping"></div>
+          <div className="relative" aria-hidden="true">
+            <div className="absolute -inset-4 bg-on-brick/20 rounded-full animate-ping motion-reduce:animate-none"></div>
             <ShieldAlert className="text-on-brick h-20 w-20 relative" />
           </div>
 
           <div className="space-y-2 max-w-lg">
-            <h2 className="font-display text-on-brick text-3xl sm:text-5xl font-black uppercase tracking-tight">
-              {activeImpactEvent?.type === 'crash' ? '🚗 VEHICLE CRASH DETECTED' : t('fall.title', lang)}
+            <h2 id="fall-countdown-title" className="font-display text-on-brick text-3xl sm:text-5xl font-black tracking-tight">
+              {activeImpactEvent?.type === 'crash' ? t('crash.title', lang) : t('fall.title', lang)}
             </h2>
-            <p className="text-on-brick/90 text-lg sm:text-2xl font-bold">
+            <p id="fall-countdown-desc" className="text-on-brick/90 text-lg sm:text-2xl font-bold tabular-nums">
               {activeImpactEvent?.type === 'crash'
-                ? `Calling SCDF 995 & Alerting Family in ${fallCountdown}s`
+                ? `${t('crash.desc', lang)} ${fallCountdown}s`
                 : `${t('fall.desc', lang)} (${fallCountdown}s)`}
             </p>
 
             {activeImpactEvent && (
-              <div className="inline-flex items-center gap-3 bg-black/30 text-on-brick text-sm sm:text-base font-mono px-4 py-2 rounded-full border border-white/20">
-                <span>Impact Shock: <strong>{activeImpactEvent.impactGForce}G</strong></span>
+              <div className="inline-flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-xl border border-on-brick/20 bg-brick-deep/60 px-4 py-2 text-sm text-on-brick sm:text-base">
+                <span>
+                  {t('crash.impact', lang)} <strong className="tabular-nums">{activeImpactEvent.impactGForce}G</strong>
+                </span>
                 {activeImpactEvent.speedKmh > 0 && (
-                  <span>• Pre-Impact Speed: <strong>{activeImpactEvent.speedKmh} km/h</strong></span>
+                  <span>
+                    {t('crash.speed', lang)} <strong className="tabular-nums">{activeImpactEvent.speedKmh} km/h</strong>
+                  </span>
                 )}
               </div>
             )}
@@ -958,14 +970,17 @@ function SeniorSafeSpotHome() {
 
           <button
             id="btn-fall-im-okay"
+            type="button"
+            autoFocus
             onClick={() => {
               setFallCountdown(null);
               stopEmergencyAlarmSiren();
               stopSpeaking();
             }}
-            className="giant-tap bg-white text-brick-deep font-black rounded-3xl px-10 py-6 sm:px-14 sm:py-8 text-2xl sm:text-4xl shadow-2xl border-4 border-white active:scale-95 transition-transform"
+            className="giant-tap gap-3 bg-on-brick text-brick-deep font-black rounded-3xl px-10 py-6 sm:px-14 sm:py-8 text-2xl sm:text-4xl shadow-2xl active:scale-95 transition-transform focus-visible:outline-4 focus-visible:outline-offset-4 focus-visible:outline-on-brick"
           >
-            ✋ {t('fall.imOkay', lang)}
+            <Hand aria-hidden="true" className="h-8 w-8 shrink-0 sm:h-10 sm:w-10" />
+            {t('fall.imOkay', lang)}
           </button>
         </div>
       )}
@@ -1000,15 +1015,18 @@ function SeniorSafeSpotHome() {
 
         {/* Honest GPS failure banner — no invented locations, just a clear retry */}
         {gpsError && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brick/30 bg-brick-soft px-4 py-3">
-            <p className="flex items-center gap-2 text-sm font-bold text-brick-deep">
-              <AlertCircle className="h-5 w-5 shrink-0" />
-              {gpsError}
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brick/30 bg-brick-soft px-4 py-3">
+            <p className="flex min-w-0 flex-1 items-start gap-2 text-sm font-bold text-brick-deep sm:text-base">
+              <AlertCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" />
+              <span>{t(gpsError, lang)}</span>
             </p>
-            <button type="button" onClick={refreshGPS} className="btn btn-md btn-secondary">
-              <RefreshCw className="h-4 w-4" />
-              Try Again
-            </button>
+            {/* Retrying cannot help on a device with no location service. */}
+            {gpsError !== 'gps.unsupported' && (
+              <button type="button" onClick={refreshGPS} disabled={isLoadingGPS} className="btn btn-md btn-secondary">
+                <RefreshCw aria-hidden="true" className={`h-4 w-4 ${isLoadingGPS ? 'animate-spin' : ''}`} />
+                {t('hero.tryAgain', lang)}
+              </button>
+            )}
           </div>
         )}
 
@@ -1061,7 +1079,11 @@ function SeniorSafeSpotHome() {
         }}
         onTriggerEmergency={handleEmergencySOS}
         onTriggerCamera={() => {
-          window.scrollTo({ top: 400, behavior: 'smooth' });
+          // Bring the camera itself into view rather than a fixed offset that
+          // misses it at larger text sizes.
+          document
+            .getElementById('hero-pick-me-up-section')
+            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }}
         onToggleContrast={() => {
           setSettings((prev) => ({
@@ -1141,7 +1163,12 @@ function SeniorSafeSpotHome() {
           SafeSpot.SG • Multimodal Location & Pickup Assistant • Powered by Gemini AI, Speechmatics & Firebase
         </p>
         <p className="mt-2">
-          <a href="/privacy" className="text-pine font-semibold underline underline-offset-2">Privacy Policy</a>
+          <a
+            href="/privacy"
+            className="text-pine hover:text-pine-deep inline-flex min-h-11 items-center px-2 font-semibold underline underline-offset-2"
+          >
+            {t('footer.privacy', lang)}
+          </a>
         </p>
       </footer>
     </div>

@@ -9,8 +9,7 @@ import {
   User, 
   Camera, 
   Heart, 
-  MapPin, 
-  Calendar, 
+  Calendar,
   Users, 
   ShieldCheck, 
   Check, 
@@ -22,6 +21,7 @@ import {
   Radio,
   Unlink,
   CheckCircle2,
+  ChevronRight,
 } from 'lucide-react';
 import { UserProfile, BloodType, EmergencyContact, AccessibilitySettings } from '../types';
 import { AddressAutocompleteInput } from './AddressAutocompleteInput';
@@ -84,6 +84,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   // Camera State
   const [isCameraActive, setIsCameraActive] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const noticeRef = useRef<HTMLDivElement | null>(null);
 
   // Saving State
   const [isSaving, setIsSaving] = useState(false);
@@ -180,9 +181,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     } catch (err) {
       console.warn('Cannot open user selfie camera:', err);
       setIsCameraActive(false);
-      setErrorMessage(
-        'Live camera is unavailable here, so no photo was taken. Gallery uploads are disabled to keep your photo authentic — try again from your phone.'
-      );
+      setErrorMessage(t('profile.cameraUnavailable', settings.language));
     }
   };
 
@@ -219,12 +218,12 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) {
-      setErrorMessage('You must be signed in to save your profile.');
+      setErrorMessage(t('profile.signInRequired', settings.language));
       return;
     }
 
     if (!actualName.trim()) {
-      setErrorMessage('Please enter your full name.');
+      setErrorMessage(t('profile.nameRequired', settings.language));
       return;
     }
 
@@ -258,7 +257,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       }, 1500);
     } catch (err: any) {
       console.error('Failed to save profile:', err);
-      setErrorMessage(err.message || 'Failed to save profile to Firestore.');
+      setErrorMessage(err.message || t('profile.saveFailed', settings.language));
     } finally {
       setIsSaving(false);
     }
@@ -353,34 +352,52 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
   useEscapeToClose(isOpen, onClose);
 
+  // Errors and the save confirmation render at the top of the scrolling form,
+  // but Save lives in the footer: bring the message into view so it is seen.
+  useEffect(() => {
+    if (errorMessage || saveSuccess) {
+      noticeRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [errorMessage, saveSuccess]);
+
   if (!isOpen) return null;
 
+  const lang = settings.language;
+  const familyNames = contacts.filter((c) => !c.locked).map((c) => c.name);
+
   return (
-    <div id="modal-profile-backdrop" className="modal-backdrop" role="dialog" aria-modal="true">
+    <div
+      id="modal-profile-backdrop"
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-profile-title"
+    >
       <div id="modal-profile-content" className="modal-panel max-w-2xl">
         {/* Header */}
         <div className="modal-head">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="icon-tile">
               <User className="h-5 w-5" />
             </div>
-            <div>
-              <h2 className="font-display text-2xl leading-none font-bold tracking-tight">
-                Senior User Profile
+            <div className="min-w-0">
+              <h2 id="modal-profile-title" className="font-display text-2xl leading-none font-bold tracking-tight">
+                {t('profile.title', lang)}
               </h2>
               <p className="text-ink-soft mt-1 text-sm sm:text-base">
-                Firestore Cloud Profile & SCDF Emergency Record
+                {t('profile.subtitle', lang)}
               </p>
             </div>
           </div>
 
           <button
+            type="button"
             onClick={() => {
               stopCamera();
               onClose();
             }}
-            className="accessible-tap text-ink-soft hover:bg-well hover:text-ink rounded-xl p-2 transition-colors"
-            aria-label="Close"
+            className="accessible-tap text-ink-soft hover:bg-well hover:text-ink shrink-0 rounded-xl p-2 transition-colors"
+            aria-label={t('common.close', lang)}
           >
             <X className="h-6 w-6" />
           </button>
@@ -388,43 +405,51 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
         {/* Scrollable Form Body */}
         <form onSubmit={handleSaveProfile} className="flex-1 space-y-6 overflow-y-auto p-4 sm:p-6">
-          {errorMessage && (
-            <div className="border-brick/40 bg-brick-soft text-brick-deep flex items-start gap-2.5 rounded-xl border p-4 text-sm font-bold sm:text-base">
-              <AlertCircle className="text-brick mt-0.5 h-5 w-5 shrink-0" />
-              <span>{errorMessage}</span>
-            </div>
-          )}
+          <div ref={noticeRef} className="space-y-3 empty:hidden">
+            {errorMessage && (
+              <div
+                role="alert"
+                className="border-brick/40 bg-brick-soft text-brick-deep flex items-start gap-2.5 rounded-xl border p-4 text-sm font-bold sm:text-base"
+              >
+                <AlertCircle className="text-brick mt-0.5 h-5 w-5 shrink-0" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
 
-          {saveSuccess && (
-            <div className="border-pine/40 bg-pine-soft text-pine-deep flex items-center gap-2.5 rounded-xl border p-4 text-base font-bold">
-              <Check className="text-pine h-5 w-5" />
-              <span>Profile updated in Firestore Users/{user?.uid}!</span>
-            </div>
-          )}
+            {saveSuccess && (
+              <div
+                role="status"
+                className="border-pine/40 bg-pine-soft text-pine-deep flex items-center gap-2.5 rounded-xl border p-4 text-base font-bold"
+              >
+                <Check className="text-pine h-5 w-5 shrink-0" />
+                <span>{t('profile.saved', lang)}</span>
+              </div>
+            )}
+          </div>
 
           {/* Section 1: Selfie Photo Capture */}
-          <div className="border-line bg-well/60 space-y-3 rounded-xl border p-4">
-            <div className="flex items-center justify-between">
+          <section aria-labelledby="profile-selfie-heading" className="border-line bg-well/60 space-y-3 rounded-xl border p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Camera className="text-sky h-5 w-5" />
-                <label className="text-base font-bold sm:text-lg">
-                  Profile Selfie Photo (Driver & Responder Visual ID)
-                </label>
+                <Camera className="text-sky h-5 w-5 shrink-0" />
+                <h3 id="profile-selfie-heading" className="font-body text-base font-bold sm:text-lg">
+                  {t('profile.selfieTitle', lang)}
+                </h3>
               </div>
               {selfiePhotoUrl && (
                 <span className="text-pine-deep flex items-center gap-1 text-sm font-bold">
-                  <ShieldCheck className="h-4 w-4" /> Photo Saved
+                  <ShieldCheck className="h-4 w-4" /> {t('profile.photoSaved', lang)}
                 </span>
               )}
             </div>
 
             <p className="text-ink-soft text-sm">
-              Taking a clear selfie helps arriving caregivers and ambulance drivers spot you immediately.
+              {t('profile.selfieDesc', lang)}
             </p>
 
             <div className="flex flex-col items-center gap-4 pt-1 sm:flex-row">
               {/* Photo Preview Circle */}
-              <div className="border-line-strong bg-well relative h-28 w-28 shrink-0 overflow-hidden rounded-full border-4 shadow-md sm:h-32 sm:w-32 flex items-center justify-center">
+              <div className="border-line-strong bg-well relative flex h-28 w-28 shrink-0 items-center justify-center overflow-hidden rounded-full border-4 shadow-md sm:h-32 sm:w-32">
                 {isCameraActive ? (
                   <video
                     ref={videoRef}
@@ -436,16 +461,16 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 ) : selfiePhotoUrl ? (
                   <img
                     src={selfiePhotoUrl}
-                    alt="Senior Selfie"
+                    alt={t('profile.photoAlt', lang)}
                     className="h-full w-full object-cover"
                   />
                 ) : (
-                  <User className="text-ink-faint h-14 w-14" />
+                  <User className="text-ink-faint h-14 w-14" aria-hidden="true" />
                 )}
               </div>
 
               {/* Action Buttons for Camera */}
-              <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+              <div className="flex w-full flex-wrap items-center justify-center gap-2 sm:w-auto sm:justify-start">
                 {isCameraActive ? (
                   <>
                     <button
@@ -454,14 +479,14 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                       className="btn btn-md btn-primary"
                     >
                       <Camera className="h-5 w-5" />
-                      <span>Take Photo</span>
+                      <span>{t('profile.takePhoto', lang)}</span>
                     </button>
                     <button
                       type="button"
                       onClick={stopCamera}
                       className="btn btn-md btn-secondary"
                     >
-                      Cancel
+                      {t('common.cancel', lang)}
                     </button>
                   </>
                 ) : (
@@ -471,17 +496,19 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     className="btn btn-md btn-primary"
                   >
                     <Camera className="h-5 w-5" />
-                    <span>{selfiePhotoUrl ? 'Retake Selfie' : 'Take Selfie Photo'}</span>
+                    <span>{selfiePhotoUrl ? t('profile.retakeSelfie', lang) : t('profile.takeSelfie', lang)}</span>
                   </button>
                 )}
               </div>
             </div>
-          </div>
+          </section>
 
           {/* Section 2: Personal Details (Name & DOB) */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className="label" htmlFor="profile-name">Full Actual Name *</label>
+              <label className="label" htmlFor="profile-name">
+                {t('profile.nameLabel', lang)} <span aria-hidden="true">*</span>
+              </label>
               <div className="relative">
                 <div className="text-ink-faint pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                   <User className="h-5 w-5" />
@@ -490,6 +517,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                   id="profile-name"
                   type="text"
                   required
+                  autoComplete="name"
                   value={actualName}
                   onChange={(e) => setActualName(e.target.value)}
                   placeholder="e.g. Tan Ah Kow / Mary Lim"
@@ -499,7 +527,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             </div>
 
             <div>
-              <label className="label" htmlFor="profile-dob">Date of Birth (DOB)</label>
+              <label className="label" htmlFor="profile-dob">{t('profile.dobLabel', lang)}</label>
               <div className="relative">
                 <div className="text-ink-faint pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                   <Calendar className="h-5 w-5" />
@@ -507,6 +535,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 <input
                   id="profile-dob"
                   type="date"
+                  autoComplete="bday"
                   value={dob}
                   onChange={(e) => setDob(e.target.value)}
                   className="input pl-10"
@@ -518,7 +547,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
           {/* Section 3: Blood Type & Medical Notes */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className="label" htmlFor="profile-blood">Blood Type (SCDF Ambulance Critical)</label>
+              <label className="label" htmlFor="profile-blood">{t('profile.bloodLabel', lang)}</label>
               <div className="relative">
                 <div className="text-brick pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                   <Heart className="h-5 w-5" />
@@ -539,7 +568,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             </div>
 
             <div>
-              <label className="label" htmlFor="profile-medical">Medical Notes / Allergies</label>
+              <label className="label" htmlFor="profile-medical">{t('profile.medicalLabel', lang)}</label>
               <div className="relative">
                 <div className="text-ink-faint pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                   <FileText className="h-5 w-5" />
@@ -562,22 +591,27 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               id="profile-address"
               value={address}
               category="home"
-              label="Permanent Home Address (Singapore)"
+              label={t('profile.addressLabel', lang)}
               placeholder="e.g. Blk 480 Lorong 6 Toa Payoh #10-123 or S310480"
               onChange={(addr) => setAddress(addr)}
             />
           </div>
 
           {/* Section 5: Emergency Contacts Preview & Link */}
-          <div className="border-line bg-well/60 flex items-center justify-between rounded-xl border p-4">
-            <div className="flex items-center gap-2.5">
-              <Users className="text-sky h-5 w-5" />
-              <div>
+          <div className="border-line bg-well/60 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Users className="text-sky h-5 w-5 shrink-0" />
+              <div className="min-w-0">
                 <div className="text-sm font-bold sm:text-base">
-                  {contacts.length} Emergency Contacts Configured
+                  {t('profile.contactsCount', lang).replace('{count}', String(contacts.length))}
                 </div>
                 <div className="text-ink-soft text-sm">
-                  {contacts.map((c) => c.name).slice(0, 2).join(', ')}...
+                  {familyNames.length === 0
+                    ? t('profile.noFamilyContacts', lang)
+                    : familyNames.slice(0, 2).join(', ') +
+                      (familyNames.length > 2
+                        ? ` ${t('profile.moreContacts', lang).replace('{count}', String(familyNames.length - 2))}`
+                        : '')}
                 </div>
               </div>
             </div>
@@ -588,94 +622,96 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 onClose();
                 onOpenManageContacts();
               }}
-              className="text-pine-deep text-sm font-bold hover:underline"
+              className="btn btn-md btn-secondary shrink-0"
             >
-              Edit Contacts →
+              <span>{t('settings.editContacts', lang)}</span>
+              <ChevronRight className="h-4 w-4" />
             </button>
           </div>
 
           {/* Alert channels: SMS status + Telegram chats */}
-          <AlertChannelsPanel user={user} lang={settings.language} />
+          <AlertChannelsPanel user={user} lang={lang} />
 
           {/* Section 6: Garmin Watch Pairing */}
-          <div className="border-line bg-well/60 space-y-3 rounded-xl border p-4">
-            <div className="flex items-center justify-between">
+          <section aria-labelledby="profile-watch-heading" className="border-line bg-well/60 space-y-3 rounded-xl border p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Watch className="text-sky h-5 w-5" />
-                <label className="text-base font-bold sm:text-lg">
-                  {t('wearable.pairingTitle', settings.language)}
-                </label>
+                <Watch className="text-sky h-5 w-5 shrink-0" />
+                <h3 id="profile-watch-heading" className="font-body text-base font-bold sm:text-lg">
+                  {t('wearable.pairingTitle', lang)}
+                </h3>
               </div>
               {pairedDeviceId ? (
                 <span className="text-pine-deep flex items-center gap-1 text-sm font-bold">
-                  <CheckCircle2 className="h-4 w-4" /> {t('wearable.pairedBadge', settings.language)}
+                  <CheckCircle2 className="h-4 w-4" /> {t('wearable.pairedBadge', lang)}
                 </span>
               ) : (
                 <span className="text-ink-soft text-sm font-semibold">
-                  {t('wearable.notPaired', settings.language)}
+                  {t('wearable.notPaired', lang)}
                 </span>
               )}
             </div>
 
             <p className="text-ink-soft text-sm">
-              {t('wearable.pairingDesc', settings.language)}
+              {t('wearable.pairingDesc', lang)}
             </p>
 
             {pairedDeviceId ? (
-              <div className="space-y-3 pt-1">
-                <div className="bg-paper border-line flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3">
-                  <div className="flex items-center gap-3">
-                    <div className="bg-sky-soft text-sky-deep flex h-10 w-10 items-center justify-center rounded-xl font-bold">
-                      <Radio className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <div className="font-mono text-base font-bold">{pairedDeviceId}</div>
-                      <div className="text-ink-soft flex items-center gap-2 text-xs font-semibold">
-                        <span
-                          className={`inline-block h-2 w-2 rounded-full ${
-                            watchStatus?.online ? 'bg-pine' : 'bg-ink-faint'
-                          }`}
-                        />
-                        <span>
-                          {watchStatus?.online
-                            ? t('wearable.online', settings.language)
-                            : t('wearable.offline', settings.language)}
-                        </span>
-                        {watchStatus?.battery != null && <span>• {watchStatus.battery}% battery</span>}
-                        {watchStatus?.heartRate != null && <span>• {watchStatus.heartRate} bpm</span>}
-                      </div>
+              <div className="bg-surface border-line flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="bg-sky-soft text-sky flex h-10 w-10 shrink-0 items-center justify-center rounded-xl">
+                    <Radio className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="font-mono text-base font-bold break-all">{pairedDeviceId}</div>
+                    <div className="text-ink-soft flex flex-wrap items-center gap-x-2 text-sm font-semibold">
+                      <span
+                        aria-hidden="true"
+                        className={`inline-block h-2 w-2 rounded-full ${
+                          watchStatus?.online ? 'bg-pine' : 'bg-ink-faint'
+                        }`}
+                      />
+                      <span>
+                        {watchStatus?.online
+                          ? t('wearable.online', lang)
+                          : t('wearable.offline', lang)}
+                      </span>
+                      {watchStatus?.battery != null && <span>• {watchStatus.battery}% battery</span>}
+                      {watchStatus?.heartRate != null && <span>• {watchStatus.heartRate} bpm</span>}
                     </div>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={handleUnpairWatch}
-                    disabled={isPairingWatch}
-                    className="btn btn-sm btn-secondary text-brick hover:bg-brick-soft hover:text-brick-deep border-brick/30"
-                  >
-                    <Unlink className="h-4 w-4" />
-                    <span>{t('wearable.unpairButton', settings.language)}</span>
-                  </button>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={handleUnpairWatch}
+                  disabled={isPairingWatch}
+                  className="btn btn-sm btn-secondary text-brick border-brick/30 hover:text-brick-deep shrink-0"
+                >
+                  {isPairingWatch ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Unlink className="h-4 w-4" />}
+                  <span>{t('wearable.unpairButton', lang)}</span>
+                </button>
               </div>
             ) : (
-              <div className="space-y-3 pt-1">
+              <div className="space-y-2">
+                <label className="label mb-0" htmlFor="watch-device-id">
+                  {t('wearable.deviceIdLabel', lang)}
+                </label>
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <div className="relative flex-1">
-                    <input
-                      id="watch-device-id"
-                      type="text"
-                      value={inputDeviceId}
-                      onChange={(e) => setInputDeviceId(normalizeWatchDeviceId(e.target.value))}
-                      placeholder={t('wearable.deviceIdPlaceholder', settings.language)}
-                      className="input font-mono uppercase"
-                      autoCapitalize="characters"
-                      autoCorrect="off"
-                      autoComplete="off"
-                      spellCheck={false}
-                      maxLength={17}
-                    />
-                  </div>
+                  <input
+                    id="watch-device-id"
+                    type="text"
+                    value={inputDeviceId}
+                    onChange={(e) => setInputDeviceId(normalizeWatchDeviceId(e.target.value))}
+                    placeholder={t('wearable.deviceIdPlaceholder', lang)}
+                    aria-describedby="watch-device-id-hint"
+                    className="input min-w-0 flex-1 font-mono uppercase"
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                    autoComplete="off"
+                    spellCheck={false}
+                    maxLength={17}
+                  />
                   <button
                     type="button"
                     onClick={handlePairWatch}
@@ -684,47 +720,50 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                   >
                     {isPairingWatch ? (
                       <>
-                        <RefreshCw className="h-4 w-4 animate-spin" />
-                        <span>{t('wearable.connecting', settings.language)}</span>
+                        <RefreshCw className="h-5 w-5 animate-spin" />
+                        <span>{t('wearable.connecting', lang)}</span>
                       </>
                     ) : (
                       <>
-                        <Watch className="h-4 w-4" />
-                        <span>{t('wearable.pairButton', settings.language)}</span>
+                        <Watch className="h-5 w-5" />
+                        <span>{t('wearable.pairButton', lang)}</span>
                       </>
                     )}
                   </button>
                 </div>
-                <p className="text-ink-soft text-xs">
-                  {t('wearable.howToFindId', settings.language)}
+                <p id="watch-device-id-hint" className="text-ink-soft text-sm">
+                  {t('wearable.howToFindId', lang)}
                 </p>
               </div>
             )}
 
             {watchFeedback && (
-              <div className="border-pine/40 bg-pine-soft text-pine-deep flex items-center gap-2 rounded-lg border p-2 text-sm font-semibold">
-                <Check className="h-4 w-4" />
+              <div
+                role="status"
+                className="border-pine/40 bg-pine-soft text-pine-deep flex items-center gap-2 rounded-xl border p-3 text-sm font-bold"
+              >
+                <Check className="h-4 w-4 shrink-0" />
                 <span>{watchFeedback}</span>
               </div>
             )}
-          </div>
+          </section>
 
           {/* Account Metadata / Sign Out */}
-          <div className="border-line text-ink-soft flex items-center justify-between border-t pt-3 text-sm">
-            <div>
-              <span>Firestore UID: </span>
+          <div className="border-line text-ink-soft flex flex-wrap items-center justify-between gap-3 border-t pt-4 text-sm">
+            <div className="min-w-0">
+              <span>{t('profile.accountId', lang)} </span>
               <code className="bg-well border-line rounded border px-1.5 py-0.5 font-mono text-xs">
-                {user?.uid.slice(0, 14)}...
+                {user?.uid.slice(0, 14)}…
               </code>
             </div>
 
             <button
               type="button"
               onClick={handleSignOut}
-              className="text-brick hover:text-brick-deep flex items-center gap-1 font-bold"
+              className="btn btn-sm btn-secondary text-brick border-brick/30 hover:text-brick-deep"
             >
               <LogOut className="h-4 w-4" />
-              <span>Sign Out</span>
+              <span>{t('profile.signOut', lang)}</span>
             </button>
           </div>
         </form>
@@ -739,24 +778,29 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             }}
             className="btn btn-md btn-secondary"
           >
-            Close
+            {t('common.close', lang)}
           </button>
 
           <button
             type="button"
-            disabled={isSaving}
+            disabled={isSaving || saveSuccess}
             onClick={handleSaveProfile}
             className="btn btn-md btn-primary"
           >
             {isSaving ? (
               <>
                 <RefreshCw className="h-5 w-5 animate-spin" />
-                <span>Saving to Firestore...</span>
+                <span>{t('profile.saving', lang)}</span>
+              </>
+            ) : saveSuccess ? (
+              <>
+                <CheckCircle2 className="h-5 w-5" />
+                <span>{t('profile.saved', lang)}</span>
               </>
             ) : (
               <>
                 <Check className="h-5 w-5" />
-                <span>Save Profile to Cloud</span>
+                <span>{t('profile.save', lang)}</span>
               </>
             )}
           </button>

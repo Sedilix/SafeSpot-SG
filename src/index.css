@@ -36,6 +36,7 @@
   --color-on-brick: var(--ss-on-brick);
   --color-sky: var(--ss-sky);
   --color-sky-soft: var(--ss-sky-soft);
+  --color-sky-deep: var(--ss-sky);
 }
 
 /* --- Default palette: "Paper & Pine" ------------------------------------ */
@@ -233,6 +234,9 @@ body.theme-warm-soft {
     @apply pointer-events-none opacity-50;
   }
 
+  .btn-sm {
+    @apply min-h-11 px-3 py-1.5 text-sm;
+  }
   .btn-md {
     @apply min-h-12 px-4 py-2.5 text-sm sm:text-base;
   }
@@ -280,7 +284,7 @@ body.theme-warm-soft {
 
   /* ----- Chip / Badge ------------------------------------------------------ */
   .chip {
-    @apply inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold transition-colors;
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1 text-xs font-bold transition-colors;
   }
   .chip:hover {
     @apply bg-well;
@@ -305,7 +309,6 @@ body.theme-warm-soft {
   .input:focus {
     @apply border-pine outline-none;
     box-shadow: 0 0 0 3px rgb(47 109 91 / 0.25);
-    transform: scale(1.01);
   }
 
   /* ----- Toggle switch ----------------------------------------------------- */
@@ -423,7 +426,7 @@ body.theme-warm-soft {
     transform: scale(0.98);
   }
   .voice-label {
-    @apply text-sm font-bold tracking-wide text-[#b5ab97] uppercase;
+    @apply text-sm font-bold text-[#b5ab97];
   }
   .voice-text {
     @apply text-[#f7f1e3];
@@ -442,6 +445,12 @@ body.theme-warm-soft {
   }
   .voice-mic:not(:disabled):active {
     transform: scale(0.95);
+  }
+  .voice-btn:focus-visible,
+  .voice-btn-danger:focus-visible,
+  .voice-mic:focus-visible {
+    outline: 2px solid #f1ead9;
+    outline-offset: 3px;
   }
 }
 
@@ -476,4 +485,18 @@ body.theme-warm-soft {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--ss-ink-faint);
+}
+
+/* --- Reduced motion ---------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .btn:not(:disabled):hover,
+  .btn:not(:disabled):active,
+  .card:hover {
+    transform: none;
+  }
+  .animate-in,
+  .animate-fade-in,
+  .modal-panel {
+    animation-duration: 1ms;
+  }
 }

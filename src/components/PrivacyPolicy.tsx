@@ -14,7 +14,7 @@ const EFFECTIVE_DATE = '6 October 2026';
 const CONTACT_EMAIL = 'benlim631@gmail.com';
 
 const Section: React.FC<{ id: string; title: string; children: React.ReactNode }> = ({ id, title, children }) => (
-  <section id={id} className="space-y-3">
+  <section id={id} className="scroll-mt-24 space-y-3">
     <h2 className="font-display text-ink text-2xl leading-tight font-bold">{title}</h2>
     <div className="text-ink-soft space-y-3 text-base leading-relaxed">{children}</div>
   </section>
@@ -26,21 +26,21 @@ const List: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 
 /** Public privacy policy at /privacy. */
 export const PrivacyPolicy: React.FC = () => (
-  <div className="bg-bg text-ink min-h-screen">
+  <div className="bg-bg text-ink min-h-dvh">
     <header className="border-line bg-surface/95 sticky top-0 z-40 border-b px-4 py-3 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)]">
       <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
-        <a href="/" className="font-display text-xl font-bold">SafeSpot.SG</a>
+        <a href="/" className="font-display inline-flex min-h-11 items-center text-xl font-bold">SafeSpot.SG</a>
         <a href="/" className="btn btn-md btn-secondary">Back to app</a>
       </div>
     </header>
 
     <main className="mx-auto max-w-3xl space-y-8 px-4 py-8 sm:px-6">
       <div className="space-y-2">
-        <div className="text-pine flex items-center gap-2">
-          <ShieldCheck className="h-6 w-6" />
-          <span className="section-kicker">Privacy Policy</span>
-        </div>
-        <h1 className="font-display text-4xl leading-tight font-bold">How SafeSpot.SG handles your personal data</h1>
+        <h1 className="font-display flex items-center gap-3 text-4xl leading-tight font-bold">
+          <ShieldCheck className="text-pine h-8 w-8 shrink-0" aria-hidden="true" />
+          <span>Privacy Policy</span>
+        </h1>
+        <p className="text-ink-soft text-lg">How SafeSpot.SG handles your personal data.</p>
         <p className="text-ink-soft text-sm font-semibold">Effective {EFFECTIVE_DATE}</p>
       </div>
 

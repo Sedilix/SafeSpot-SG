@@ -112,7 +112,7 @@ export const SetupChecklist: React.FC<SetupChecklistProps> = ({
     return (
       <div role="alert" className="border-brick/40 bg-brick-soft flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3">
         <p className="text-brick-deep flex items-center gap-2 text-sm font-bold sm:text-base">
-          <AlertTriangle className="h-5 w-5 shrink-0" />
+          <AlertTriangle className="h-5 w-5 shrink-0" aria-hidden="true" />
           {t('setup.nobodyWarning', lang)}
         </p>
         <button type="button" className="btn btn-md btn-secondary" onClick={() => setHidden(false)}>
@@ -184,7 +184,7 @@ export const SetupChecklist: React.FC<SetupChecklistProps> = ({
     <section id="card-setup-checklist" className="card p-5 sm:p-6" aria-labelledby="setup-checklist-title">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="icon-tile">
+          <div className="icon-tile" aria-hidden="true">
             <ListChecks className="h-5 w-5" />
           </div>
           <div>
@@ -196,12 +196,24 @@ export const SetupChecklist: React.FC<SetupChecklistProps> = ({
             </p>
           </div>
         </div>
-        <button type="button" onClick={hide} className="text-ink-soft hover:bg-well rounded-xl p-2" aria-label={t('setup.hide', lang)}>
-          <X className="h-5 w-5" />
+        <button
+          type="button"
+          onClick={hide}
+          className="btn accessible-tap text-ink-soft hover:bg-well hover:text-ink -mt-1 -mr-2 shrink-0"
+          aria-label={t('setup.hide', lang)}
+        >
+          <X className="h-5 w-5" aria-hidden="true" />
         </button>
       </div>
 
-      <div className="bg-well mb-4 h-2 overflow-hidden rounded-full">
+      <div
+        className="bg-well mb-4 h-2 overflow-hidden rounded-full"
+        role="progressbar"
+        aria-labelledby="setup-checklist-title"
+        aria-valuemin={0}
+        aria-valuemax={required.length}
+        aria-valuenow={doneCount}
+      >
         <div className="bg-pine h-full rounded-full transition-all duration-300" style={{ width: `${(doneCount / required.length) * 100}%` }} />
       </div>
 
@@ -212,16 +224,21 @@ export const SetupChecklist: React.FC<SetupChecklistProps> = ({
               type="button"
               onClick={actionFor(s.id)}
               disabled={s.done || s.blocked || busy !== null}
-              className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
-                s.done ? 'border-pine/30 bg-pine-soft/50' : s.blocked ? 'border-line opacity-60' : 'border-line bg-paper hover:bg-well'
+              aria-busy={busy === s.id || undefined}
+              className={`flex min-h-14 w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-pine disabled:cursor-default ${
+                s.done
+                  ? 'border-pine/30 bg-pine-soft/50'
+                  : s.blocked
+                  ? 'border-line border-dashed bg-well/40'
+                  : 'border-line bg-surface enabled:hover:bg-well'
               }`}
             >
               {s.done ? (
-                <CheckCircle2 className="text-pine h-6 w-6 shrink-0" />
+                <CheckCircle2 className="text-pine h-6 w-6 shrink-0" aria-hidden="true" />
               ) : busy === s.id ? (
-                <Loader2 className="text-sky h-6 w-6 shrink-0 animate-spin" />
+                <Loader2 className="text-pine h-6 w-6 shrink-0 animate-spin" aria-hidden="true" />
               ) : (
-                <Circle className="text-ink-faint h-6 w-6 shrink-0" />
+                <Circle className="text-ink-faint h-6 w-6 shrink-0" aria-hidden="true" />
               )}
               <span className="min-w-0 flex-1">
                 <span className="block font-bold sm:text-lg">
@@ -232,7 +249,7 @@ export const SetupChecklist: React.FC<SetupChecklistProps> = ({
                   {t(s.done ? `setup.${s.id}.done` : s.hintKey, lang)}
                 </span>
               </span>
-              {!s.done && !s.blocked && <ChevronRight className="text-ink-soft h-5 w-5 shrink-0" />}
+              {!s.done && !s.blocked && <ChevronRight className="text-ink-soft h-5 w-5 shrink-0" aria-hidden="true" />}
             </button>
           </li>
         ))}

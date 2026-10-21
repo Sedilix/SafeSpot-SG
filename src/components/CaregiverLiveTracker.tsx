@@ -81,36 +81,36 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
         : 'text-pine-deep';
 
   return (
-    <div className="bg-bg text-ink min-h-screen">
+    <div className="bg-bg text-ink min-h-dvh">
       {/* Status Banner */}
       <header
         className={`${
           !loaded
-            ? 'bg-ink text-white'
+            ? 'bg-ink text-bg'
             : isActive
               ? 'bg-brick text-on-brick'
               : incident
                 ? 'bg-pine text-on-pine'
-                : 'bg-paper text-ink border-b border-line'
+                : 'bg-surface text-ink border-b border-line'
         } px-4 py-4 sm:px-8`}
       >
         <div className="mx-auto flex max-w-5xl items-center gap-3">
           {!loaded ? (
-            <RefreshCw className="h-8 w-8 animate-spin" />
+            <RefreshCw className="h-8 w-8 shrink-0 motion-safe:animate-spin" aria-hidden="true" />
           ) : isActive ? (
-            <ShieldAlert className="h-8 w-8" />
+            <ShieldAlert className="h-8 w-8 shrink-0" aria-hidden="true" />
           ) : incident ? (
-            <ShieldCheck className="h-8 w-8" />
+            <ShieldCheck className="h-8 w-8 shrink-0" aria-hidden="true" />
           ) : (
-            <ShieldAlert className="h-8 w-8 text-brick" />
+            <ShieldAlert className="h-8 w-8 shrink-0 text-brick" aria-hidden="true" />
           )}
-          <div>
+          <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="font-display text-xl leading-tight font-bold sm:text-2xl">
-                {incident?.elderName || 'Senior'} • {t('tracker.title', lang)}
+                {incident?.elderName || t('tracker.senior', lang)} • {t('tracker.title', lang)}
               </h1>
               {incident?.incidentType && (
-                <span className="inline-flex items-center rounded bg-black/20 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-white">
+                <span className="inline-flex items-center rounded-md border border-current px-2 py-0.5 text-xs font-bold">
                   {incident.incidentType === 'fall'
                     ? t('tracker.alertFall', lang)
                     : incident.incidentType === 'heart_rate'
@@ -123,7 +123,7 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
             </div>
             {/* A missing incident is explained once, in the card below. */}
             {(!loaded || incident) && (
-              <p className="text-sm font-semibold opacity-90">
+              <p className="text-sm font-semibold opacity-90" aria-live="polite">
                 {!loaded
                   ? t('tracker.connecting', lang)
                   : isActive
@@ -139,17 +139,22 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
         {/* Garmin watch telemetry (independent of the phone incident) */}
         <WearableStatusCard lang={lang} deviceId={incident?.deviceId} />
 
-        {/* Loading / Not Found states */}
+        {/* Loading: placeholders in the shape of the page (the banner above
+            already says "connecting"). */}
         {!loaded && (
-          <div className="card flex items-center justify-center gap-3 p-10 text-lg font-semibold">
-            <RefreshCw className="animate-spin h-6 w-6" />
-            <span>{t('tracker.connecting', lang)}</span>
+          <div className="space-y-5" aria-busy="true" aria-label={t('tracker.connecting', lang)}>
+            <div className="skeleton h-[320px] w-full sm:h-[420px]" />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="skeleton h-36" />
+              <div className="skeleton h-36" />
+              <div className="skeleton h-36" />
+            </div>
           </div>
         )}
 
         {loaded && !incident && (
           <div className="card border-brick/40 p-10 text-center">
-            <ShieldAlert className="text-brick mx-auto mb-3 h-10 w-10" />
+            <ShieldAlert className="text-brick mx-auto mb-3 h-10 w-10" aria-hidden="true" />
             <p className="text-lg font-semibold">{t('tracker.notFound', lang)}</p>
           </div>
         )}
@@ -160,23 +165,23 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
             <section className="card overflow-hidden p-0">
               {gps ? (
                 <iframe
-                  title="Live senior location map"
+                  title={t('tracker.mapTitle', lang)}
                   src={mapsEmbedUrl}
                   className="h-[320px] w-full sm:h-[420px]"
                   loading="lazy"
                   referrerPolicy="no-referrer-when-downgrade"
                 />
               ) : (
-                <div className="flex h-[200px] items-center justify-center gap-2 text-ink-soft font-semibold">
-                  <MapPin className="h-5 w-5" />
+                <div className="flex h-[200px] items-center justify-center gap-2 px-4 text-center text-ink-soft font-semibold">
+                  <MapPin className="h-5 w-5 shrink-0" aria-hidden="true" />
                   <span>{t('tracker.waitingGps', lang)}</span>
                 </div>
               )}
 
               <div className="border-line flex flex-wrap items-center justify-between gap-3 border-t p-4">
-                <div className="flex flex-col gap-1.5">
+                <div className="flex min-w-0 flex-col gap-2">
                   <div className="flex items-center gap-2 text-sm font-semibold">
-                    <Clock className="text-ink-soft h-4 w-4" />
+                    <Clock className="text-ink-soft h-4 w-4 shrink-0" aria-hidden="true" />
                     <span>
                       {t('tracker.lastUpdated', lang)}: {lastUpdatedText}
                       {gps && ` • ±${Math.round(gps.accuracy)}m`}
@@ -185,59 +190,64 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
 
                   {/* Location Source Badge & Floor Micro-Location */}
                   {incident.locationSource && (
-                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <div className="flex flex-wrap items-center gap-2">
                       {incident.locationSource === 'phone_ble_assisted' ? (
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-soft text-sky-deep border border-sky/30 px-2.5 py-0.5 text-xs font-bold">
-                          <Radio className="h-3 w-3 animate-pulse text-sky" />
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-soft text-sky border border-sky/30 px-2.5 py-0.5 text-xs font-bold">
+                          <Radio className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                           <span>{t('fusion.phoneBle', lang)}</span>
                         </span>
                       ) : incident.locationSource === 'fused_gps' ? (
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-pine-soft text-pine-deep border border-pine/30 px-2.5 py-0.5 text-xs font-bold">
-                          <Watch className="h-3 w-3 text-pine" />
+                          <Watch className="h-3.5 w-3.5 shrink-0 text-pine" aria-hidden="true" />
                           <span>{t('fusion.combined', lang)}</span>
                         </span>
                       ) : incident.locationSource === 'watch_gps' ? (
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-pine-soft text-pine-deep border border-pine/30 px-2.5 py-0.5 text-xs font-bold">
-                          <Watch className="h-3 w-3 text-pine" />
+                          <Watch className="h-3.5 w-3.5 shrink-0 text-pine" aria-hidden="true" />
                           <span>{t('fusion.watchGps', lang)}</span>
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-well text-ink border border-line px-2.5 py-0.5 text-xs font-bold">
-                          <MapPin className="h-3 w-3 text-ink-soft" />
+                          <MapPin className="h-3.5 w-3.5 shrink-0 text-ink-soft" aria-hidden="true" />
                           <span>{t('fusion.phoneGps', lang)}</span>
                         </span>
                       )}
 
                       {incident.floorLevel && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30 px-2 py-0.5 text-xs font-bold">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-ochre-soft text-ochre-deep border border-ochre/30 px-2.5 py-0.5 text-xs font-bold">
                           <span>{t('fusion.floor', lang)}: {incident.floorLevel}</span>
                         </span>
                       )}
 
                       {incident.venueName && (
-                        <span className="text-ink-soft text-xs font-semibold truncate max-w-[220px]">
-                          📍 {incident.venueName}
+                        <span className="text-ink-soft inline-flex max-w-[220px] items-center gap-1 text-xs font-semibold">
+                          <MapPin className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                          <span className="truncate">{incident.venueName}</span>
                         </span>
                       )}
                     </div>
                   )}
                 </div>
 
-                {/* Direct navigation buttons for the caregiver / driver */}
-                <div className="flex flex-wrap gap-2">
-                  <a href={googleMapsUrl} target="_blank" rel="noopener noreferrer" className="btn btn-md btn-primary">
-                    <Navigation className="h-4 w-4" />
-                    <span>Google Maps</span>
-                  </a>
-                  <a href={appleMapsUrl} target="_blank" rel="noopener noreferrer" className="btn btn-md btn-secondary">
-                    <span>{t('tracker.navigate', lang)}</span>
-                    <span className="opacity-70">• Apple</span>
-                  </a>
-                  <a href={wazeUrl} target="_blank" rel="noopener noreferrer" className="btn btn-md btn-secondary">
-                    <span>{t('tracker.navigate', lang)}</span>
-                    <span className="opacity-70">• Waze</span>
-                  </a>
-                </div>
+                {/* Direct navigation buttons for the caregiver / driver. Shown
+                    only once there is a position: without one they would just
+                    open an empty map. */}
+                {gps && (
+                  <div className="flex flex-wrap gap-2">
+                    <a href={googleMapsUrl} target="_blank" rel="noopener noreferrer" className="btn btn-md btn-primary">
+                      <Navigation className="h-4 w-4" aria-hidden="true" />
+                      <span>Google Maps</span>
+                    </a>
+                    <a href={appleMapsUrl} target="_blank" rel="noopener noreferrer" className="btn btn-md btn-secondary">
+                      <span>{t('tracker.navigate', lang)}</span>
+                      <span className="opacity-70">• Apple</span>
+                    </a>
+                    <a href={wazeUrl} target="_blank" rel="noopener noreferrer" className="btn btn-md btn-secondary">
+                      <span>{t('tracker.navigate', lang)}</span>
+                      <span className="opacity-70">• Waze</span>
+                    </a>
+                  </div>
+                )}
               </div>
             </section>
 
@@ -250,9 +260,9 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
               <div className="card p-5">
                 <div className="flex items-center gap-2">
                   {incident.isCharging ? (
-                    <BatteryCharging className={`${batteryColor} h-5 w-5`} />
+                    <BatteryCharging className={`${batteryColor} h-5 w-5`} aria-hidden="true" />
                   ) : (
-                    <BatteryMedium className={`${batteryColor} h-5 w-5`} />
+                    <BatteryMedium className={`${batteryColor} h-5 w-5`} aria-hidden="true" />
                   )}
                   <span className="section-kicker">{t('tracker.battery', lang)}</span>
                 </div>
@@ -261,26 +271,26 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
                 </div>
                 <p className="text-ink-soft mt-1 text-sm font-semibold">
                   {incident.isCharging === null
-                    ? 'Battery telemetry unavailable on this device'
+                    ? t('tracker.batteryUnavailable', lang)
                     : incident.isCharging
-                      ? 'Charging'
+                      ? t('tracker.charging', lang)
                       : batteryLevel !== null && batteryLevel <= 20
-                        ? 'Low — phone may power off soon'
-                        : 'Discharging'}
+                        ? t('tracker.batteryLow', lang)
+                        : t('tracker.notCharging', lang)}
                 </p>
               </div>
 
               {/* Blood Type */}
               <div className="card p-5">
                 <div className="flex items-center gap-2">
-                  <Droplets className="text-brick h-5 w-5" />
+                  <Droplets className="text-brick h-5 w-5" aria-hidden="true" />
                   <span className="section-kicker">{t('tracker.bloodType', lang)}</span>
                 </div>
                 <div className="font-display text-brick-deep mt-2 text-4xl font-bold">
-                  {incident.bloodType || 'Unknown'}
+                  {incident.bloodType || t('tracker.bloodUnknown', lang)}
                 </div>
                 <p className="text-ink-soft mt-1 text-sm font-semibold">
-                  Relay to SCDF paramedics on arrival
+                  {t('tracker.bloodHint', lang)}
                 </p>
               </div>
 
@@ -290,18 +300,23 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
                   <img
                     src={incident.elderSelfieUrl}
                     alt={incident.elderName}
+                    width={80}
+                    height={80}
                     className="border-pine h-20 w-20 shrink-0 rounded-2xl border-2 object-cover"
                   />
                 ) : (
-                  <div className="bg-pine-soft text-pine-deep flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl text-3xl font-bold">
+                  <div
+                    className="bg-pine-soft text-pine-deep flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl text-3xl font-bold"
+                    aria-hidden="true"
+                  >
                     {(incident.elderName || '?').charAt(0)}
                   </div>
                 )}
                 <div className="min-w-0">
-                  <div className="section-kicker mb-1">Senior</div>
-                  <div className="text-xl leading-tight font-bold">{incident.elderName}</div>
+                  <div className="section-kicker mb-1">{t('tracker.senior', lang)}</div>
+                  <div className="text-xl leading-tight font-bold break-words">{incident.elderName}</div>
                   {incident.formattedAddress && (
-                    <div className="text-ink-soft mt-1 truncate text-sm font-semibold">
+                    <div className="text-ink-soft mt-1 text-sm font-semibold break-words">
                       {incident.formattedAddress}
                     </div>
                   )}
@@ -313,7 +328,7 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
             {incident.medicalNotes && (
               <section className="card border-brick/30 p-5">
                 <div className="flex items-center gap-2">
-                  <Stethoscope className="text-brick h-5 w-5" />
+                  <Stethoscope className="text-brick h-5 w-5" aria-hidden="true" />
                   <span className="section-kicker">{t('tracker.medicalNotes', lang)}</span>
                 </div>
                 <p className="mt-2 text-lg leading-snug font-semibold">{incident.medicalNotes}</p>
@@ -324,13 +339,13 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
             {incident.nearestLandmarks && incident.nearestLandmarks.length > 0 && (
               <section className="card p-5">
                 <div className="flex items-center gap-2">
-                  <Landmark className="text-pine h-5 w-5" />
+                  <Landmark className="text-pine h-5 w-5" aria-hidden="true" />
                   <span className="section-kicker">{t('tracker.landmarks', lang)}</span>
                 </div>
-                <ul className="mt-3 space-y-1.5">
+                <ul className="mt-3 space-y-2">
                   {incident.nearestLandmarks.map((landmark, i) => (
                     <li key={i} className="text-ink flex items-start gap-2 text-base font-semibold">
-                      <MapPin className="text-pine mt-1 h-4 w-4 shrink-0" />
+                      <MapPin className="text-pine mt-1 h-4 w-4 shrink-0" aria-hidden="true" />
                       <span>{landmark}</span>
                     </li>
                   ))}
@@ -341,8 +356,8 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
         )}
       </main>
 
-      <footer className="border-line text-ink-soft border-t px-4 py-5 text-center text-sm font-medium">
-        SafeSpot.SG • Live incident {incidentId} • Auto-refreshes in real time
+      <footer className="border-line text-ink-soft border-t px-4 py-5 text-center text-sm font-medium break-words">
+        SafeSpot.SG • {t('tracker.footer', lang).replace('{id}', incidentId)}
       </footer>
     </div>
   );

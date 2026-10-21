@@ -15,6 +15,8 @@ import {
   UserRound,
   BookUser,
   Star,
+  Hospital,
+  Briefcase,
 } from 'lucide-react';
 import {
   AccessibilitySettings,
@@ -95,6 +97,15 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   const selfieStreamRef = useRef<MediaStream | null>(null);
 
   const stepIndex = STEP_ORDER.indexOf(step);
+  const stepHeadingRef = useRef<HTMLHeadingElement | null>(null);
+
+  // Each step swaps the whole page: start it at the top and move focus to its
+  // heading so screen-reader and keyboard users land on the new step.
+  useEffect(() => {
+    if (step === 'welcome') return;
+    window.scrollTo({ top: 0 });
+    stepHeadingRef.current?.focus();
+  }, [step]);
 
   const goNext = () => {
     const next = STEP_ORDER[stepIndex + 1];
@@ -139,6 +150,12 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   // Release the camera when the wizard unmounts.
   useEffect(() => stopSelfieCamera, []);
 
+  // Leaving the profile step unmounts the <video>; release the camera so the
+  // tile is not left showing a dead "camera on" state when the user returns.
+  useEffect(() => {
+    if (step !== 'profile' && selfieStreamRef.current) stopSelfieCamera();
+  }, [step]);
+
   const captureSelfie = () => {
     const video = selfieVideoRef.current;
     if (!video) return;
@@ -164,15 +181,17 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
 
     if (result.imported.length === 0) {
       setImportNote(
-        result.duplicates > 0 ? 'Those contacts are already saved.' : 'No contacts were chosen.'
+        result.duplicates > 0 ? t('onboard.importAllDuplicates', lang) : t('onboard.importNoneChosen', lang)
       );
       return;
     }
 
     setContacts((prev) => ensureEmergency995([...prev, ...result.imported]));
     setImportNote(
-      `Added ${result.imported.length} contact${result.imported.length === 1 ? '' : 's'}` +
-        (result.duplicates > 0 ? `, skipped ${result.duplicates} already saved.` : '.')
+      t('onboard.importAdded', lang).replace('{n}', String(result.imported.length)) +
+        (result.duplicates > 0
+          ? ' ' + t('onboard.importSkipped', lang).replace('{n}', String(result.duplicates))
+          : '')
     );
   };
 
@@ -220,20 +239,27 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
             <button
               type="button"
               onClick={goBack}
-              className="text-ink-soft hover:bg-well hover:text-ink -ml-1 rounded-xl p-1.5 transition-colors"
+              className="btn accessible-tap text-ink-soft hover:bg-well hover:text-ink -ml-2 shrink-0"
               aria-label={t('onboard.back', lang)}
             >
-              <ArrowLeft className="h-5 w-5" />
+              <ArrowLeft className="h-5 w-5" aria-hidden="true" />
             </button>
 
             <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between text-xs font-bold text-ink-soft mb-1">
+              <div className="text-ink-soft mb-1.5 flex items-center justify-between gap-2 text-sm font-bold">
                 <span className="truncate">
                   {step === 'profile' ? t('onboard.stepProfile', lang) : step === 'places' ? t('onboard.stepPlaces', lang) : t('onboard.stepContacts', lang)}
                 </span>
                 <span className="shrink-0">{stepIndex} / {STEP_ORDER.length - 1}</span>
               </div>
-              <div className="bg-well h-1.5 overflow-hidden rounded-full">
+              <div
+                className="bg-well h-1.5 overflow-hidden rounded-full"
+                role="progressbar"
+                aria-label={t('onboard.progress', lang)}
+                aria-valuemin={0}
+                aria-valuemax={STEP_ORDER.length - 1}
+                aria-valuenow={stepIndex}
+              >
                 <div
                   className="bg-pine h-full rounded-full transition-all duration-300"
                   style={{ width: `${(stepIndex / (STEP_ORDER.length - 1)) * 100}%` }}
@@ -241,7 +267,11 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
               </div>
             </div>
 
-            <button onClick={onSkip} className="text-ink-faint hover:text-ink shrink-0 text-sm font-bold pl-1">
+            <button
+              type="button"
+              onClick={onSkip}
+              className="btn btn-sm text-ink-soft hover:bg-well hover:text-ink -mr-2 min-h-12 shrink-0"
+            >
               {t('onboard.skip', lang)}
             </button>
           </div>
@@ -261,11 +291,15 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
               </p>
             </div>
             <div className="w-full max-w-xs space-y-3 pt-2">
-              <button onClick={goNext} className="btn btn-lg btn-primary w-full shadow-lg">
+              <button type="button" onClick={goNext} className="btn btn-lg btn-primary w-full">
                 {t('onboard.start', lang)}
                 <ArrowRight className="h-5 w-5" />
               </button>
-              <button onClick={onSkip} className="text-ink-faint hover:text-ink text-sm font-bold block w-full py-1">
+              <button
+                type="button"
+                onClick={onSkip}
+                className="btn btn-md text-ink-soft hover:bg-well hover:text-ink w-full"
+              >
                 {t('onboard.skip', lang)}
               </button>
             </div>
@@ -275,11 +309,15 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
         {step === 'profile' && (
           <div className="space-y-5">
             <div>
-              <h2 className="font-display text-2xl font-bold tracking-tight">
+              <h2
+                ref={stepHeadingRef}
+                tabIndex={-1}
+                className="font-display text-2xl font-bold tracking-tight focus:outline-none"
+              >
                 {t('onboard.stepProfile', lang)}
               </h2>
               <p className="text-ink-soft mt-1 text-sm sm:text-base">
-                Paramedics and drivers see this when you send an alert.
+                {t('onboard.profileIntro', lang)}
               </p>
             </div>
 
@@ -296,10 +334,10 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                     className="h-full w-full object-cover"
                   />
                 ) : selfiePhotoUrl ? (
-                  <img src={selfiePhotoUrl} alt="You" className="h-full w-full object-cover" />
+                  <img src={selfiePhotoUrl} alt={t('onboard.photoAlt', lang)} className="h-full w-full object-cover" />
                 ) : (
                   <span className="text-ink-faint flex h-full w-full items-center justify-center">
-                    <Camera className="h-7 w-7" />
+                    <Camera className="h-7 w-7" aria-hidden="true" />
                   </span>
                 )}
               </div>
@@ -314,7 +352,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                         {t('onboard.takeSelfie', lang)}
                       </button>
                       <button type="button" onClick={stopSelfieCamera} className="btn btn-md btn-secondary">
-                        {t('onboard.back', lang)}
+                        {t('onboard.cancelCamera', lang)}
                       </button>
                     </>
                   ) : (
@@ -329,7 +367,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                   )}
                 </div>
                 {cameraUnavailable && (
-                  <p className="text-ochre-deep text-xs font-semibold">
+                  <p role="status" className="text-ochre-deep text-sm font-semibold">
                     {t('onboard.cameraUnavailable', lang)}
                   </p>
                 )}
@@ -402,11 +440,15 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
         {step === 'places' && (
           <div className="space-y-5">
             <div>
-              <h2 className="font-display text-2xl font-bold tracking-tight">
+              <h2
+                ref={stepHeadingRef}
+                tabIndex={-1}
+                className="font-display text-2xl font-bold tracking-tight focus:outline-none"
+              >
                 {t('onboard.stepPlaces', lang)}
               </h2>
               <p className="text-ink-soft mt-1 text-sm sm:text-base">
-                Saved places become one-tap pickup buttons. You can change them later.
+                {t('onboard.placesIntro', lang)}
               </p>
             </div>
 
@@ -418,7 +460,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                     value={places[kind]}
                     category={kind}
                     label={SAVED_PLACE_META[kind].title}
-                    emoji={SAVED_PLACE_META[kind].emoji}
+                    lang={lang}
                     placeholder={
                       kind === 'home'
                         ? 'e.g. 356 Yishun Ring Rd or S760356'
@@ -436,8 +478,8 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
 
                   {/* Quick-pick recommendations for Healthcare */}
                   {kind === 'healthcare' && !places.healthcare && (
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      <span className="text-xs text-ink-faint font-semibold self-center mr-1">Popular:</span>
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <span className="text-ink-soft mr-1 text-sm font-semibold">{t('onboard.popular', lang)}</span>
                       {[
                         { name: 'SGH', full: 'Outram Rd, Singapore 169608', type: 'public' },
                         { name: 'TTSH', full: '11 Jalan Tan Tock Seng, Singapore 308433', type: 'public' },
@@ -452,9 +494,10 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                             setPlaces((prev) => ({ ...prev, healthcare: item.full }));
                             setProviderType(item.type as 'public' | 'private');
                           }}
-                          className="chip bg-well hover:bg-pine-soft hover:text-pine text-ink text-xs font-semibold py-1 px-2.5 transition-colors"
+                          className="chip border-line bg-well hover:bg-pine-soft hover:text-pine-deep text-ink min-h-11 px-3.5 text-sm"
                         >
-                          🏥 {item.name}
+                          <Hospital className="h-4 w-4" aria-hidden="true" />
+                          {item.name}
                         </button>
                       ))}
                     </div>
@@ -462,8 +505,8 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
 
                   {/* Quick-pick recommendations for Work */}
                   {kind === 'work' && !places.work && (
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      <span className="text-xs text-ink-faint font-semibold self-center mr-1">Popular:</span>
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <span className="text-ink-soft mr-1 text-sm font-semibold">{t('onboard.popular', lang)}</span>
                       {[
                         { name: 'BLOCK71', full: '71 Ayer Rajah Crescent, Singapore 139951' },
                         { name: 'LaunchPad', full: 'LaunchPad @ one-north, Singapore 139951' },
@@ -474,9 +517,10 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                           key={item.name}
                           type="button"
                           onClick={() => setPlaces((prev) => ({ ...prev, work: item.full }))}
-                          className="chip bg-well hover:bg-sky-soft hover:text-sky text-ink text-xs font-semibold py-1 px-2.5 transition-colors"
+                          className="chip border-line bg-well hover:bg-pine-soft hover:text-pine-deep text-ink min-h-11 px-3.5 text-sm"
                         >
-                          💼 {item.name}
+                          <Briefcase className="h-4 w-4" aria-hidden="true" />
+                          {item.name}
                         </button>
                       ))}
                     </div>
@@ -486,19 +530,22 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
             </div>
 
             <div>
-              <span className="label">Preferred healthcare provider type</span>
-              <div className="flex gap-2">
+              <span className="label" id="onboard-provider-label">
+                {t('onboard.providerType', lang)}
+              </span>
+              <div className="flex gap-2" role="group" aria-labelledby="onboard-provider-label">
                 {(['public', 'private'] as const).map((type) => (
                   <button
                     key={type}
                     type="button"
                     onClick={() => setProviderType(type)}
-                    className={`btn btn-md flex-1 capitalize ${
+                    aria-pressed={providerType === type}
+                    className={`btn btn-md flex-1 ${
                       providerType === type ? 'btn-primary' : 'btn-secondary'
                     }`}
                   >
-                    {providerType === type && <Check className="h-4 w-4" />}
-                    {type}
+                    {providerType === type && <Check className="h-4 w-4" aria-hidden="true" />}
+                    {t(type === 'public' ? 'onboard.providerPublic' : 'onboard.providerPrivate', lang)}
                   </button>
                 ))}
               </div>
@@ -509,7 +556,11 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
         {step === 'contacts' && (
           <div className="space-y-5">
             <div>
-              <h2 className="font-display text-2xl font-bold tracking-tight">
+              <h2
+                ref={stepHeadingRef}
+                tabIndex={-1}
+                className="font-display text-2xl font-bold tracking-tight focus:outline-none"
+              >
                 {t('onboard.stepContacts', lang)}
               </h2>
               <p className="text-ink-soft mt-1 text-sm sm:text-base">
@@ -518,23 +569,27 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
             </div>
 
             {/* Preferred Contact Explanation Banner */}
-            <div className="rounded-xl border border-pine/30 bg-pine-soft p-3.5 text-pine-deep flex items-start gap-2.5 text-xs sm:text-sm">
-              <Star className="h-5 w-5 shrink-0 fill-pine text-pine mt-0.5" />
-              <div>
-                <span className="font-bold">⭐ Preferred Pick-Up Contact: </span>
-                <span>When you tap <strong>"Pick Me Up Here"</strong>, your live Google Maps pin, verified address, and driver pickup note are instantly sent to this person.</span>
-              </div>
+            <div className="border-pine/30 bg-pine-soft text-pine-deep flex items-start gap-3 rounded-xl border p-4 text-sm">
+              <Star className="fill-pine text-pine mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+              <p>
+                <span className="font-bold">{t('onboard.preferredTitle', lang)} </span>
+                {t('onboard.preferredBody', lang).replace('{button}', `“${t('hero.pickMeUp', lang)}”`)}
+              </p>
             </div>
 
             {/* Import from the phone's address book where the browser allows it */}
             {isContactPickerSupported() && (
-              <button onClick={handleImportContacts} className="btn btn-lg btn-secondary w-full">
-                <BookUser className="h-5 w-5" />
+              <button type="button" onClick={handleImportContacts} className="btn btn-lg btn-secondary w-full">
+                <BookUser className="h-5 w-5" aria-hidden="true" />
                 {t('onboard.importContacts', lang)}
               </button>
             )}
 
-            {importNote && <p className="text-ink-soft text-sm font-semibold">{importNote}</p>}
+            {importNote && (
+              <p role="status" className="text-ink-soft text-sm font-semibold">
+                {importNote}
+              </p>
+            )}
 
             {/* Current list */}
             <ul className="space-y-2">
@@ -554,9 +609,9 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                     <div className="flex items-center gap-2">
                       <span className="truncate text-base font-bold text-ink">{c.name}</span>
                       {c.isPrimary && !c.locked && (
-                        <span className="chip border-pine/50 bg-pine-soft text-pine-deep text-xs font-bold py-0.5 px-2">
-                          <Star className="h-3 w-3 fill-pine text-pine" />
-                          Preferred
+                        <span className="chip border-pine/50 bg-pine-soft text-pine-deep shrink-0 px-2 py-0.5">
+                          <Star className="fill-pine text-pine h-3 w-3" aria-hidden="true" />
+                          {t('onboard.preferred', lang)}
                         </span>
                       )}
                     </div>
@@ -567,31 +622,34 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
 
                   {c.locked ? (
                     <span
-                      className="text-ink-faint flex shrink-0 items-center gap-1 text-xs font-bold px-2"
+                      className="text-ink-soft flex h-11 w-11 shrink-0 items-center justify-center"
                       title={t('onboard.emergencyLocked', lang)}
                     >
-                      <Lock className="h-3.5 w-3.5" />
+                      <Lock className="h-4 w-4" aria-hidden="true" />
+                      <span className="sr-only">{t('onboard.emergencyLocked', lang)}</span>
                     </span>
                   ) : (
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex shrink-0 items-center gap-2">
                       {!c.isPrimary ? (
                         <button
                           type="button"
                           onClick={() => setContacts(prev => setPreferredContact(prev, c.id))}
-                          className="text-xs font-bold text-ink-soft hover:text-pine hover:bg-pine-soft/50 border border-line rounded-lg px-2 py-1.5 flex items-center gap-1 transition-colors"
-                          title="Set as preferred pickup recipient"
+                          className="btn btn-sm btn-secondary min-h-11 min-w-11 px-2.5 sm:px-3"
+                          title={t('onboard.setPreferredHint', lang)}
+                          aria-label={`${t('onboard.setPreferred', lang)}: ${c.name}`}
                         >
-                          <Star className="h-3.5 w-3.5" />
-                          <span className="hidden sm:inline">Set Preferred</span>
+                          <Star className="h-4 w-4" aria-hidden="true" />
+                          <span className="hidden sm:inline">{t('onboard.setPreferred', lang)}</span>
                         </button>
                       ) : null}
 
                       <button
+                        type="button"
                         onClick={() => handleRemoveContact(c.id)}
-                        className="text-brick hover:bg-brick-soft rounded-lg p-2 transition-colors"
-                        aria-label={`Remove ${c.name}`}
+                        className="btn text-brick hover:bg-brick-soft h-11 w-11"
+                        aria-label={`${t('onboard.removeContact', lang)}: ${c.name}`}
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </div>
                   )}
@@ -600,35 +658,47 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
             </ul>
 
             {/* Manual fallback, always available */}
-            <div className="border-line space-y-3 rounded-xl border border-dashed p-3">
-              <div className="text-ink-soft flex items-center gap-2 text-sm font-bold">
-                <UserRound className="h-4 w-4" />
+            <div className="border-line space-y-4 rounded-xl border border-dashed p-4">
+              <h3 className="text-ink-soft font-body flex items-center gap-2 text-sm font-bold">
+                <UserRound className="h-4 w-4" aria-hidden="true" />
                 {t('onboard.addManually', lang)}
-              </div>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <input
-                  className="input"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Name"
-                  aria-label="Contact name"
-                />
-                <input
-                  className="input"
-                  type="tel"
-                  value={newPhone}
-                  onChange={(e) => setNewPhone(e.target.value)}
-                  placeholder="9123 4567"
-                  aria-label="Contact phone number"
-                />
+              </h3>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="label" htmlFor="onboard-contact-name">
+                    {t('onboard.contactName', lang)}
+                  </label>
+                  <input
+                    id="onboard-contact-name"
+                    className="input"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="onboard-contact-phone">
+                    {t('onboard.contactPhone', lang)}
+                  </label>
+                  <input
+                    id="onboard-contact-phone"
+                    className="input"
+                    type="tel"
+                    value={newPhone}
+                    onChange={(e) => setNewPhone(e.target.value)}
+                    placeholder="9123 4567"
+                    autoComplete="off"
+                  />
+                </div>
               </div>
               <button
+                type="button"
                 onClick={handleAddManualContact}
                 disabled={!newName.trim() || !newPhone.trim()}
                 className="btn btn-md btn-secondary w-full"
               >
-                <Plus className="h-4 w-4" />
-                Add contact
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                {t('onboard.addContact', lang)}
               </button>
             </div>
           </div>
@@ -637,20 +707,25 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
 
       {/* Navigation */}
       {step !== 'welcome' && (
-        <footer className="border-line bg-surface/95 sticky bottom-0 border-t px-4 py-3 backdrop-blur-md sm:px-6">
+        <footer className="border-line bg-surface/95 sticky bottom-0 border-t px-4 pt-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] backdrop-blur-md sm:px-6">
           <div className="mx-auto flex max-w-2xl items-center gap-3">
-            <button onClick={goBack} className="btn btn-lg btn-secondary shrink-0">
-              <ArrowLeft className="h-5 w-5" />
+            <button
+              type="button"
+              onClick={goBack}
+              className="btn btn-lg btn-secondary shrink-0"
+              aria-label={t('onboard.back', lang)}
+            >
+              <ArrowLeft className="h-5 w-5" aria-hidden="true" />
               <span className="hidden sm:inline">{t('onboard.back', lang)}</span>
             </button>
 
             {step === 'contacts' ? (
-              <button onClick={handleFinish} className="btn btn-lg btn-primary flex-1">
+              <button type="button" onClick={handleFinish} className="btn btn-lg btn-primary flex-1">
                 <Check className="h-5 w-5" />
                 {t('onboard.finish', lang)}
               </button>
             ) : (
-              <button onClick={goNext} className="btn btn-lg btn-primary flex-1">
+              <button type="button" onClick={goNext} className="btn btn-lg btn-primary flex-1">
                 {t('onboard.next', lang)}
                 <ArrowRight className="h-5 w-5" />
               </button>

@@ -102,16 +102,17 @@ export const PickupOptionsCard: React.FC<{ incidentId: string; lang: Language }>
     <section className="card space-y-4 p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <MapPin className="text-pine h-5 w-5" />
-          <span className="section-kicker">{t('pickup.title', lang)}</span>
+          <MapPin aria-hidden="true" className="text-pine h-5 w-5 shrink-0" />
+          <h2 className="section-kicker font-body">{t('pickup.title', lang)}</h2>
         </div>
         {sharing ? (
           <button type="button" onClick={stopSharing} className="btn btn-md btn-secondary">
-            {t('pickup.stopSharing', lang)}
+            <Car aria-hidden="true" className="h-5 w-5" />
+            <span>{t('pickup.stopSharing', lang)}</span>
           </button>
         ) : (
           <button type="button" onClick={startSharing} className="btn btn-md btn-primary">
-            <Car className="h-5 w-5" />
+            <Car aria-hidden="true" className="h-5 w-5" />
             <span>{t('pickup.imDriving', lang)}</span>
           </button>
         )}
@@ -121,11 +122,15 @@ export const PickupOptionsCard: React.FC<{ incidentId: string; lang: Language }>
         {usedDriver ? t('pickup.rankedWithDriver', lang) : t('pickup.rankedWalkOnly', lang)}
       </p>
 
-      {error && <p className="text-brick text-sm font-semibold">{error}</p>}
+      {error && (
+        <p role="alert" className="text-brick-deep text-sm font-semibold">
+          {error}
+        </p>
+      )}
 
       {loading && !options && (
-        <div className="text-ink-soft flex items-center gap-2 text-sm font-semibold">
-          <Loader2 className="h-4 w-4 animate-spin" />
+        <div role="status" className="text-ink-soft flex items-center gap-2 text-sm font-semibold">
+          <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
           <span>{t('pickup.finding', lang)}</span>
         </div>
       )}
@@ -146,7 +151,7 @@ export const PickupOptionsCard: React.FC<{ incidentId: string; lang: Language }>
                     <span>{o.kind === 'kerbside' ? t('pickup.kerbNote', lang) : kindLabel(o)}</span>
                     {o.barrierFree && (
                       <span className="text-pine-deep inline-flex items-center gap-1">
-                        <Accessibility className="h-3.5 w-3.5" />
+                        <Accessibility aria-hidden="true" className="h-3.5 w-3.5" />
                         {t('pickup.barrierFree', lang)}
                       </span>
                     )}
@@ -158,18 +163,19 @@ export const PickupOptionsCard: React.FC<{ incidentId: string; lang: Language }>
                   rel="noopener noreferrer"
                   className="btn btn-md btn-secondary shrink-0"
                 >
-                  <Navigation className="h-4 w-4" />
+                  <Navigation aria-hidden="true" className="h-4 w-4" />
                   <span>{t('pickup.navigate', lang)}</span>
+                  <span className="sr-only">: {o.kind === 'kerbside' ? kindLabel(o) : o.name}</span>
                 </a>
               </div>
-              <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm font-semibold">
+              <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm font-semibold tabular-nums">
                 <span className="inline-flex items-center gap-1.5">
-                  <Footprints className="text-ink-soft h-4 w-4" />
+                  <Footprints aria-hidden="true" className="text-ink-soft h-4 w-4" />
                   {t('pickup.walk', lang)} {minutes(o.seniorWalkSeconds)} {t('pickup.min', lang)} ({o.walkMeters} m)
                 </span>
                 {o.driveSeconds !== null && (
                   <span className="inline-flex items-center gap-1.5">
-                    <Car className="text-ink-soft h-4 w-4" />
+                    <Car aria-hidden="true" className="text-ink-soft h-4 w-4" />
                     {t('pickup.drive', lang)} {minutes(o.driveSeconds)} {t('pickup.min', lang)}
                   </span>
                 )}

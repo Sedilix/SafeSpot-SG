@@ -4,14 +4,16 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Mic, 
-  X, 
-  Volume2, 
-  Sparkles, 
+import {
+  Mic,
+  X,
+  Volume2,
+  Sparkles,
   Radio,
-  Cpu,
-  Waves
+  MapPin,
+  Send,
+  Camera,
+  Siren,
 } from 'lucide-react';
 import { RealtimeClient } from '@speechmatics/real-time-client';
 import { AccessibilitySettings, EmergencyContact, LocationVerificationResult } from '../types';
@@ -60,7 +62,8 @@ export const VoiceCommandOverlay: React.FC<VoiceCommandOverlayProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [recognizedAction, setRecognizedAction] = useState<string | null>(null);
   const [isSpeechmaticsActive, setIsSpeechmaticsActive] = useState(false);
-  const [engineStatus, setEngineStatus] = useState<string>('Initializing speech engine...');
+  // Translation key for the one-line engine status under the mic.
+  const [engineStatus, setEngineStatus] = useState<string>('voice.engineStarting');
 
   const lang = settings.language || 'en';
 
@@ -128,7 +131,7 @@ export const VoiceCommandOverlay: React.FC<VoiceCommandOverlayProps> = ({
     setTranscript('');
     setInterimTranscript('');
     accumulatedTranscriptRef.current = '';
-    setAssistantResponse('Listening to your voice... Speak anytime.');
+    setAssistantResponse(t('voice.speakAnytime', lang));
     setRecognizedAction(null);
 
     // Step 1: Check Speechmatics Realtime token from backend
@@ -142,7 +145,7 @@ export const VoiceCommandOverlay: React.FC<VoiceCommandOverlayProps> = ({
 
       if (tokenData.hasSpeechmaticsKey && tokenData.token) {
         // Start Speechmatics Realtime SDK Client
-        setEngineStatus('Speechmatics Realtime SDK Connected');
+        setEngineStatus('voice.engineConnecting');
         setIsSpeechmaticsActive(true);
         await startSpeechmaticsSession(tokenData.token, tokenData.url);
         return;
@@ -238,7 +241,7 @@ export const VoiceCommandOverlay: React.FC<VoiceCommandOverlayProps> = ({
 
       setIsListening(true);
       isListeningRef.current = true;
-      setEngineStatus('Speechmatics Realtime SDK Active • Listening');
+      setEngineStatus('voice.engineMicOn');
     } catch (err) {
       console.error('Error starting Speechmatics session:', err);
       startWebSpeechFallback();
@@ -247,7 +250,7 @@ export const VoiceCommandOverlay: React.FC<VoiceCommandOverlayProps> = ({
 
   const startWebSpeechFallback = () => {
     setIsSpeechmaticsActive(false);
-    setEngineStatus('Web Speech Assistant Active');
+    setEngineStatus('voice.engineBrowser');
 
     const controller = initSpeechRecognition(
       (text, isFinal) => {
@@ -273,7 +276,9 @@ export const VoiceCommandOverlay: React.FC<VoiceCommandOverlayProps> = ({
       setIsListening(true);
       isListeningRef.current = true;
     } else {
-      setAssistantResponse('Microphone voice typing ready. Tap a quick phrase below or type your request.');
+      // There is no text box here, so never ask the senior to type.
+      setEngineStatus('voice.engineUnavailable');
+      setAssistantResponse(t('voice.noVoiceTyping', lang));
     }
   };
 
@@ -318,7 +323,8 @@ export const VoiceCommandOverlay: React.FC<VoiceCommandOverlayProps> = ({
         responseText, 
         settings.speechmaticsVoice || 'sarah',
         undefined,
-        settings.speechmaticsRate ?? 0.85
+        settings.speechmaticsRate ?? 0.85,
+        lang
       );
 
       // Step 4: Execute structured physical action with reassuring delay
@@ -344,7 +350,7 @@ export const VoiceCommandOverlay: React.FC<VoiceCommandOverlayProps> = ({
       }
     } catch (e) {
       console.error('Voice assistant error:', e);
-      setAssistantResponse(`I heard: "${spokenText}". Tap an option below to proceed.`);
+      setAssistantResponse(`${t('voice.iHeard', lang)} "${spokenText}". ${t('voice.tapPhraseBelow', lang)}`);
     } finally {
       setIsProcessing(false);
     }
@@ -354,86 +360,90 @@ export const VoiceCommandOverlay: React.FC<VoiceCommandOverlayProps> = ({
 
   if (!isOpen) return null;
 
+  const closeOverlay = () => {
+    stopSpeaking();
+    cleanupAudioSession();
+    onClose();
+  };
+
+  const voiceName = settings.speechmaticsVoice || 'sarah';
+
   return (
     <div
       id="modal-voice-command-overlay"
       className="voice-backdrop"
       role="dialog"
       aria-modal="true"
+      aria-labelledby="voice-overlay-title"
     >
-      <div className="voice-panel">
+      {/* Scrolls inside itself on short phone screens instead of clipping. */}
+      <div className="voice-panel max-h-[92vh] overflow-y-auto overscroll-contain supports-[height:100dvh]:max-h-[92dvh]">
         {/* Top bar */}
-        <div className="mb-6 flex items-center justify-between border-b voice-divider pb-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#4a4232] bg-[#2e281d] voice-accent">
-              <Radio className="h-5 w-5 animate-pulse" />
+        <div className="voice-divider mb-6 flex items-start justify-between gap-3 border-b pb-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="voice-well voice-accent flex h-11 w-11 shrink-0 items-center justify-center" aria-hidden="true">
+              <Radio className={`h-5 w-5 ${isListening ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-display text-2xl leading-none font-bold tracking-tight voice-text">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2
+                  id="voice-overlay-title"
+                  className="font-display voice-text text-2xl leading-none font-bold tracking-tight"
+                >
                   {t('voice.title', lang)}
-                </h3>
-                {isSpeechmaticsActive && (
-                  <span className="voice-chip">
-                    <Waves className="h-3.5 w-3.5 animate-pulse" /> Speechmatics STT
-                  </span>
-                )}
+                </h2>
+                {isSpeechmaticsActive && <span className="voice-chip">Speechmatics</span>}
               </div>
-              <p className="mt-1 text-sm font-normal voice-subtle sm:text-base">
-                {t('voice.poweredBy', lang)}
-              </p>
+              <p className="voice-subtle mt-1 text-sm font-normal sm:text-base">{t('voice.poweredBy', lang)}</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {onOpenSettings && (
               <button
                 type="button"
                 onClick={() => {
-                  stopSpeaking();
-                  cleanupAudioSession();
-                  onClose();
+                  closeOverlay();
                   onOpenSettings();
                 }}
-                className="flex items-center gap-1.5 rounded-xl border border-[#5a5140] bg-[#2e281d] px-3 py-2 text-sm font-bold voice-subtle transition-all hover:bg-[#383123] active:scale-[0.97]"
-                title="Change Speechmatics voice"
+                className="voice-btn flex min-h-12 items-center gap-1.5 px-3 py-2"
+                aria-label={`${t('voice.voiceLabel', lang)} ${voiceName}`}
               >
-                <Volume2 className="h-4 w-4 voice-accent" />
+                <Volume2 aria-hidden="true" className="voice-accent h-4 w-4 shrink-0" />
                 <span className="hidden sm:inline">{t('voice.voiceLabel', lang)}</span>
-                <span className="uppercase voice-text">{settings.speechmaticsVoice || 'SARAH'}</span>
+                <span className="voice-text capitalize">{voiceName}</span>
               </button>
             )}
 
             <button
-              onClick={() => {
-                stopSpeaking();
-                cleanupAudioSession();
-                onClose();
-              }}
-              className="accessible-tap rounded-xl p-2 voice-subtle transition-all hover:bg-[#2e281d] hover:voice-text active:scale-[0.97]"
-              aria-label="Close voice assistant"
+              type="button"
+              onClick={closeOverlay}
+              className="voice-btn accessible-tap p-2"
+              aria-label={t('voice.close', lang)}
             >
-              <X className="h-6 w-6" />
+              <X aria-hidden="true" className="h-6 w-6" />
             </button>
           </div>
         </div>
 
-        {/* Center Mic & Waveform */}
+        {/* Center mic */}
         <div className="flex flex-col items-center justify-center py-6 text-center">
           <button
             id="btn-voice-mic-main"
+            type="button"
             onClick={isListening ? stopListening : startListening}
-            className={`flex h-24 w-24 items-center justify-center rounded-full shadow-xl transition-all active:scale-95 sm:h-28 sm:w-28 ${
+            aria-pressed={isListening}
+            aria-label={isListening ? t('voice.stopListening', lang) : t('voice.startListening', lang)}
+            className={`voice-mic h-24 w-24 sm:h-28 sm:w-28 ${
               isListening
-                ? 'bg-brick text-on-brick ring-8 ring-brick/40 animate-pulse'
+                ? 'bg-brick text-on-brick ring-8 ring-brick/40 animate-pulse motion-reduce:animate-none'
                 : 'bg-pine text-on-pine hover:bg-pine-deep'
             }`}
-            aria-label={isListening ? 'Stop listening' : 'Start listening'}
           >
-            <Mic className={`h-10 w-10 ${isListening ? 'animate-bounce' : ''}`} />
+            <Mic aria-hidden="true" className="h-10 w-10" />
           </button>
 
-          <div className="mt-4 text-lg font-bold voice-text sm:text-xl">
+          <div role="status" className="voice-text mt-4 text-lg font-bold sm:text-xl">
             {isListening
               ? t('voice.listening', lang)
               : isProcessing
@@ -441,79 +451,78 @@ export const VoiceCommandOverlay: React.FC<VoiceCommandOverlayProps> = ({
               : t('voice.tapToSpeak', lang)}
           </div>
 
-          {/* Engine Indicator */}
-          <div className="mt-1 flex items-center justify-center gap-2 text-sm voice-subtle">
-            <span className="inline-block h-2 w-2 animate-ping rounded-full bg-emerald-400" />
-            <span>{engineStatus}</span>
+          {/* Engine indicator: the dot only moves while the mic is really on */}
+          <div className="voice-subtle mt-1 flex items-center justify-center gap-2 text-sm">
+            <span
+              aria-hidden="true"
+              className={`inline-block h-2 w-2 rounded-full bg-current ${
+                isListening ? 'voice-accent animate-pulse motion-reduce:animate-none' : ''
+              }`}
+            />
+            <span>{t(engineStatus, lang)}</span>
           </div>
 
-          {/* Live Transcript / Speech Stream */}
+          {/* Live transcript */}
           {(transcript || interimTranscript) && (
-            <div className="mt-4 w-full max-w-lg voice-well p-4 text-left">
-              <div className="mb-1 flex items-center justify-between text-xs font-bold tracking-wide voice-subtle uppercase">
-                <span>{t('voice.transcribed', lang)}</span>
-                {isSpeechmaticsActive && <span className="text-[11px] font-bold voice-subtle">Speechmatics Realtime</span>}
-              </div>
-              <p className="text-base font-bold italic voice-text sm:text-lg">
-                “{transcript || interimTranscript}”
-              </p>
+            <div className="voice-well mt-4 w-full max-w-lg p-4 text-left">
+              <div className="voice-subtle mb-1 text-sm font-bold">{t('voice.transcribed', lang)}</div>
+              <p className="voice-text text-base font-bold italic sm:text-lg">“{transcript || interimTranscript}”</p>
             </div>
           )}
 
-          {/* Gemini AI Spoken Response Card */}
+          {/* Assistant reply */}
           {assistantResponse && (
-            <div className="mt-4 flex w-full max-w-lg items-start gap-3 voice-well p-4 text-left shadow-sm">
-              <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
-              <div>
-                <div className="mb-1 flex items-center gap-1.5 text-xs font-bold tracking-wide voice-subtle uppercase">
-                  <Cpu className="h-4 w-4 text-sky-400" />
-                  <span>{t('voice.geminiDecision', lang)}</span>
-                  {recognizedAction && (
-                    <span className="ml-auto rounded-full bg-[#383123] px-2 py-0.5 text-[10px] font-bold voice-subtle">
-                      {recognizedAction}
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm leading-snug font-semibold sm:text-base">
-                  {assistantResponse}
-                </p>
+            <div
+              aria-live="polite"
+              className="voice-well mt-4 flex w-full max-w-lg items-start gap-3 p-4 text-left"
+            >
+              <Sparkles aria-hidden="true" className="voice-accent mt-0.5 h-5 w-5 shrink-0" />
+              <div className="min-w-0">
+                <div className="voice-subtle mb-1 text-sm font-bold">{t('voice.geminiDecision', lang)}</div>
+                <p className="voice-text text-sm leading-snug font-semibold sm:text-base">{assistantResponse}</p>
               </div>
             </div>
           )}
         </div>
 
-        {/* Quick Speech Phrase Buttons */}
-        <div className="mt-6 border-t voice-divider pt-4">
-          <div className="mb-3 voice-label">
-            {t('voice.quickPhrasesTitle', lang)}
-          </div>
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        {/* Quick phrases */}
+        <div className="voice-divider mt-6 border-t pt-4">
+          <h3 className="voice-label mb-3 font-body">{t('voice.quickPhrasesTitle', lang)}</h3>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button
+              type="button"
               onClick={() => handleProcessVoiceCommand('Where am I right now?')}
-              className="voice-btn"
+              className="voice-btn flex min-h-12 items-center gap-2.5"
             >
-              🗣️ {t('voice.phraseWhere', lang)}
+              <MapPin aria-hidden="true" className="voice-accent h-5 w-5 shrink-0" />
+              <span>{t('voice.phraseWhere', lang)}</span>
             </button>
 
             <button
-              onClick={() => handleProcessVoiceCommand('Send my exact location to my daughter Sarah')}
-              className="voice-btn"
+              type="button"
+              onClick={() => handleProcessVoiceCommand('Send my exact location to my family')}
+              className="voice-btn flex min-h-12 items-center gap-2.5"
             >
-              🗣️ {t('voice.phraseSendSarah', lang)}
+              <Send aria-hidden="true" className="voice-accent h-5 w-5 shrink-0" />
+              <span>{t('voice.phraseSendFamily', lang)}</span>
             </button>
 
             <button
+              type="button"
               onClick={() => handleProcessVoiceCommand('Take a photo of where I am standing')}
-              className="voice-btn"
+              className="voice-btn flex min-h-12 items-center gap-2.5"
             >
-              📷 {t('voice.phraseSurroundings', lang)}
+              <Camera aria-hidden="true" className="voice-accent h-5 w-5 shrink-0" />
+              <span>{t('voice.phraseSurroundings', lang)}</span>
             </button>
 
             <button
+              type="button"
               onClick={() => handleProcessVoiceCommand('I need urgent Singapore SCDF 995 ambulance')}
-              className="voice-btn-danger"
+              className="voice-btn-danger flex min-h-12 items-center gap-2.5"
             >
-              🚨 {t('voice.phrase995', lang)}
+              <Siren aria-hidden="true" className="h-5 w-5 shrink-0" />
+              <span>{t('voice.phrase995', lang)}</span>
             </button>
           </div>
         </div>

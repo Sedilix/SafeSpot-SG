@@ -16,6 +16,12 @@ import {
   Radio,
   Plus,
   Compass,
+  Home,
+  Briefcase,
+  Stethoscope,
+  MapPin,
+  Tag,
+  LucideIcon,
 } from 'lucide-react';
 import {
   GPSLocation,
@@ -28,7 +34,7 @@ import {
   SensorMetadata,
 } from '../types';
 import { subscribeToBLE, startBeaconScan, stopBeaconScan, getNearbyBeacons, pairSafetyTag, getBLECapability } from '../utils/ble';
-import { orderSavedPlaces, savedPlaceLabel, SAVED_PLACE_META } from '../utils/places';
+import { orderSavedPlaces, savedPlaceLabel } from '../utils/places';
 import { formatConciseAddress, formatDriverHint } from '../utils/address';
 import { t } from '../locales/translations';
 import {
@@ -42,6 +48,13 @@ import {
 
 /** Stop the camera after this long without the senior touching the screen. */
 const CAMERA_IDLE_TIMEOUT_MS = 60_000;
+
+/** Drawn icons for the saved-place shortcuts, in place of emoji. */
+const SAVED_PLACE_ICONS: Record<SavedPlace['kind'], LucideIcon> = {
+  home: Home,
+  work: Briefcase,
+  healthcare: Stethoscope,
+};
 
 interface HeroPickMeUpCameraProps {
   gps: GPSLocation | null;
@@ -124,11 +137,8 @@ export const HeroPickMeUpCamera: React.FC<HeroPickMeUpCameraProps> = ({
     } catch (err: any) {
       console.warn('Camera access not granted or unavailable:', err);
       setIsLiveCameraActive(false);
-      setCameraError(
-        err?.name === 'NotAllowedError'
-          ? 'Camera permission was declined. Tap below to try again, or pick a saved place.'
-          : 'No camera available on this device. You can still tap the big button — we will use your GPS.'
-      );
+      // Stored as a translation key so the message follows the language.
+      setCameraError(err?.name === 'NotAllowedError' ? 'hero.cameraDeclined' : 'hero.noCamera');
     }
   }, []);
 
@@ -256,23 +266,27 @@ export const HeroPickMeUpCamera: React.FC<HeroPickMeUpCameraProps> = ({
       {/* Status strip — sensor lock: compass heading, GPS accuracy, fix state */}
       <div className="border-line bg-well/70 flex items-center justify-between gap-2 border-b px-3 py-2 sm:px-4">
         <span className="section-kicker min-w-0 leading-snug">{t('hero.statusStrip', lang)}</span>
-        <span className="text-ink-soft flex shrink-0 items-center gap-2 text-xs font-bold">
-          <span className="flex items-center gap-1" title="Compass heading (sensor lock)">
-            <Compass className={`h-3.5 w-3.5 ${liveOrientation?.heading != null ? 'text-sky' : 'text-ink-faint'}`} />
+        <span className="text-ink-soft flex shrink-0 items-center gap-2 text-xs font-bold tabular-nums">
+          <span className="flex items-center gap-1">
+            <Compass
+              aria-hidden="true"
+              className={`h-3.5 w-3.5 ${liveOrientation?.heading != null ? 'text-sky' : 'text-ink-faint'}`}
+            />
+            <span className="sr-only">{t('hero.compassHeading', lang)} </span>
             {liveOrientation?.heading != null ? `${Math.round(liveOrientation.heading)}°` : '—'}
           </span>
           {gps && (
             <span
               className={gps.accuracy <= 15 ? 'text-pine-deep' : gps.accuracy <= 40 ? 'text-ochre-deep' : 'text-brick'}
-              title="GPS accuracy radius"
             >
-              ±{Math.round(gps.accuracy)}m
+              <span className="sr-only">{t('hero.gpsAccuracy', lang)} </span>±{Math.round(gps.accuracy)}m
             </span>
           )}
           <span
+            aria-hidden="true"
             className={`h-2 w-2 rounded-full ${gps ? 'bg-pine' : 'bg-ink-faint animate-pulse'}`}
           ></span>
-          {gps ? t('hero.gpsReady', lang) : t('hero.findingGps', lang)}
+          <span role="status">{gps ? t('hero.gpsReady', lang) : t('hero.findingGps', lang)}</span>
         </span>
       </div>
 
@@ -291,39 +305,45 @@ export const HeroPickMeUpCamera: React.FC<HeroPickMeUpCameraProps> = ({
           />
 
           {!isLiveCameraActive && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
+            // text-bg on bg-ink keeps this readable in every theme, including
+            // yellow-on-black where "ink" is the light colour.
+            <div className="text-bg absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center">
               {isCameraIdle ? (
                 <>
-                  <CameraOff className="h-8 w-8 text-white/50" />
-                  <p className="text-sm font-bold text-white">{t('hero.cameraPausedBattery', lang)}</p>
+                  <CameraOff aria-hidden="true" className="h-8 w-8 opacity-60" />
+                  <p className="text-sm font-bold">{t('hero.cameraPausedBattery', lang)}</p>
                   <button
                     type="button"
                     onClick={() => void startCamera()}
-                    className="btn btn-md bg-white/15 text-white backdrop-blur-sm hover:bg-white/25"
+                    className="btn btn-md border border-bg/40 bg-bg/15 text-bg hover:bg-bg/25"
                   >
-                    <Camera className="h-4 w-4" />
+                    <Camera aria-hidden="true" className="h-4 w-4" />
                     {t('hero.resumeCamera', lang)}
                   </button>
                 </>
               ) : cameraError ? (
                 <>
-                  <AlertCircle className="h-8 w-8 text-amber-400" />
-                  <p className="max-w-xs text-xs font-semibold text-white/90">{cameraError}</p>
+                  <AlertCircle aria-hidden="true" className="h-8 w-8" />
+                  <p role="alert" className="max-w-xs text-sm font-semibold">{t(cameraError, lang)}</p>
                   <button
                     type="button"
                     onClick={() => void startCamera()}
-                    className="btn btn-md bg-white/15 text-white backdrop-blur-sm hover:bg-white/25"
+                    className="btn btn-md border border-bg/40 bg-bg/15 text-bg hover:bg-bg/25"
                   >
-                    <Camera className="h-4 w-4" />
+                    <Camera aria-hidden="true" className="h-4 w-4" />
                     {t('hero.tryAgain', lang)}
                   </button>
                 </>
               ) : capturedPhoto ? (
-                <img src={capturedPhoto} alt="Your surroundings" className="absolute inset-0 h-full w-full object-cover" />
+                <img
+                  src={capturedPhoto}
+                  alt={t('hero.photoAlt', lang)}
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
               ) : (
                 <>
-                  <Camera className="h-8 w-8 animate-pulse text-white/50" />
-                  <p className="text-sm font-bold text-white">{t('hero.startingCamera', lang)}</p>
+                  <Camera aria-hidden="true" className="h-8 w-8 animate-pulse opacity-60" />
+                  <p role="status" className="text-sm font-bold">{t('hero.startingCamera', lang)}</p>
                 </>
               )}
             </div>
@@ -341,15 +361,18 @@ export const HeroPickMeUpCamera: React.FC<HeroPickMeUpCameraProps> = ({
 
           {/* Level hint — only when the frame would be visibly canted */}
           {isLiveCameraActive && liveOrientation && !isSteadyCapture(liveOrientation) && (
-            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full border border-amber-300/40 bg-black/70 px-3 py-1 text-xs font-bold text-amber-300 backdrop-blur-sm">
+            <div className="bg-ink/80 text-bg absolute bottom-2 left-1/2 max-w-[calc(100%-1rem)] -translate-x-1/2 rounded-full px-3 py-1 text-center text-xs font-bold backdrop-blur-sm">
               {t('hero.holdPhoneLevel', lang)}
             </div>
           )}
 
           {isAnalyzing && (
-            <div className="bg-ink/80 absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center backdrop-blur-xs">
-              <RefreshCw className="h-8 w-8 animate-spin text-white" />
-              <p className="text-sm font-bold text-white sm:text-base">{t('hero.checkingWhere', lang)}</p>
+            <div
+              role="status"
+              className="bg-ink/80 text-bg absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center backdrop-blur-xs"
+            >
+              <RefreshCw aria-hidden="true" className="h-8 w-8 animate-spin" />
+              <p className="text-sm font-bold sm:text-base">{t('hero.checkingWhere', lang)}</p>
             </div>
           )}
         </div>
@@ -359,10 +382,11 @@ export const HeroPickMeUpCamera: React.FC<HeroPickMeUpCameraProps> = ({
           id="btn-hero-pick-me-up"
           type="button"
           disabled={isAnalyzing || isLoadingGPS}
+          aria-busy={isAnalyzing || isLoadingGPS}
           onClick={handleSnapAndPickMeUp}
           className="giant-tap btn btn-danger w-full rounded-xl px-5 py-4 text-xl font-bold sm:py-5 sm:text-2xl"
         >
-          <Camera className="h-6 w-6 sm:h-7 sm:w-7" />
+          <Camera aria-hidden="true" className="h-6 w-6 shrink-0 sm:h-7 sm:w-7" />
           <span>{t('hero.pickMeUp', lang)}</span>
         </button>
 
@@ -370,26 +394,29 @@ export const HeroPickMeUpCamera: React.FC<HeroPickMeUpCameraProps> = ({
         {savedPlaces.length > 0 ? (
           <div className="flex flex-wrap items-center gap-2">
             <span className="section-kicker">{t('hero.orImAt', lang)}</span>
-            {savedPlaces.map((place) => (
-              <button
-                key={place.kind}
-                type="button"
-                disabled={isAnalyzing}
-                onClick={() => onPickMeUp(undefined, place)}
-                className="btn btn-md btn-secondary text-sm"
-              >
-                <span aria-hidden="true">{SAVED_PLACE_META[place.kind].emoji}</span>
-                <span>{savedPlaceLabel(place)}</span>
-              </button>
-            ))}
+            {savedPlaces.map((place) => {
+              const PlaceIcon = SAVED_PLACE_ICONS[place.kind] ?? MapPin;
+              return (
+                <button
+                  key={place.kind}
+                  type="button"
+                  disabled={isAnalyzing}
+                  onClick={() => onPickMeUp(undefined, place)}
+                  className="btn btn-md btn-secondary"
+                >
+                  <PlaceIcon aria-hidden="true" className="text-pine h-4 w-4 shrink-0" />
+                  <span>{savedPlaceLabel(place)}</span>
+                </button>
+              );
+            })}
           </div>
         ) : (
           <button
             type="button"
             onClick={onOpenProfile}
-            className="border-line text-ink-soft hover:border-pine hover:text-ink flex w-full items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-2.5 text-sm font-bold transition-colors"
+            className="border-line-strong text-ink-soft hover:border-pine hover:text-ink focus-visible:outline-pine flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-2.5 text-sm font-bold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2"
           >
-            <Plus className="h-4 w-4" />
+            <Plus aria-hidden="true" className="h-4 w-4 shrink-0" />
             {t('hero.savePlacesTip', lang)}
           </button>
         )}
@@ -416,9 +443,10 @@ export const HeroPickMeUpCamera: React.FC<HeroPickMeUpCameraProps> = ({
               <button
                 type="button"
                 onClick={onSpeakAddress}
-                className={`btn btn-md text-sm ${isSpeaking ? 'btn-danger' : 'btn-soft'}`}
+                aria-pressed={isSpeaking}
+                className={`btn btn-md ${isSpeaking ? 'btn-danger' : 'btn-soft'}`}
               >
-                <Volume2 className="h-4 w-4" />
+                <Volume2 aria-hidden="true" className="h-4 w-4" />
                 {isSpeaking ? t('hero.stop', lang) : t('hero.listen', lang)}
               </button>
             </div>
@@ -488,16 +516,20 @@ export const HeroPickMeUpCamera: React.FC<HeroPickMeUpCameraProps> = ({
         {/* Nearest beacons, only once something is actually detected */}
         {bleBeacons.length > 0 && bleState.status === 'scanning' && (
           <div className="text-ink-soft space-y-1 text-xs border-t border-line/60 pt-1.5">
-            {bleBeacons.slice(0, 2).map((b) => (
+            {bleBeacons.slice(0, 2).map((b) => {
+              const BeaconIcon = b.isPairedTag ? Tag : b.isKnownVenue ? MapPin : Radio;
+              return (
               <div key={b.id} className="flex items-center justify-between gap-2">
-                <span className="truncate font-semibold">
-                  {b.isPairedTag ? '🏷️' : b.isKnownVenue ? '📍' : '📶'} {b.locationName}
+                <span className="flex min-w-0 items-center gap-1.5 font-semibold">
+                  <BeaconIcon aria-hidden="true" className="text-ink-faint h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{b.locationName}</span>
                 </span>
-                <span className="shrink-0 font-mono font-bold text-pine">
+                <span className="text-pine-deep shrink-0 font-bold tabular-nums">
                   ≈{b.estimatedDistanceMeters}m{b.source === 'geofence' ? ' (GPS)' : ''}
                 </span>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

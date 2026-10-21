@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Watch, HeartPulse, BatteryMedium, MapPin, ShieldAlert, HelpCircle, CheckCircle2 } from 'lucide-react';
+import { Watch, HeartPulse, BatteryMedium, MapPin, ShieldAlert, HelpCircle, CheckCircle2, Loader2, ExternalLink } from 'lucide-react';
 import { Language } from '../types';
 import { t } from '../locales/translations';
 import type { WearableState } from '../utils/wearable';
@@ -22,10 +22,12 @@ const STALE_LOCATION_MIN = 3;
 export const WearableStatusCard: React.FC<{ lang: Language; deviceId?: string }> = ({ lang, deviceId }) => {
   const [device, setDevice] = useState<WearableDevice | null>(null);
   const [requestingCheckin, setRequestingCheckin] = useState(false);
+  const [checkinFailed, setCheckinFailed] = useState(false);
 
   const requestCheckin = async () => {
     if (!device || requestingCheckin) return;
     setRequestingCheckin(true);
+    setCheckinFailed(false);
     try {
       const res = await fetch('/api/wearable/checkin', {
         method: 'POST',
@@ -34,9 +36,11 @@ export const WearableStatusCard: React.FC<{ lang: Language; deviceId?: string }>
       });
       if (res.ok) {
         setDevice((prev) => (prev ? { ...prev, checkInRequested: true, checkInRequestedAt: Date.now() } : null));
+      } else {
+        setCheckinFailed(true);
       }
     } catch {
-      // network error
+      setCheckinFailed(true);
     } finally {
       setRequestingCheckin(false);
     }
@@ -66,7 +70,9 @@ export const WearableStatusCard: React.FC<{ lang: Language; deviceId?: string }>
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+    // deviceId usually arrives after the incident loads; re-poll for that watch
+    // instead of staying on whichever device the first unfiltered call returned.
+  }, [deviceId]);
 
   if (!device) return null;
 
@@ -88,7 +94,10 @@ export const WearableStatusCard: React.FC<{ lang: Language; deviceId?: string }>
   return (
     <section className={`card p-5 ${device.sosActive ? 'border-brick border-2' : ''}`}>
       {device.sosActive && (
-        <div className="bg-brick mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-3 text-lg font-bold text-white">
+        <div
+          role="alert"
+          className="bg-brick text-on-brick mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-3 text-lg font-bold"
+        >
           <div className="flex items-center gap-2">
             <ShieldAlert className="h-6 w-6 shrink-0" />
             <span>
@@ -105,7 +114,7 @@ export const WearableStatusCard: React.FC<{ lang: Language; deviceId?: string }>
           {device.activeIncidentId && (
             <a
               href={`/track/${device.activeIncidentId}`}
-              className="rounded bg-black/20 px-2.5 py-1 text-xs font-semibold tracking-wide text-white hover:bg-black/30"
+              className="border-on-brick/50 text-on-brick hover:bg-on-brick/15 inline-flex min-h-11 items-center rounded-xl border px-3 text-sm font-bold transition-colors"
             >
               Tracking #{device.activeIncidentId.slice(-6)}
             </a>
@@ -114,14 +123,20 @@ export const WearableStatusCard: React.FC<{ lang: Language; deviceId?: string }>
       )}
 
       {device.checkInRequested && (
-        <div className="bg-amber-500/15 border-amber-500/30 text-amber-800 dark:text-amber-200 mb-4 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold">
+        <div
+          role="status"
+          className="border-ochre/40 bg-ochre-soft text-ochre-deep mb-4 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold"
+        >
           <HelpCircle className="h-5 w-5 shrink-0" />
           <span>{t('wearable.checkinPending', lang)}</span>
         </div>
       )}
 
       {recentlyOk && (
-        <div className="bg-pine/10 border-pine/20 text-pine mb-4 flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold">
+        <div
+          role="status"
+          className="border-pine/40 bg-pine-soft text-pine-deep mb-4 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold"
+        >
           <CheckCircle2 className="h-5 w-5 shrink-0" />
           <span>{t('wearable.checkinOk', lang)}</span>
         </div>
@@ -129,11 +144,11 @@ export const WearableStatusCard: React.FC<{ lang: Language; deviceId?: string }>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <Watch className="text-pine h-5 w-5" />
-          <span className="section-kicker">{t('wearable.title', lang)}</span>
+          <Watch className="text-pine h-5 w-5 shrink-0" />
+          <h2 className="font-body text-ink-soft text-sm font-bold">{t('wearable.title', lang)}</h2>
         </div>
-        <span className={`flex items-center gap-1.5 text-sm font-bold ${device.online ? 'text-pine' : 'text-ink-soft'}`}>
-          <span className={`h-2.5 w-2.5 rounded-full ${device.online ? 'bg-pine' : 'bg-ink-soft'}`} />
+        <span className={`flex items-center gap-1.5 text-sm font-bold ${device.online ? 'text-pine-deep' : 'text-ink-soft'}`}>
+          <span aria-hidden="true" className={`h-2.5 w-2.5 rounded-full ${device.online ? 'bg-pine' : 'bg-ink-faint'}`} />
           {device.online ? t('wearable.online', lang) : t('wearable.offline', lang)}
           <span className="text-ink-soft font-semibold">
             • {minutesAgo === 0 ? t('wearable.justNow', lang) : `${minutesAgo} ${t('wearable.minAgo', lang)}`}
@@ -143,57 +158,64 @@ export const WearableStatusCard: React.FC<{ lang: Language; deviceId?: string }>
 
       <div className="mt-3 flex flex-wrap gap-x-8 gap-y-2">
         <div className="flex items-center gap-2">
-          <HeartPulse className="text-brick h-5 w-5" />
-          <span className="font-display text-3xl font-bold">{device.heartRate ?? '—'}</span>
+          <HeartPulse className="text-brick h-5 w-5" aria-hidden="true" />
+          <span className="font-display text-3xl font-bold tabular-nums">{device.heartRate ?? '—'}</span>
           <span className="text-ink-soft text-sm font-semibold">bpm</span>
         </div>
         <div className="flex items-center gap-2">
-          <BatteryMedium className="text-ink-soft h-5 w-5" />
-          <span className="font-display text-3xl font-bold">{device.battery === null ? '—' : `${device.battery}%`}</span>
+          <BatteryMedium className="text-ink-soft h-5 w-5" aria-hidden="true" />
+          <span className="font-display text-3xl font-bold tabular-nums">{device.battery === null ? '—' : `${device.battery}%`}</span>
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-ink/10 pt-3">
+      <div className="border-line mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-3">
         <div className="flex flex-wrap items-center gap-3 text-base font-semibold">
           {device.landmark && (
             <span className="flex items-center gap-1.5">
-              <MapPin className="text-pine h-4 w-4" />
+              <MapPin className="text-pine h-4 w-4 shrink-0" />
               {t('wearable.near', lang)} {device.landmark}
             </span>
           )}
           {typeof device.floorsAbove === 'number' && device.floorsAbove >= 1 && (
-            <span className="bg-sky-soft text-sky-deep rounded-md px-2 py-0.5 text-sm font-bold">
+            <span className="bg-sky-soft text-sky rounded-lg px-2 py-0.5 text-sm font-bold">
               ≈ {device.floorsAbove} {t('wearable.floorsAbove', lang)}
             </span>
           )}
           {locationStale && (
-            <span className="text-brick text-sm font-semibold">
+            <span className="text-brick-deep text-sm font-semibold">
               {t('wearable.locationAge', lang)} {locationAgeMin} {t('wearable.minAgo', lang)}
             </span>
           )}
           {device.isBackground && (
-            <span className="bg-ink-soft/10 text-ink-soft rounded-md px-2 py-0.5 text-xs font-semibold">
+            <span className="bg-well text-ink-soft rounded-lg px-2 py-0.5 text-sm font-semibold">
               {t('wearable.bgSync', lang)}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={requestCheckin}
             disabled={requestingCheckin || Boolean(device.checkInRequested) || !device.online}
-            className="btn btn-md btn-secondary flex items-center gap-1.5 disabled:opacity-50"
+            className="btn btn-md btn-secondary"
           >
-            <HelpCircle className="h-4 w-4" />
-            {t('wearable.requestCheckin', lang)}
+            {requestingCheckin ? <Loader2 className="h-5 w-5 animate-spin" /> : <HelpCircle className="h-5 w-5" />}
+            <span>{t('wearable.requestCheckin', lang)}</span>
           </button>
           {mapsUrl && (
             <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="btn btn-md btn-secondary">
-              {t('wearable.openMap', lang)}
+              <ExternalLink className="h-5 w-5" />
+              <span>{t('wearable.openMap', lang)}</span>
             </a>
           )}
         </div>
       </div>
+
+      {checkinFailed && (
+        <p role="alert" className="text-brick-deep mt-3 text-sm font-bold">
+          {t('wearable.checkinFailed', lang)}
+        </p>
+      )}
     </section>
   );
 };
