@@ -2122,6 +2122,9 @@ const wearableStates = new Map<string, WearableState>();
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
+/** How long a watch event waits for alert delivery before the server answers it. */
+const WATCH_ACK_DELIVERY_WAIT_MS = 8000;
+
 if (!process.env.WEARABLE_TOKEN) {
   console.warn(IS_PRODUCTION
     ? 'WEARABLE_TOKEN is not set — /api/wearable/event will reject all watch events until it is.'
@@ -2224,13 +2227,20 @@ app.post('/api/wearable/event', async (req, res) => {
   if (event.eventType === 'SOS_TRIGGER' || event.eventType === 'FALL_DETECTED' || event.eventType === 'HR_ALERT') {
     if (!prevState?.sosActive || !state.activeIncidentId) {
       try {
+        // Answer the watch within ~8 s even if an SMS is still waiting for the
+        // textbee phone to confirm (up to ~20 s): the watch gives up after 30 s
+        // and re-sends, which would duplicate alerts. Delivery carries on.
         const result = await handleWatchAlertTrigger({
           event,
           landmark: state.landmark,
           formattedAddress,
+          waitForDeliveryMs: WATCH_ACK_DELIVERY_WAIT_MS,
         });
         state.activeIncidentId = result.incidentId;
-        console.log(`[WEARABLE] Created incident ${result.incidentId} (SMS sent: ${result.smsDispatched})`);
+        console.log(
+          `[WEARABLE] Created incident ${result.incidentId} ` +
+            (result.deliveryPending ? '(alerts still sending)' : `(SMS sent: ${result.smsDispatched})`),
+        );
       } catch (err: any) {
         console.error('[WEARABLE] Failed to trigger watch incident alert:', err.message);
       }
@@ -2246,7 +2256,9 @@ app.post('/api/wearable/event', async (req, res) => {
     const previousIncidentId = prevState?.activeIncidentId || state.activeIncidentId;
     if (previousIncidentId) {
       try {
-        await handleWatchAlertCancel(previousIncidentId, event.deviceId);
+        await handleWatchAlertCancel(previousIncidentId, event.deviceId, undefined, {
+          waitForDeliveryMs: WATCH_ACK_DELIVERY_WAIT_MS,
+        });
         console.log(`[WEARABLE] Resolved watch incident ${previousIncidentId}`);
       } catch (err: any) {
         console.error('[WEARABLE] Failed to cancel watch incident:', err.message);
