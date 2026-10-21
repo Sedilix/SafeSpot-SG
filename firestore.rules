@@ -28,7 +28,7 @@ service cloud.firestore {
         && request.resource.data.incidentId == resource.data.incidentId;
     }
 
-    // WearableDevices, AlertChannels, TelegramLinkCodes, PushInvites, IncidentTelegram and
+    // WearableDevices, WatchHealth, AlertChannels, TelegramLinkCodes, PushInvites, IncidentTelegram and
     // anything else: server-only.
     match /{document=**} {
       allow read, write: if false;
