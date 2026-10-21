@@ -68,3 +68,17 @@ Already set up: `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` are GitHub secrets, w
 - Push invite lookups and joins are rate-limited per IP. Invite codes are random 8-character codes.
 - The Telegram webhook rejects any call without the `X-Telegram-Bot-Api-Secret-Token` header matching `TELEGRAM_WEBHOOK_SECRET`.
 - Linked chats, push subscriptions and invite codes live in the server-only Firestore collections `AlertChannels`, `TelegramLinkCodes`, `PushInvites` and `IncidentTelegram`, which `firestore.rules` denies to browsers.
+
+## 4. Watch health warnings (low battery, watch offline)
+
+When the watch battery is low, many Garmin watches enter power-saving mode and switch off Bluetooth and GPS. The SafeSpot watch app then **can't send SOS or fall alerts at all**, so the server warns the family instead:
+
+- **Low battery:** when the watch reports **15% or less**, one warning goes out (Telegram, phone notifications and SMS). It re-arms once the battery is back above 30%.
+- **Watch stopped reporting:** the watch checks in every 5 minutes. After **20 minutes** of silence, one warning goes out (Telegram, phone notifications and SMS). A "reporting again" notice (Telegram and phones only) follows when it comes back. Watches silent for more than 3 days are ignored.
+- **Quiet hours, 23:00–07:00 Singapore time:** these warnings wait until 07:00. SOS, fall and heart-rate alerts are **never** delayed.
+- Only paired watches (linked to an account) are checked. State is stored in the server-only Firestore collection `WatchHealth`.
+
+**Setup:**
+- The offline check is `POST /api/internal/watch-health-check`, called every 5 minutes by Cloud Scheduler with an `X-Cron-Secret` header.
+- The header value must match the `CRON_SECRET` GitHub secret, which the deploy workflow passes to Cloud Run.
+- Scheduler job: `watch-health-check` in project `cybrdeck`, region `asia-southeast1`.

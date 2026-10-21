@@ -69,6 +69,8 @@ import { bearerToken, canManagePairing, checkWearableEventAuth } from './src/uti
 import { classifyAddressQuery, mergeAddressSuggestions } from './src/utils/addressSearch';
 import { findPickupOptions } from './src/utils/pickupService';
 import { maybeInitDriveWorkerAtStartup } from './src/routing/driveWorkerClient';
+import { checkOfflineWatches, recordWatchSeen } from './src/utils/watchHealth';
+import { timingSafeEqual } from 'crypto';
 import type { AddressSuggestion } from './src/types';
 
 const app = express();
@@ -2194,6 +2196,12 @@ app.post('/api/wearable/event', async (req, res) => {
     return res.status(429).json({ error: 'Too many tracked devices.' });
   }
 
+  // Last-seen time and battery for the family's low-battery / offline
+  // warnings. Not awaited: a warning SMS must never delay the watch's answer.
+  void recordWatchSeen(event.deviceId, event.battery).catch((e: any) =>
+    console.warn('[WATCH_HEALTH] record failed:', e.message),
+  );
+
   const landmark = event.lat !== undefined && event.lng !== undefined
     ? nearestLandmark({ lat: event.lat, lng: event.lng }, SINGAPORE_PRESET_PLACES)
     : null;
@@ -2295,6 +2303,28 @@ app.post('/api/wearable/event', async (req, res) => {
     checkInRequested: isCheckInActive(state, Date.now()),
     incidentId: state.activeIncidentId || undefined,
   });
+});
+
+// Cloud Scheduler calls this every 5 minutes to warn families about watches
+// that stopped reporting. Protected by a shared secret header.
+function cronSecretOk(provided: string | undefined): boolean {
+  const expected = process.env.CRON_SECRET;
+  if (!expected || !provided) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+app.post('/api/internal/watch-health-check', async (req, res) => {
+  if (!cronSecretOk(req.get('X-Cron-Secret'))) return res.status(401).end();
+  try {
+    const result = await checkOfflineWatches();
+    if (result.checked) console.log(`[WATCH_HEALTH] offline check: ${result.checked} silent, ${result.notified} warned`);
+    return res.json(result);
+  } catch (e: any) {
+    console.error('[WATCH_HEALTH] offline check failed:', e.message);
+    return res.status(500).json({ error: 'check failed' });
+  }
 });
 
 // Device pairing endpoint (Step 2 & 3: maps watch deviceId to senior profile & caregiver contacts)
