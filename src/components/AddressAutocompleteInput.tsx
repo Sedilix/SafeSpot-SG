@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback, useId } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useId } from 'react';
+import { createPortal } from 'react-dom';
 import {
   MapPin,
   Building2,
@@ -64,6 +65,10 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  // Where the dropdown sits on screen. It's rendered into <body> so a
+  // scrolling dialog (ProfileModal, onboarding) can't clip it.
+  const [dropdownPos, setDropdownPos] = useState<React.CSSProperties | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Only the newest request may update the list; slower, older replies are dropped.
   const requestSeqRef = useRef(0);
@@ -185,7 +190,8 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
   // Close on click outside
   useEffect(() => {
     const handleClickOutside = (ev: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(ev.target as Node)) {
+      const target = ev.target as Node;
+      if (containerRef.current && !containerRef.current.contains(target) && !dropdownRef.current?.contains(target)) {
         setIsOpen(false);
       }
     };
@@ -249,6 +255,37 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
 
   const showList = isOpen && suggestions.length > 0;
   const activeOptionId = showList && selectedIndex >= 0 ? `${listboxId}-opt-${selectedIndex}` : undefined;
+
+  // Pin the dropdown to the input, opening upward when there isn't room
+  // below, and follow it while any ancestor scrolls or the window resizes.
+  useLayoutEffect(() => {
+    if (!showList) {
+      setDropdownPos(null);
+      return;
+    }
+    const place = () => {
+      const input = inputRef.current;
+      if (!input) return;
+      const r = input.getBoundingClientRect();
+      const gap = 6;
+      const spaceBelow = window.innerHeight - r.bottom - gap - 8;
+      const spaceAbove = r.top - gap - 8;
+      const above = spaceBelow < 240 && spaceAbove > spaceBelow;
+      setDropdownPos({
+        left: r.left,
+        width: r.width,
+        maxHeight: Math.min(360, above ? spaceAbove : spaceBelow),
+        ...(above ? { bottom: window.innerHeight - r.top + gap } : { top: r.bottom + gap }),
+      });
+    };
+    place();
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [showList]);
 
   return (
     <div ref={containerRef} className={`relative w-full ${className}`}>
@@ -317,14 +354,18 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
       )}
 
       {/* Autocomplete dropdown */}
-      {showList && (
-        <div className="border-line bg-surface animate-fade-in absolute top-full right-0 left-0 z-50 mt-1.5 overflow-hidden rounded-2xl border shadow-lg">
-          <div className="border-line text-ink-soft flex items-center justify-between gap-3 border-b px-3.5 py-2 text-xs font-bold">
+      {showList && dropdownPos && createPortal(
+        <div
+          ref={dropdownRef}
+          style={dropdownPos}
+          className="border-line bg-surface animate-fade-in fixed z-[60] flex flex-col overflow-hidden rounded-2xl border shadow-lg"
+        >
+          <div className="border-line text-ink-soft flex shrink-0 items-center justify-between gap-3 border-b px-3.5 py-2 text-xs font-bold">
             <span className="truncate">{listHeading}</span>
             <span className="text-pine-deep shrink-0">{t('address.tapToFill', lang)}</span>
           </div>
 
-          <div id={listboxId} role="listbox" aria-label={listHeading} className="max-h-72 space-y-0.5 overflow-y-auto overscroll-contain p-1.5">
+          <div id={listboxId} role="listbox" aria-label={listHeading} className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain p-1.5">
             {suggestions.map((s, idx) => {
               const isSelected = idx === selectedIndex;
               return (
@@ -358,7 +399,8 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
               );
             })}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
