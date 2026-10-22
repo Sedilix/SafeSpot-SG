@@ -2196,6 +2196,15 @@ app.post('/api/wearable/event', async (req, res) => {
     return res.status(429).json({ error: 'Too many tracked devices.' });
   }
 
+  // The watch reports sends it couldn't complete (e.g. "Phone slow"), so
+  // phone-link problems show up in the logs once it gets through again.
+  if (event.linkFailures) {
+    console.warn(
+      `[WEARABLE] ${event.deviceId}: ${event.linkFailures} send(s) failed before this one` +
+        (event.lastLinkError !== undefined ? ` (last error ${event.lastLinkError})` : ''),
+    );
+  }
+
   // Last-seen time and battery for the family's low-battery / offline
   // warnings. Not awaited: a warning SMS must never delay the watch's answer.
   void recordWatchSeen(event.deviceId, event.battery).catch((e: any) =>

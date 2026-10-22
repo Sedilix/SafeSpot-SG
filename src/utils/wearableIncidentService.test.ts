@@ -73,6 +73,23 @@ describe('wearableIncidentService', () => {
       expect(sms).toContain('75%');
     });
 
+    it('labels a last-known position with its age, and says so when there is none', () => {
+      const old = formatEmergencySms({
+        elderName: 'Uncle Tan',
+        eventType: 'SOS_TRIGGER',
+        incidentId: 'inc_x',
+        serverBaseUrl: 'https://safespot.sg',
+        formattedAddress: '90 Yishun Central',
+        lat: 1.42,
+        lng: 103.83,
+        positionAge: 25 * 60,
+      });
+      expect(old).toContain('90 Yishun Central (last known location, 25 min ago)');
+
+      const none = formatEmergencySms({ elderName: 'Uncle Tan', eventType: 'SOS_TRIGGER', incidentId: 'inc_y', serverBaseUrl: 'https://safespot.sg' });
+      expect(none).toContain('Location unknown (no GPS fix)');
+    });
+
     it('formats fall alert header specifically', () => {
       const sms = formatEmergencySms({
         elderName: 'Auntie Mei',

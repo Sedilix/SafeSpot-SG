@@ -59,11 +59,17 @@ class SafeSpotView extends WatchUi.View {
         Layout.fitText(dc, cx, Layout.y(dc, 34), [Graphics.FONT_MEDIUM, Graphics.FONT_SMALL, Graphics.FONT_TINY],
             _model.sosAcked ? "SOS SENT" : "SENDING", Graphics.TEXT_JUSTIFY_CENTER);
         Layout.fitText(dc, cx, Layout.y(dc, 72), Layout.SMALL_FONTS,
-            _model.sosAcked ? "Caregiver alerted" : _model.linkLabel(), Graphics.TEXT_JUSTIFY_CENTER);
+            _model.sosAcked ? "Caregiver alerted"
+                : (_model.phoneConnected() ? _model.linkLabel() : "NO PHONE - WAITING"),
+            Graphics.TEXT_JUSTIFY_CENTER);
 
         var where = _model.landmark;
         if (where == null) {
-            where = _model.lat != null ? "Location shared" : "Finding GPS...";
+            if (_model.lat != null) {
+                where = "Location shared";
+            } else {
+                where = _model.lastKnownPosition() != null ? "Last location sent" : "Finding GPS...";
+            }
         }
         Layout.fitText(dc, cx, h / 2 + Layout.y(dc, 4), [Graphics.FONT_TINY, Graphics.FONT_XTINY], where,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
@@ -82,6 +88,9 @@ class SafeSpotView extends WatchUi.View {
         if (_model.checkInPending) {
             dc.setColor(Graphics.COLOR_YELLOW, Graphics.COLOR_TRANSPARENT);
             Layout.fitText(dc, cx, Layout.y(dc, 26), Layout.SMALL_FONTS, "Caregiver asks: OK?", Graphics.TEXT_JUSTIFY_CENTER);
+        } else if (_model.lowBattery) {
+            dc.setColor(Graphics.COLOR_YELLOW, Graphics.COLOR_TRANSPARENT);
+            Layout.fitText(dc, cx, Layout.y(dc, 26), Layout.SMALL_FONTS, "CHARGE WATCH", Graphics.TEXT_JUSTIFY_CENTER);
         } else {
             dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_TRANSPARENT);
             Layout.fitText(dc, cx, Layout.y(dc, 26), Layout.SMALL_FONTS, "SafeSpot", Graphics.TEXT_JUSTIFY_CENTER);
@@ -102,6 +111,10 @@ class SafeSpotView extends WatchUi.View {
             // a vertical swipe sends the same "next/previous page" action.
             Layout.fitText(dc, cx, Layout.y(dc, 160), Layout.SMALL_FONTS,
                 Layout.isTouch() ? "SWIPE = I'M OK" : "UP/DOWN = I'M OK", Graphics.TEXT_JUSTIFY_CENTER);
+        } else if (!_model.phoneConnected()) {
+            // Without the phone link no alert can be sent: say so plainly.
+            dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_TRANSPARENT);
+            Layout.fitText(dc, cx, Layout.y(dc, 160), Layout.SMALL_FONTS, "NO PHONE: SOS CAN'T SEND", Graphics.TEXT_JUSTIFY_CENTER);
         } else {
             dc.setColor(linked ? Graphics.COLOR_GREEN : Graphics.COLOR_YELLOW, Graphics.COLOR_TRANSPARENT);
             Layout.fitText(dc, cx, Layout.y(dc, 160), Layout.SMALL_FONTS, _model.linkLabel(), Graphics.TEXT_JUSTIFY_CENTER);

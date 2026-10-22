@@ -8,7 +8,7 @@ import type { Incident, EmergencyContact } from '../types';
 import { sendSms, smsAlertRecipients } from './notifications';
 import { notifyPushDevices, notifyTelegramAlert, resolveTelegramIncident, updateTelegramIncidentLocation } from './alertChannels';
 import { formatTelegramAlert, formatTelegramResolved } from './telegram';
-import { WearableEvent } from './wearable';
+import { WearableEvent, describePositionAge } from './wearable';
 
 export interface PairedWearableDoc {
   deviceId: string;
@@ -243,6 +243,12 @@ export function mapEventToIncidentType(
 /**
  * Formats a high-urgency emergency SMS body for caregiver emergency contacts.
  */
+/** Appends "(last known location, N min ago)" when the position isn't current. */
+function withAge(text: string | null, positionAge?: number): string | null {
+  const age = describePositionAge(positionAge);
+  return text && age ? `${text} (${age})` : text;
+}
+
 export function formatEmergencySms(params: {
   elderName: string;
   eventType: WearableEvent['eventType'];
@@ -254,6 +260,7 @@ export function formatEmergencySms(params: {
   lng?: number;
   heartRate?: number;
   battery?: number;
+  positionAge?: number;
 }): string {
   const {
     elderName,
@@ -275,7 +282,9 @@ export function formatEmergencySms(params: {
     header = `🚨 SafeSpot.SG HEALTH ALERT: Abnormal heart rate detected (${heartRate ?? '—'} bpm) for Senior ${elderName} on Garmin watch!`;
   }
 
-  const locationText = formattedAddress || landmark || (lat && lng ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : 'Singapore');
+  const locationText =
+    withAge(formattedAddress || landmark || (lat && lng ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : null), params.positionAge) ||
+    'Location unknown (no GPS fix)';
   const mapsLink = lat && lng ? `\n🗺️ Google Maps: https://maps.google.com/?q=${lat},${lng}` : '';
   const trackingLink = `\n⚡ Live Tracking: ${serverBaseUrl}/track/${incidentId}`;
   const vitalsText = `\n❤️ HR: ${heartRate ? `${heartRate} bpm` : 'Active'} | 🔋 Battery: ${battery != null ? `${battery}%` : 'Normal'}`;
@@ -338,8 +347,9 @@ export async function handleWatchAlertTrigger(params: {
         ? {
             lat: event.lat,
             lng: event.lng,
-            accuracy: 10,
-            timestamp: event.timestamp ? event.timestamp * 1000 : now,
+            accuracy: event.accuracy ?? 10,
+            // When the fix was taken, not when the alert was sent.
+            timestamp: (event.timestamp ? event.timestamp * 1000 : now) - (event.positionAge ?? 0) * 1000,
           }
         : null,
     locationSource: event.lat !== undefined && event.lng !== undefined ? 'watch_gps' : undefined,
@@ -379,6 +389,7 @@ export async function handleWatchAlertTrigger(params: {
     lng: event.lng,
     heartRate: event.heartRate,
     battery: event.battery,
+    positionAge: event.positionAge,
   });
 
   const contactsToNotify = smsAlertRecipients(profile.emergencyContacts);
@@ -410,7 +421,7 @@ export async function handleWatchAlertTrigger(params: {
       eventType: event.eventType,
       incidentId,
       serverBaseUrl,
-      locationText: formattedAddress || (landmark ? `Near ${landmark}` : null),
+      locationText: withAge(formattedAddress || (landmark ? `Near ${landmark}` : null), event.positionAge),
       lat: event.lat,
       lng: event.lng,
       heartRate: event.heartRate,
@@ -430,7 +441,7 @@ export async function handleWatchAlertTrigger(params: {
     event.eventType === 'FALL_DETECTED' ? 'Fall detected' : event.eventType === 'HR_ALERT' ? 'Heart rate alert' : 'SOS';
   const pushTask = notifyPushDevices(profile.uid, {
     title: `🚨 ${what}: ${profile.elderName}`,
-    body: `${formattedAddress || (landmark ? `Near ${landmark}` : 'Location on the tracking page')}. Tap to see where they are.`,
+    body: `${withAge(formattedAddress || (landmark ? `Near ${landmark}` : null), event.positionAge) || 'Location on the tracking page'}. Tap to see where they are.`,
     url: `/track/${incidentId}`,
     tag: incidentId,
     urgent: true,
