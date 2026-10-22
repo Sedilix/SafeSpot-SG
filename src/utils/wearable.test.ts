@@ -17,6 +17,7 @@ import {
   WearableEvent,
   WearableState,
 } from './wearable';
+import { describePositionAge } from './wearable';
 
 const base = { deviceId: 'fenix-6s-solar', eventType: 'HEARTBEAT', timestamp: 1728135000 };
 
@@ -251,5 +252,23 @@ describe('positionAge', () => {
     );
     expect(cancelled.sosActive).toBe(false);
     expect(cancelled.activeIncidentId).toBeNull();
+  });
+});
+
+describe('0.6.1 watch fields', () => {
+  it('accepts link-failure counts and rejects bad ones', () => {
+    const ok = parseWearableEvent({ ...base, linkFailures: 4, lastLinkError: -2 });
+    expect(ok).toMatchObject({ linkFailures: 4, lastLinkError: -2 });
+    expect(typeof parseWearableEvent({ ...base, linkFailures: -1 })).toBe('string');
+    expect(typeof parseWearableEvent({ ...base, linkFailures: 1.5 })).toBe('string');
+    expect(typeof parseWearableEvent({ ...base, lastLinkError: 'x' })).toBe('string');
+  });
+
+  it('describes a last-known position by its age, and says nothing for fresh fixes', () => {
+    expect(describePositionAge(undefined)).toBeNull();
+    expect(describePositionAge(90)).toBeNull();
+    expect(describePositionAge(25 * 60)).toBe('last known location, 25 min ago');
+    expect(describePositionAge(5 * 3600)).toBe('last known location, 5 h ago');
+    expect(describePositionAge(3 * 86400)).toBe('last known location, 3 days ago');
   });
 });

@@ -38,6 +38,24 @@ export interface WearableEvent {
   floorRefAge?: number; // seconds since that street-level reference
   isBackground?: boolean; // true if dispatched by Connect IQ background temporal event
   sosActive?: boolean; // true if watch app is currently in active SOS countdown or confirmed state
+  /** Sends the watch couldn't complete since its last successful one (0.6.1+). */
+  linkFailures?: number;
+  /** Connect IQ error code of the most recent failed send, e.g. -2 = BLE host timeout. */
+  lastLinkError?: number;
+}
+
+/**
+ * How to describe the age of a watch position in an alert, or null when it's
+ * fresh (< 2 min). From 0.6.1 the watch sends its last known position when it
+ * has no current GPS fix (e.g. indoors), so the age matters to the family.
+ */
+export function describePositionAge(positionAge: number | undefined | null): string | null {
+  if (typeof positionAge !== 'number' || positionAge < 120) return null;
+  const min = Math.round(positionAge / 60);
+  if (min < 90) return `last known location, ${min} min ago`;
+  const h = Math.round(positionAge / 3600);
+  if (h < 48) return `last known location, ${h} h ago`;
+  return `last known location, ${Math.round(positionAge / 86400)} days ago`;
 }
 
 export interface WearableState {
@@ -118,6 +136,12 @@ export function parseWearableEvent(body: unknown): WearableEvent | string {
   if (b.sosActive != null && typeof b.sosActive !== 'boolean') {
     return 'sosActive must be a boolean.';
   }
+  if (b.linkFailures != null && (!Number.isInteger(b.linkFailures) || (b.linkFailures as number) < 0 || (b.linkFailures as number) > 100_000)) {
+    return 'linkFailures must be a non-negative integer.';
+  }
+  if (b.lastLinkError != null && !Number.isInteger(b.lastLinkError)) {
+    return 'lastLinkError must be an integer.';
+  }
 
   return {
     deviceId: b.deviceId.trim(),
@@ -133,6 +157,8 @@ export function parseWearableEvent(body: unknown): WearableEvent | string {
     floorRefAge: isFiniteNumber(b.floorRefAge) ? Math.round(b.floorRefAge) : undefined,
     isBackground: typeof b.isBackground === 'boolean' ? b.isBackground : undefined,
     sosActive: typeof b.sosActive === 'boolean' ? b.sosActive : undefined,
+    linkFailures: Number.isInteger(b.linkFailures) ? (b.linkFailures as number) : undefined,
+    lastLinkError: Number.isInteger(b.lastLinkError) ? (b.lastLinkError as number) : undefined,
   };
 }
 

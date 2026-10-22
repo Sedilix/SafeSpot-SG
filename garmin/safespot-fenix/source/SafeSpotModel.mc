@@ -37,6 +37,13 @@ class SafeSpotModel {
     var gpsAccuracy as Number = Position.QUALITY_NOT_AVAILABLE;
     var landmark as String? = null;
     var lastResponseCode as Number? = null;
+    // Low-battery warning on screen (see WatchStatus.lowBattery).
+    var lowBattery as Boolean = false;
+    // Sends that failed since the last successful one, and the latest error
+    // code; both go to the server with the next send so link problems show up
+    // in its logs once the watch gets through again.
+    private var _failedSends as Number = 0;
+    private var _lastErrorCode as Number? = null;
 
     private var _timer as Timer.Timer;
     private var _ticks as Number = 0;
@@ -185,7 +192,56 @@ class SafeSpotModel {
             checkHeartRate();
         }
         manageGps();
+        if (_ticks % 30 == 1) {
+            checkBattery();
+        }
         WatchUi.requestUpdate(); // keeps the heart rate live
+    }
+
+    // Warns once per discharge (buzz + screen) before the watch's own power
+    // saving can switch off Bluetooth and GPS.
+    private function checkBattery() as Void {
+        var stats = System.getSystemStats();
+        var charging = (stats has :charging) && stats.charging == true;
+        var warn = WatchStatus.lowBattery(stats.battery.toNumber(), charging, lowBattery);
+        if (warn && !lowBattery) {
+            wake();
+            buzz(600);
+        }
+        lowBattery = warn;
+    }
+
+    // Whether the watch has a Bluetooth link to the phone right now. Without
+    // it no SOS, fall or heart-rate alert can be sent.
+    function phoneConnected() as Boolean {
+        var settings = System.getDeviceSettings();
+        return !(settings has :phoneConnected) || settings.phoneConnected;
+    }
+
+    // The freshest last-known position, [lat, lng, ageSeconds, accuracyM or null],
+    // from this app's saved fix or the watch's own (e.g. from a recent activity).
+    // Used when there is no fix this session, e.g. indoors.
+    function lastKnownPosition() as Array? {
+        var now = Time.now().value();
+        var stored = null;
+        var sLat = Application.Storage.getValue("last_lat");
+        var sLng = Application.Storage.getValue("last_lng");
+        var sTime = Application.Storage.getValue("last_pos_time");
+        if (sLat != null && sLng != null && sTime instanceof Number) {
+            var sAcc = Application.Storage.getValue("last_acc");
+            stored = [sLat, sLng, now - (sTime as Number), sAcc instanceof Number ? sAcc : null];
+        }
+        var system = null;
+        var info = Position.getInfo();
+        if (info != null) {
+            var pos = info.position;
+            var when = info.when;
+            if (pos != null && when != null) {
+                var deg = pos.toDegrees();
+                system = [deg[0], deg[1], now - when.value(), null];
+            }
+        }
+        return WatchStatus.freshest(stored, system);
     }
 
     // Continuous GPS while anything time-critical is happening; otherwise a
@@ -313,6 +369,12 @@ class SafeSpotModel {
         var type = _inFlightType;
         _inFlightType = null;
         lastResponseCode = code;
+        if (code == 200) {
+            _failedSends = 0;
+        } else {
+            _failedSends++;
+            _lastErrorCode = code;
+        }
 
         if (code == 200 && data instanceof Dictionary) {
             var lm = data["landmark"];
@@ -372,6 +434,8 @@ class SafeSpotModel {
             }
             // No callback for too long: assume it's lost and stop showing the old status.
             lastResponseCode = Communications.NETWORK_REQUEST_TIMED_OUT;
+            _failedSends++;
+            _lastErrorCode = lastResponseCode;
         }
 
         var body = {
@@ -392,6 +456,26 @@ class SafeSpotModel {
             }
             if (_lastFixTime != null) {
                 body["positionAge"] = Time.now().value() - _lastFixTime;
+            }
+        } else {
+            // No fix this session (e.g. indoors): send the last known position
+            // with its age rather than nothing.
+            var last = lastKnownPosition();
+            if (last != null) {
+                var age = last[2] as Number;
+                body["lat"] = last[0] as Numeric;
+                body["lng"] = last[1] as Numeric;
+                body["positionAge"] = age < 0 ? 0 : age;
+                var acc = last[3];
+                if (acc instanceof Number) {
+                    body["accuracy"] = acc;
+                }
+            }
+        }
+        if (_failedSends > 0) {
+            body["linkFailures"] = _failedSends;
+            if (_lastErrorCode != null) {
+                body["lastLinkError"] = _lastErrorCode;
             }
         }
 
@@ -437,7 +521,9 @@ class SafeSpotModel {
     }
 
     function linkLabel() as String {
-        if (lastResponseCode == null) {
+        if (!phoneConnected()) {
+            return "No phone";
+        } else if (lastResponseCode == null) {
             return "Connecting...";
         } else if (lastResponseCode == 200) {
             return "Linked";
@@ -446,7 +532,8 @@ class SafeSpotModel {
         } else if (lastResponseCode == Communications.BLE_HOST_TIMEOUT
                 || lastResponseCode == Communications.BLE_SERVER_TIMEOUT
                 || lastResponseCode == Communications.NETWORK_REQUEST_TIMED_OUT) {
-            return "Phone slow";
+            // The code tells a phone-app problem (-2/-3) from our own timeout.
+            return "Phone slow (" + lastResponseCode + ")";
         } else if (lastResponseCode == 401) {
             return "Bad token";
         }
