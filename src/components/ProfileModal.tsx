@@ -76,7 +76,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   // Form State
   const [actualName, setActualName] = useState('');
   const [dob, setDob] = useState('');
-  const [bloodType, setBloodType] = useState<BloodType>('O+');
+  // 'Unknown' until the user picks one: a guessed blood type would reach paramedics as fact.
+  const [bloodType, setBloodType] = useState<BloodType>('Unknown');
   const [address, setAddress] = useState('');
   const [medicalNotes, setMedicalNotes] = useState('');
   const [selfiePhotoUrl, setSelfiePhotoUrl] = useState<string | undefined>(undefined);
@@ -106,7 +107,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     if (profile) {
       setActualName(profile.actualName || '');
       setDob(profile.dob || '');
-      setBloodType(profile.bloodType || 'O+');
+      setBloodType(profile.bloodType || 'Unknown');
       setAddress(profile.address || '');
       setMedicalNotes(profile.medicalNotes || '');
       setSelfiePhotoUrl(profile.selfiePhotoUrl);
