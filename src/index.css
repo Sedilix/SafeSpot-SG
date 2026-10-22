@@ -315,6 +315,12 @@ body.theme-warm-soft {
   .toggle-switch {
     @apply relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200;
   }
+  /* The track stays 32px tall; this invisible layer makes the tap area 44px. */
+  .toggle-switch::before {
+    content: '';
+    position: absolute;
+    inset: -8px -2px;
+  }
   .toggle-switch:focus-visible {
     box-shadow: 0 0 0 3px var(--ss-pine-soft), 0 0 0 5px var(--ss-pine);
   }

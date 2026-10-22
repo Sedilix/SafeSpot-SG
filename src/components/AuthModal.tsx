@@ -24,6 +24,7 @@ import {
 import { ConfirmationResult, User as FirebaseUser } from 'firebase/auth';
 import { AccessibilitySettings } from '../types';
 import { useEscapeToClose } from '../utils/useEscapeToClose';
+import { useFocusTrap } from '../utils/useFocusTrap';
 import { t } from '../locales/translations';
 
 interface AuthModalProps {
@@ -51,6 +52,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const recaptchaContainerRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // Before the focus effect below, so it records the opener, not the panel.
+  useFocusTrap(isOpen, panelRef);
 
   useEffect(() => {
     if (!isOpen) {

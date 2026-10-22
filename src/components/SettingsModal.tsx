@@ -449,7 +449,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </section>
 
-          {/* Section 6: Emergency Contacts & Diagnostics */}
+          {/* Section 6: Emergency Contacts */}
           <section id="section-family-diagnostics" className="border-line space-y-3 border-t pt-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -470,34 +470,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <ChevronRight className="h-4 w-4" />
                 </button>
               )}
-            </div>
-
-            {/* Diagnostic Badges */}
-            <div className="border-line bg-well/60 text-ink-soft space-y-2 rounded-xl border p-4 text-sm">
-              <div className="flex items-center justify-between">
-                <span>Speechmatics Realtime STT / TTS Engine:</span>
-                <span className="text-pine-deep flex items-center gap-1.5 font-bold">
-                  <span className="bg-pine h-2 w-2 rounded-full"></span> Connected
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>Gemini Multimodal Reasoning:</span>
-                <span className="text-pine-deep flex items-center gap-1.5 font-bold">
-                  <span className="bg-pine h-2 w-2 rounded-full"></span> Active (Flash 3.7 / 2.5)
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>Google Maps & Street View Grounding:</span>
-                <span className="text-pine-deep flex items-center gap-1.5 font-bold">
-                  <span className="bg-pine h-2 w-2 rounded-full"></span> Active
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>BLE Beacon Micro-Location Engine:</span>
-                <span className="text-pine-deep flex items-center gap-1.5 font-bold">
-                  <span className="bg-pine h-2 w-2 rounded-full"></span> Active (Sub-3m)
-                </span>
-              </div>
             </div>
           </section>
         </div>

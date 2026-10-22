@@ -560,7 +560,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 >
                   {['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'Unknown'].map((bt) => (
                     <option key={bt} value={bt}>
-                      {bt} {bt === 'O+' ? '(Universal / Common)' : ''}
+                      {bt} {bt === 'O+' ? '(most common)' : ''}
                     </option>
                   ))}
                 </select>
