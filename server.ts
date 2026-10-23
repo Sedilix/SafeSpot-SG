@@ -21,7 +21,8 @@ import {
   WearableState,
 } from './src/utils/wearable';
 import { sendSms, smsAlertRecipients, smsConfigured } from './src/utils/notifications';
-import { isValidSubscription, pushConfigured, sendWebPush, vapidPublicKey, type PushSubscriptionJSON } from './src/utils/webPush';
+import { isValidSubscription, pushConfigured, vapidPublicKey } from './src/utils/webPush';
+import { fcmAvailable, isValidFcmToken } from './src/utils/fcmPush';
 import {
   answerTelegramCallback,
   ensureTelegramWebhook,
@@ -51,6 +52,9 @@ import {
   notifyPushDevices,
   removePushDevice,
   removePushEndpointEverywhere,
+  pushDeviceKey,
+  sendToPushTarget,
+  type PushTarget,
 } from './src/utils/alertChannels';
 import {
   handleWatchAlertTrigger,
@@ -1783,7 +1787,10 @@ app.get('/api/alerts/channels', async (_req, res) => {
     sms: smsConfigured(),
     telegram: telegramConfigured(),
     telegramBot: telegramConfigured() ? await getBotUsername().catch(() => null) : null,
-    push: pushConfigured(),
+    // Any phone notifications at all; webPush is browsers (VAPID), fcm the Android app.
+    push: pushConfigured() || fcmAvailable(),
+    webPush: pushConfigured(),
+    fcm: fcmAvailable(),
     vapidPublicKey: vapidPublicKey(),
   });
 });
@@ -1917,15 +1924,30 @@ function allowPushJoin(ip: string, now = Date.now()): boolean {
 }
 const clientIp = (req: express.Request) => String(req.get('x-forwarded-for') || req.ip || '').split(',')[0].trim();
 const isInviteCode = (c: unknown): c is string => typeof c === 'string' && /^[0-9A-Z]{8}$/.test(c);
+const PUSH_OFF = 'Phone notifications are not set up yet.';
+
+/**
+ * A browser sends { subscription }, the Android app { fcmToken }. Each kind
+ * only needs its own sender: FCM works without VAPID keys and vice versa.
+ */
+function pushTargetFrom(body: any): { target: PushTarget } | { status: number; error: string } {
+  if (body?.fcmToken !== undefined) {
+    if (!isValidFcmToken(body.fcmToken)) return { status: 400, error: 'Invalid request.' };
+    if (!fcmAvailable()) return { status: 503, error: PUSH_OFF };
+    return { target: { fcmToken: body.fcmToken } };
+  }
+  if (!isValidSubscription(body?.subscription)) return { status: 400, error: 'Invalid request.' };
+  if (!pushConfigured()) return { status: 503, error: PUSH_OFF };
+  return { target: body.subscription };
+}
 
 // This device, signed in to the account, turns on notifications for itself.
 app.post('/api/alerts/push/subscribe', async (req, res) => {
   const uid = await requireFirebaseUid(req, res);
   if (!uid) return;
-  if (!pushConfigured()) return res.status(503).json({ error: 'Phone notifications are not set up yet.' });
-  const { subscription, label } = req.body || {};
-  if (!isValidSubscription(subscription)) return res.status(400).json({ error: 'Invalid subscription.' });
-  const ok = await addPushDevice(uid, subscription, clipText(label, 60) || 'This phone').catch(() => false);
+  const parsed = pushTargetFrom(req.body);
+  if ('error' in parsed) return res.status(parsed.status).json({ error: parsed.error });
+  const ok = await addPushDevice(uid, parsed.target, clipText(req.body?.label, 60) || 'This phone').catch(() => false);
   return ok ? res.json({ status: 'ok' }) : res.status(409).json({ error: 'Too many phones on this account. Remove one first.' });
 });
 
@@ -1933,7 +1955,7 @@ app.post('/api/alerts/push/subscribe', async (req, res) => {
 app.post('/api/alerts/push/invite', async (req, res) => {
   const uid = await requireFirebaseUid(req, res);
   if (!uid) return;
-  if (!pushConfigured()) return res.status(503).json({ error: 'Phone notifications are not set up yet.' });
+  if (!pushConfigured() && !fcmAvailable()) return res.status(503).json({ error: PUSH_OFF });
   try {
     const { code, expiresAt } = await createPushInvite(uid);
     const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
@@ -1956,26 +1978,32 @@ app.get('/api/alerts/push/invite/:code', async (req, res) => {
     const data = (await db.collection('Users').doc(uid).get().catch(() => null))?.data() as Record<string, any> | undefined;
     if (typeof data?.actualName === 'string' && data.actualName.trim()) name = data.actualName.trim().split(/\s+/)[0].slice(0, 30);
   }
-  return res.json({ name, vapidPublicKey: vapidPublicKey() });
+  return res.json({ name, vapidPublicKey: vapidPublicKey(), fcm: fcmAvailable() });
 });
 
 app.post('/api/alerts/push/join', async (req, res) => {
-  if (!pushConfigured()) return res.status(503).json({ error: 'Phone notifications are not set up yet.' });
+  if (!pushConfigured() && !fcmAvailable()) return res.status(503).json({ error: PUSH_OFF });
   if (!allowPushJoin(clientIp(req))) return res.status(429).json({ error: 'Too many attempts. Please wait a while.' });
-  const { code, subscription, label } = req.body || {};
+  const { code, label } = req.body || {};
   const c = String(code || '').toUpperCase();
-  if (!isInviteCode(c) || !isValidSubscription(subscription)) return res.status(400).json({ error: 'Invalid request.' });
-  const uid = await joinPushInvite(c, subscription, clipText(label, 60) || 'Family phone').catch(() => null);
+  if (!isInviteCode(c)) return res.status(400).json({ error: 'Invalid request.' });
+  const parsed = pushTargetFrom(req.body);
+  if ('error' in parsed) return res.status(parsed.status).json({ error: parsed.error });
+  const uid = await joinPushInvite(c, parsed.target, clipText(label, 60) || 'Family phone').catch(() => null);
   if (!uid) return res.status(404).json({ error: 'This invite has expired or was used too many times. Ask for a new link.' });
-  await notifyPushDevicesOne(subscription);
+  await notifyPushDevicesOne(parsed.target);
   return res.json({ status: 'ok' });
 });
 
-// A device turning its own notifications off (knowing the endpoint proves it's that device).
+// A device turning its own notifications off (knowing the endpoint, or the
+// app's FCM token, proves it's that device).
 app.post('/api/alerts/push/unsubscribe', async (req, res) => {
-  const endpoint = req.body?.endpoint;
-  if (typeof endpoint !== 'string' || !/^https:\/\//.test(endpoint)) return res.status(400).json({ error: 'endpoint is required.' });
-  await removePushEndpointEverywhere(endpoint).catch(() => {});
+  const { endpoint, fcmToken } = req.body || {};
+  let key: string;
+  if (isValidFcmToken(fcmToken)) key = pushDeviceKey({ fcmToken });
+  else if (typeof endpoint === 'string' && /^https:\/\//.test(endpoint)) key = endpoint;
+  else return res.status(400).json({ error: 'endpoint is required.' });
+  await removePushEndpointEverywhere(key).catch(() => {});
   return res.json({ status: 'ok' });
 });
 
@@ -1985,7 +2013,14 @@ app.get('/api/alerts/push/devices', async (req, res) => {
   try {
     const devices = await getPushDevices(uid);
     return res.json({
-      devices: devices.map((d) => ({ id: d.id, label: d.label, createdAt: d.createdAt, endpoint: d.subscription.endpoint })),
+      // endpoint is the device key ("fcm:<token>" for the app), so a device can spot itself.
+      devices: devices.map((d) => ({
+        id: d.id,
+        label: d.label,
+        createdAt: d.createdAt,
+        kind: d.fcmToken ? 'app' : 'web',
+        endpoint: pushDeviceKey(d),
+      })),
     });
   } catch {
     return res.status(503).json({ error: 'Could not load phones.' });
@@ -2002,8 +2037,8 @@ app.post('/api/alerts/push/remove', async (req, res) => {
 });
 
 /** Confirms to a newly joined phone that notifications work. */
-async function notifyPushDevicesOne(subscription: PushSubscriptionJSON): Promise<void> {
-  await sendWebPush(subscription, {
+async function notifyPushDevicesOne(target: PushTarget): Promise<void> {
+  await sendToPushTarget(target, {
     title: '✅ SafeSpot alerts are on',
     body: "You'll get a notification here if there's an emergency.",
     url: '/',
@@ -2537,7 +2572,8 @@ async function startServer() {
       ? 'No SMS provider (TEXTBEE_API_KEY or TWILIO_*) is set: SMS alerts will NOT be sent.'
       : 'No SMS provider is set: SMS alerts are simulated (development only).');
   }
-  if (!pushConfigured()) console.warn('VAPID_* is not set: phone (web push) notifications are off.');
+  if (!pushConfigured()) console.warn('VAPID_* is not set: browser (web push) notifications are off.');
+  if (!fcmAvailable()) console.warn('Firebase Admin is unavailable: Android app (FCM) notifications are off.');
   if (telegramConfigured() && process.env.APP_BASE_URL) {
     ensureTelegramWebhook(process.env.APP_BASE_URL).catch(() => {});
   }

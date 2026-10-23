@@ -22,10 +22,21 @@ import {
   sendPhoneOtp
 } from '../lib/firebase';
 import { ConfirmationResult, User as FirebaseUser } from 'firebase/auth';
-import { AccessibilitySettings } from '../types';
+import { AccessibilitySettings, Language } from '../types';
 import { useEscapeToClose } from '../utils/useEscapeToClose';
 import { useFocusTrap } from '../utils/useFocusTrap';
 import { t } from '../locales/translations';
+import { isNativeApp } from '../lib/native';
+
+// Phone sign-in relies on an invisible reCAPTCHA, which isn't reliable inside
+// the Android WebView (https://localhost), so the app offers Google and guest
+// only. Kept here rather than in translations.ts until it's needed elsewhere.
+const PHONE_APP_NOTE: Record<Language, string> = {
+  en: 'Phone (SMS) sign-in is available on the SafeSpot website. In the app, use Google or continue as guest.',
+  zh: '手机（短信）登录请在 SafeSpot 网站使用。在应用中，请使用 Google 或以访客身份继续。',
+  ms: 'Log masuk telefon (SMS) tersedia di laman web SafeSpot. Dalam aplikasi, gunakan Google atau teruskan sebagai tetamu.',
+  ta: 'தொலைபேசி (SMS) உள்நுழைவு SafeSpot இணையதளத்தில் கிடைக்கும். செயலியில் Google அல்லது விருந்தினராகத் தொடரவும்.',
+};
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -254,16 +265,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <span>{t('auth.google', lang)}</span>
               </button>
 
-              <button
-                id="btn-auth-phone-start"
-                type="button"
-                disabled={isLoading}
-                onClick={() => switchMode('phone_input')}
-                className="btn btn-lg btn-primary w-full"
-              >
-                <Phone className="h-6 w-6" aria-hidden="true" />
-                <span>{t('auth.phoneStart', lang)}</span>
-              </button>
+              {isNativeApp() ? (
+                <p className="text-ink-soft text-sm">{PHONE_APP_NOTE[lang] || PHONE_APP_NOTE.en}</p>
+              ) : (
+                <button
+                  id="btn-auth-phone-start"
+                  type="button"
+                  disabled={isLoading}
+                  onClick={() => switchMode('phone_input')}
+                  className="btn btn-lg btn-primary w-full"
+                >
+                  <Phone className="h-6 w-6" aria-hidden="true" />
+                  <span>{t('auth.phoneStart', lang)}</span>
+                </button>
+              )}
 
               <button
                 type="button"

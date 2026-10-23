@@ -15,6 +15,7 @@ import {
   escapeHtml,
 } from './telegram';
 import { pushConfigured, sendWebPush, type PushPayload, type PushSubscriptionJSON } from './webPush';
+import { fcmAvailable, sendFcm } from './fcmPush';
 
 // Where a SafeSpot account's alerts go besides SMS. Telegram chats are linked
 // to the account (uid), so both watch alerts and alerts sent from the phone
@@ -293,15 +294,46 @@ export async function sendTelegramPin(uid: string, params: { text: string; lat?:
 }
 
 // ── Web push devices ─────────────────────────────────────────────────────────
-//   AlertChannels/{uid}.pushSubs      PushDevice[] (server-only: endpoints are capability URLs)
-//   AlertChannels/{uid}.pushEndpoints string[] (for lookup when a browser unsubscribes)
+//   AlertChannels/{uid}.pushSubs      PushDevice[] (server-only: endpoints and tokens are capabilities)
+//   AlertChannels/{uid}.pushEndpoints string[] (device keys, for lookup when a device unsubscribes)
 //   PushInvites/{code}                { uid, expiresAt, uses }
+//
+// A device is either a browser (web push subscription) or the Android app
+// (FCM token). Both share the list, the limit, invites and removal.
+
+/** The Android app's registration. */
+export interface FcmTarget {
+  fcmToken: string;
+}
+export type PushTarget = PushSubscriptionJSON | FcmTarget;
 
 export interface PushDevice {
   id: string;
   label: string;
   createdAt: number;
-  subscription: PushSubscriptionJSON;
+  /** Set for browsers. */
+  subscription?: PushSubscriptionJSON;
+  /** Set for the Android app. */
+  fcmToken?: string;
+}
+
+const isFcm = (t: PushTarget): t is FcmTarget => typeof (t as FcmTarget).fcmToken === 'string';
+
+/** One string per device: the web push endpoint, or "fcm:<token>" for the app. */
+export function pushDeviceKey(d: { subscription?: PushSubscriptionJSON; fcmToken?: string }): string {
+  return d.fcmToken ? `fcm:${d.fcmToken}` : d.subscription?.endpoint || '';
+}
+
+const targetKey = (t: PushTarget) => (isFcm(t) ? `fcm:${t.fcmToken}` : t.endpoint);
+
+/** Sends to one device, by web push or FCM. */
+export function sendToPushTarget(t: PushTarget, payload: PushPayload): Promise<{ ok: boolean; gone?: boolean }> {
+  return isFcm(t) ? sendFcm(t.fcmToken, payload) : sendWebPush(t, payload);
+}
+
+function deviceTarget(d: PushDevice): PushTarget | null {
+  if (d.fcmToken) return { fcmToken: d.fcmToken };
+  return d.subscription || null;
 }
 
 /** Family invite links last a week and can be opened by a few people (shared in a group chat). */
@@ -332,21 +364,23 @@ async function savePushDevices(uid: string, devices: PushDevice[]): Promise<void
     return;
   }
   await db.collection('AlertChannels').doc(uid).set(
-    { pushSubs: devices, pushEndpoints: devices.map((d) => d.subscription.endpoint), updatedAt: Date.now() },
+    { pushSubs: devices, pushEndpoints: devices.map(pushDeviceKey), updatedAt: Date.now() },
     { merge: true },
   );
 }
 
 /** Adds (or refreshes) a device. Returns false when the account already has too many. */
-export async function addPushDevice(uid: string, subscription: PushSubscriptionJSON, label: string, now = Date.now()): Promise<boolean> {
+export async function addPushDevice(uid: string, target: PushTarget, label: string, now = Date.now()): Promise<boolean> {
   const devices = await getPushDevices(uid);
-  const existing = devices.find((d) => d.subscription.endpoint === subscription.endpoint);
+  const key = targetKey(target);
+  const existing = devices.find((d) => pushDeviceKey(d) === key);
+  const fields = isFcm(target) ? { fcmToken: target.fcmToken } : { subscription: target };
   if (existing) {
-    existing.subscription = subscription;
+    Object.assign(existing, fields);
     existing.label = label.slice(0, 60) || existing.label;
   } else {
     if (devices.length >= MAX_PUSH_DEVICES) return false;
-    devices.push({ id: generateLinkCode().toLowerCase(), label: label.slice(0, 60) || 'Phone', createdAt: now, subscription });
+    devices.push({ id: generateLinkCode().toLowerCase(), label: label.slice(0, 60) || 'Phone', createdAt: now, ...fields });
   }
   await savePushDevices(uid, devices);
   return true;
@@ -360,19 +394,22 @@ export async function removePushDevice(uid: string, id: string): Promise<boolean
   return true;
 }
 
-/** A browser turning alerts off for itself: knowing the endpoint proves it's that device. */
+/**
+ * A device turning alerts off for itself: knowing the endpoint (or, for the
+ * app, "fcm:<token>") proves it's that device.
+ */
 export async function removePushEndpointEverywhere(endpoint: string): Promise<void> {
   const db = getFirebaseAdminDb();
   const owners: string[] = [];
   if (!db) {
-    for (const [uid, list] of memPush) if (list.some((d) => d.subscription.endpoint === endpoint)) owners.push(uid);
+    for (const [uid, list] of memPush) if (list.some((d) => pushDeviceKey(d) === endpoint)) owners.push(uid);
   } else {
     const snap = await db.collection('AlertChannels').where('pushEndpoints', 'array-contains', endpoint).get();
     owners.push(...snap.docs.map((d) => d.id));
   }
   for (const uid of owners) {
     const devices = await getPushDevices(uid);
-    await savePushDevices(uid, devices.filter((d) => d.subscription.endpoint !== endpoint));
+    await savePushDevices(uid, devices.filter((d) => pushDeviceKey(d) !== endpoint));
   }
 }
 
@@ -398,7 +435,7 @@ export async function getPushInviteOwner(code: string, now = Date.now()): Promis
 /** Uses an invite to subscribe a family member's device. Returns the account uid, or null. */
 export async function joinPushInvite(
   code: string,
-  subscription: PushSubscriptionJSON,
+  target: PushTarget,
   label: string,
   now = Date.now(),
 ): Promise<string | null> {
@@ -421,15 +458,20 @@ export async function joinPushInvite(
     }
   }
   if (!uid) return null;
-  return (await addPushDevice(uid, subscription, label, now)) ? uid : null;
+  return (await addPushDevice(uid, target, label, now)) ? uid : null;
 }
 
 /** Sends a notification to every device on the account; drops unsubscribed ones. Returns how many got it. */
 export async function notifyPushDevices(uid: string | null, payload: PushPayload): Promise<number> {
-  if (!uid || !pushConfigured()) return 0;
+  if (!uid || (!pushConfigured() && !fcmAvailable())) return 0;
   const devices = await getPushDevices(uid).catch(() => [] as PushDevice[]);
   if (devices.length === 0) return 0;
-  const results = await Promise.all(devices.map((d) => sendWebPush(d.subscription, payload)));
+  const results = await Promise.all(
+    devices.map((d) => {
+      const t = deviceTarget(d);
+      return t ? sendToPushTarget(t, payload) : Promise.resolve({ ok: false, gone: true });
+    }),
+  );
   const gone = devices.filter((_, i) => results[i].gone);
   if (gone.length) {
     await savePushDevices(uid, devices.filter((d) => !gone.includes(d))).catch(() => {});

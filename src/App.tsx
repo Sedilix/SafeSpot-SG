@@ -76,6 +76,7 @@ import { resolveSavedPlace } from './utils/places';
 import { auth, subscribeToUserProfile, saveUserProfile, createIncident, updateIncident } from './lib/firebase';
 import { authFetch } from './lib/authFetch';
 import { publicBaseUrl } from './lib/native';
+import { appPermissionKey, getCurrentPosition, permissionText, watchPosition } from './lib/geolocation';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { AlertCircle, ShieldAlert, RefreshCw, Hand } from 'lucide-react';
 import { t } from './locales/translations';
@@ -382,7 +383,7 @@ function SeniorSafeSpotHome() {
     setIsLoadingGPS(true);
 
     if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
+      getCurrentPosition(
         (pos) => {
           updateMotionGpsSpeed(pos.coords.speed);
           const loc: GPSLocation = {
@@ -407,7 +408,8 @@ function SeniorSafeSpotHome() {
           console.warn('Geolocation failed or permission denied:', err);
           setIsLoadingGPS(false);
           // Stored as a translation key so the banner follows the language.
-          setGpsError('gps.notFound');
+          // In the app, a refusal points to Android Settings instead.
+          setGpsError(appPermissionKey(err, 'location') ?? 'gps.notFound');
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
       );
@@ -483,7 +485,7 @@ function SeniorSafeSpotHome() {
       }
 
       if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
-        navigator.geolocation.getCurrentPosition(
+        getCurrentPosition(
           (pos) => {
             updateMotionGpsSpeed(pos.coords.speed);
             const freshLoc: GPSLocation = {
@@ -671,9 +673,9 @@ function SeniorSafeSpotHome() {
   useEffect(() => {
     if (!activeIncidentId) return;
 
-    let watchId: number | null = null;
+    let stopWatch: (() => void) | null = null;
     if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
-      watchId = navigator.geolocation.watchPosition(
+      stopWatch = watchPosition(
         (pos) => {
           const now = Date.now();
           if (now - lastIncidentGpsPushRef.current < 5000) return;
@@ -722,7 +724,7 @@ function SeniorSafeSpotHome() {
     });
 
     return () => {
-      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      stopWatch?.();
       unwatchBattery();
     };
   }, [activeIncidentId]);
@@ -1019,7 +1021,7 @@ function SeniorSafeSpotHome() {
           <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brick/30 bg-brick-soft px-4 py-3">
             <p className="flex min-w-0 flex-1 items-start gap-2 text-sm font-bold text-brick-deep sm:text-base">
               <AlertCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" />
-              <span>{t(gpsError, lang)}</span>
+              <span>{permissionText(gpsError, lang)}</span>
             </p>
             {/* Retrying cannot help on a device with no location service. */}
             {gpsError !== 'gps.unsupported' && (

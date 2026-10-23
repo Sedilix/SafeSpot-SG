@@ -28,6 +28,7 @@ import { AddressAutocompleteInput } from './AddressAutocompleteInput';
 import { saveUserProfile, signOutUser, clearWearableDeviceId } from '../lib/firebase';
 import { User as FirebaseUser } from 'firebase/auth';
 import { t } from '../locales/translations';
+import { appPermissionKey, permissionText } from '../lib/geolocation';
 import { AlertChannelsPanel } from './AlertChannelsPanel';
 import { normalizeWatchDeviceId, isValidWatchDeviceId } from '../utils/watchDeviceId';
 import { useEscapeToClose } from '../utils/useEscapeToClose';
@@ -182,7 +183,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     } catch (err) {
       console.warn('Cannot open user selfie camera:', err);
       setIsCameraActive(false);
-      setErrorMessage(t('profile.cameraUnavailable', settings.language));
+      // In the app, a refusal points to Android Settings instead.
+      setErrorMessage(permissionText(appPermissionKey(err, 'camera') ?? 'profile.cameraUnavailable', settings.language));
     }
   };
 

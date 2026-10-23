@@ -8,6 +8,7 @@ import { Bell, CheckCircle2, Loader2, Share, ShieldAlert, SquarePlus } from 'luc
 import type { Language } from '../types';
 import { t } from '../locales/translations';
 import { deviceLabel, pushSupport, subscribeThisDevice } from '../lib/push';
+import { isNativeApp } from '../lib/native';
 
 /** Family members open this from an invite link; no account needed. */
 function browserLanguage(): Language {
@@ -20,7 +21,7 @@ function browserLanguage(): Language {
 
 export const AlertJoinPage: React.FC<{ code: string }> = ({ code }) => {
   const lang = browserLanguage();
-  const [invite, setInvite] = useState<{ name: string; vapidPublicKey: string | null } | null>(null);
+  const [invite, setInvite] = useState<{ name: string; vapidPublicKey: string | null; fcm?: boolean } | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'invalid' | 'busy' | 'done'>('loading');
   const [error, setError] = useState<string | null>(null);
   const support = pushSupport();
@@ -42,16 +43,20 @@ export const AlertJoinPage: React.FC<{ code: string }> = ({ code }) => {
     if (link) link.href = `/manifest-join/${encodeURIComponent(code)}.webmanifest`;
   }, [code, support]);
 
+  // Without the server's push key (or FCM, in the app) the button could never
+  // work, so say so instead of showing a button that silently does nothing.
+  const pushConfigured = isNativeApp() ? Boolean(invite?.fcm) : Boolean(invite?.vapidPublicKey);
+
   const join = async () => {
-    if (!invite?.vapidPublicKey) return;
+    if (!invite || !pushConfigured) return;
     setState('busy');
     setError(null);
     try {
-      const subscription = await subscribeThisDevice(invite.vapidPublicKey);
+      const registration = await subscribeThisDevice(invite.vapidPublicKey);
       const res = await fetch('/api/alerts/push/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, subscription, label: deviceLabel() }),
+        body: JSON.stringify({ code, ...registration, label: deviceLabel() }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -65,9 +70,6 @@ export const AlertJoinPage: React.FC<{ code: string }> = ({ code }) => {
   };
 
   const name = invite?.name || '';
-  // Without the server's push key the button could never work, so say so
-  // instead of showing a button that silently does nothing.
-  const pushConfigured = Boolean(invite?.vapidPublicKey);
 
   return (
     <main className="bg-bg text-ink flex min-h-dvh items-center justify-center px-4 py-10">

@@ -25,6 +25,7 @@ import {
 } from '../utils/speech';
 import { t } from '../locales/translations';
 import { useEscapeToClose } from '../utils/useEscapeToClose';
+import { appPermissionKey, permissionText } from '../lib/geolocation';
 
 interface VoiceCommandOverlayProps {
   isOpen: boolean;
@@ -244,6 +245,16 @@ export const VoiceCommandOverlay: React.FC<VoiceCommandOverlayProps> = ({
       setEngineStatus('voice.engineMicOn');
     } catch (err) {
       console.error('Error starting Speechmatics session:', err);
+      // In the app the browser fallback needs the same microphone, so a
+      // refusal points to Android Settings instead of falling back.
+      const appKey = appPermissionKey(err, 'microphone');
+      if (appKey) {
+        cleanupAudioSession();
+        setIsSpeechmaticsActive(false);
+        setEngineStatus('voice.engineUnavailable');
+        setAssistantResponse(permissionText(appKey, lang));
+        return;
+      }
       startWebSpeechFallback();
     }
   };

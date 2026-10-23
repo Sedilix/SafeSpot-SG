@@ -37,6 +37,7 @@ import { subscribeToBLE, startBeaconScan, stopBeaconScan, getNearbyBeacons, pair
 import { orderSavedPlaces, savedPlaceLabel } from '../utils/places';
 import { formatConciseAddress, formatDriverHint } from '../utils/address';
 import { t } from '../locales/translations';
+import { appPermissionKey, permissionText } from '../lib/geolocation';
 import {
   ensureOrientationPermission,
   getOrientationSnapshot,
@@ -138,7 +139,8 @@ export const HeroPickMeUpCamera: React.FC<HeroPickMeUpCameraProps> = ({
       console.warn('Camera access not granted or unavailable:', err);
       setIsLiveCameraActive(false);
       // Stored as a translation key so the message follows the language.
-      setCameraError(err?.name === 'NotAllowedError' ? 'hero.cameraDeclined' : 'hero.noCamera');
+      // In the app, a refusal points to Android Settings instead.
+      setCameraError(appPermissionKey(err, 'camera') ?? (err?.name === 'NotAllowedError' ? 'hero.cameraDeclined' : 'hero.noCamera'));
     }
   }, []);
 
@@ -324,7 +326,7 @@ export const HeroPickMeUpCamera: React.FC<HeroPickMeUpCameraProps> = ({
               ) : cameraError ? (
                 <>
                   <AlertCircle aria-hidden="true" className="h-8 w-8" />
-                  <p role="alert" className="max-w-xs text-sm font-semibold">{t(cameraError, lang)}</p>
+                  <p role="alert" className="max-w-xs text-sm font-semibold">{permissionText(cameraError, lang)}</p>
                   <button
                     type="button"
                     onClick={() => void startCamera()}
