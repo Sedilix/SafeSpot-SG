@@ -4,6 +4,7 @@
  */
 
 import { EmergencyContact, LocationVerificationResult } from '../types';
+import { publicBaseUrl } from '../lib/native';
 
 /**
  * Import emergency contacts straight from the phone's address book via the
@@ -184,7 +185,7 @@ export function buildPickupSharePayload(
     `https://www.google.com/maps/search/?api=1&query=${verification.verifiedCoordinates.lat},${verification.verifiedCoordinates.lng}`;
 
   const liveTrackPart = incidentId
-    ? `\n⚡ Live Tracking: ${window.location.origin}/track/${incidentId}`
+    ? `\n⚡ Live Tracking: ${publicBaseUrl()}/track/${incidentId}`
     : '';
 
   const bleBadge = verification.bleAccuracyBoost && verification.bleBeacons?.[0]

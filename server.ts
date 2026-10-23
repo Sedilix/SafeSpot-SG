@@ -78,6 +78,22 @@ const PORT = Number(process.env.PORT) || 9003;
 
 app.use(express.json({ limit: '35mb' }));
 
+// The Android app serves its pages from https://localhost and calls /api here.
+// Only that origin gets CORS; the website is same-origin and needs none.
+const APP_ORIGINS = new Set(['https://localhost', 'capacitor://localhost']);
+app.use('/api', (req, res, next) => {
+  const origin = req.get('origin');
+  if (origin && APP_ORIGINS.has(origin)) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Vary', 'Origin');
+    res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.set('Access-Control-Max-Age', '600');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+  }
+  next();
+});
+
 // Helper: Clean text for Speechmatics TTS synthesis (strip markdown, asterisks, URLs, emoji)
 function cleanSpeakableText(text: string): string {
   if (!text) return '';

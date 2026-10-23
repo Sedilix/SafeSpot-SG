@@ -75,6 +75,7 @@ import { getPreferredContact } from './utils/contacts';
 import { resolveSavedPlace } from './utils/places';
 import { auth, subscribeToUserProfile, saveUserProfile, createIncident, updateIncident } from './lib/firebase';
 import { authFetch } from './lib/authFetch';
+import { publicBaseUrl } from './lib/native';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { AlertCircle, ShieldAlert, RefreshCw, Hand } from 'lucide-react';
 import { t } from './locales/translations';
@@ -634,7 +635,7 @@ function SeniorSafeSpotHome() {
     try {
       const incidentId = await createLiveIncident();
       if (!incidentId) return;
-      const trackUrl = `${window.location.origin}/track/${incidentId}`;
+      const trackUrl = `${publicBaseUrl()}/track/${incidentId}`;
       // Also post to any linked Telegram chats (family groups). Best effort:
       // the SMS composer below opens regardless.
       if (auth.currentUser) {
