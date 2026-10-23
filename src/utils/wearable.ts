@@ -106,12 +106,11 @@ export function parseWearableEvent(body: unknown): WearableEvent | string {
     return `eventType must be one of ${WEARABLE_EVENT_TYPES.join(', ')}.`;
   }
 
-  const hasLat = b.lat !== undefined && b.lat !== null;
-  const hasLng = b.lng !== undefined && b.lng !== null;
-  if (hasLat !== hasLng) return 'lat and lng must be supplied together.';
-  if (hasLat && (!isFiniteNumber(b.lat) || Math.abs(b.lat) > 90 || !isFiniteNumber(b.lng) || Math.abs(b.lng as number) > 180)) {
-    return 'lat/lng out of range.';
-  }
+  // A bad position (e.g. Garmin's 180°/180° "no fix" placeholder) is dropped
+  // rather than rejecting the event: an SOS or heartbeat without a location
+  // is still worth having.
+  const hasPosition =
+    isFiniteNumber(b.lat) && Math.abs(b.lat) <= 90 && isFiniteNumber(b.lng) && Math.abs(b.lng) <= 180;
   if (b.heartRate != null && (!isFiniteNumber(b.heartRate) || b.heartRate < 0 || b.heartRate > 300)) {
     return 'heartRate out of range.';
   }
@@ -146,13 +145,13 @@ export function parseWearableEvent(body: unknown): WearableEvent | string {
   return {
     deviceId: b.deviceId.trim(),
     eventType: b.eventType as WearableEventType,
-    lat: hasLat ? (b.lat as number) : undefined,
-    lng: hasLng ? (b.lng as number) : undefined,
+    lat: hasPosition ? (b.lat as number) : undefined,
+    lng: hasPosition ? (b.lng as number) : undefined,
     heartRate: isFiniteNumber(b.heartRate) ? Math.round(b.heartRate) : undefined,
     battery: isFiniteNumber(b.battery) ? Math.round(b.battery) : undefined,
     timestamp: isFiniteNumber(b.timestamp) ? b.timestamp : Math.floor(Date.now() / 1000),
-    positionAge: isFiniteNumber(b.positionAge) ? Math.round(b.positionAge) : undefined,
-    accuracy: isFiniteNumber(b.accuracy) ? Math.round(b.accuracy) : undefined,
+    positionAge: hasPosition && isFiniteNumber(b.positionAge) ? Math.round(b.positionAge) : undefined,
+    accuracy: hasPosition && isFiniteNumber(b.accuracy) ? Math.round(b.accuracy) : undefined,
     floorsAbove: Number.isInteger(b.floorsAbove) ? (b.floorsAbove as number) : undefined,
     floorRefAge: isFiniteNumber(b.floorRefAge) ? Math.round(b.floorRefAge) : undefined,
     isBackground: typeof b.isBackground === 'boolean' ? b.isBackground : undefined,
