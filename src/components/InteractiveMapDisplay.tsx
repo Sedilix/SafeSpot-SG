@@ -15,6 +15,43 @@ import { APIProvider, Map, AdvancedMarker, Pin, Circle } from '@vis.gl/react-goo
 import { GPSLocation, LocationVerificationResult, AccessibilitySettings } from '../types';
 import { t } from '../locales/translations';
 
+/**
+ * If the Google map throws (e.g. after Google rejects the key for this site),
+ * show the OpenStreetMap fallback instead. Without this, React 19 unmounts
+ * the whole app on the uncaught error and the screen goes blank.
+ */
+type MapErrorBoundaryProps = { fallback: React.ReactNode; children: React.ReactNode };
+class MapErrorBoundary extends React.Component<MapErrorBoundaryProps, { failed: boolean }> {
+  declare props: MapErrorBoundaryProps;
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(err: unknown) {
+    console.warn('Google map failed, showing the fallback map:', err);
+  }
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
+
+/** Google calls window.gm_authFailure when the key is not allowed on this site. */
+function useMapsAuthFailed(): boolean {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const w = window as any;
+    const prev = w.gm_authFailure;
+    w.gm_authFailure = () => {
+      setFailed(true);
+      prev?.();
+    };
+    return () => {
+      w.gm_authFailure = prev;
+    };
+  }, []);
+  return failed;
+}
+
 interface InteractiveMapDisplayProps {
   gps: GPSLocation | null;
   verification: LocationVerificationResult | null;
@@ -53,7 +90,8 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
   const accuracyMeters =
     verification?.originalCoordinates?.accuracyMeters ?? gps?.accuracy ?? null;
 
-  const mapsApiKey = dynamicKey;
+  const mapsAuthFailed = useMapsAuthFailed();
+  const mapsApiKey = mapsAuthFailed ? '' : dynamicKey;
 
   // The Google map draws its marker and accuracy ring itself, so it needs
   // real colour values: read the theme's pine token instead of hard-coding
@@ -96,6 +134,60 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
     );
   }
 
+  // Fallback interactive tile map with verified pin overlay
+  const fallbackMap = (
+    <div className="relative h-full w-full">
+      <iframe
+        title={t('map.title', lang)}
+        loading="lazy"
+        width="100%"
+        height="100%"
+        frameBorder="0"
+        scrolling="no"
+        marginHeight={0}
+        marginWidth={0}
+        src={`https://www.openstreetmap.org/export/embed.html?bbox=${lng - 0.003}%2C${lat - 0.002}%2C${lng + 0.003}%2C${lat + 0.002}&layer=mapnik&marker=${lat}%2C${lng}`}
+        className="h-full w-full"
+      />
+
+      {/* Custom Overlay Pin & Pulsing Radius */}
+      {/* Static "you are here" marker: the position is a single fix,
+          not a live stream, so it does not pulse. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <div className="relative flex items-center justify-center">
+          <div className="bg-pine/15 border-pine/60 absolute h-20 w-20 rounded-full border-2"></div>
+          <div className="bg-pine/30 border-pine-deep absolute h-14 w-14 rounded-full border"></div>
+          <div className="bg-pine text-on-pine border-on-pine z-10 -translate-y-3 rounded-full border-2 p-2 shadow-xl">
+            <MapPin className="h-7 w-7" />
+          </div>
+        </div>
+      </div>
+
+      {/* In-map info pill */}
+      <div className="border-line bg-surface/95 text-ink absolute top-3 right-3 left-3 flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-semibold shadow-md backdrop-blur-md sm:right-auto">
+        {isVerified ? (
+          <ShieldCheck aria-hidden="true" className="text-pine h-5 w-5 shrink-0" />
+        ) : (
+          <MapPin aria-hidden="true" className="text-sky h-5 w-5 shrink-0" />
+        )}
+        <div className="min-w-0 truncate">
+          <span className={`font-bold ${isVerified ? 'text-pine-deep' : 'text-sky'}`}>
+            {t(isVerified ? 'map.verifiedPin' : 'map.gpsPin', lang)}
+          </span>{' '}
+          {address}
+        </div>
+      </div>
+
+      {/* Open externally */}
+      <div className="pointer-events-auto absolute right-3 bottom-3 flex flex-col gap-1.5">
+        <button type="button" onClick={openInGoogleMaps} className="btn btn-md btn-secondary shadow-md">
+          <ExternalLink aria-hidden="true" className="text-sky h-4 w-4" />
+          <span>Google Maps</span>
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <section id="card-interactive-map" className="card p-6 sm:p-7">
       {/* Header bar */}
@@ -125,85 +217,37 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
       {/* Map Container */}
       <div className="border-line-strong/60 bg-well relative h-72 w-full overflow-hidden rounded-xl border-2 shadow-inner sm:h-96">
         {mapsApiKey ? (
-          <APIProvider apiKey={mapsApiKey}>
-            <Map
-              defaultCenter={{ lat, lng }}
-              center={{ lat, lng }}
-              defaultZoom={17}
-              zoom={17}
-              mapId="DEMO_MAP_ID"
-              internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-              disableDefaultUI={false}
-              style={{ width: '100%', height: '100%' }}
-            >
-              <AdvancedMarker position={{ lat, lng }}>
-                <Pin background={pinColors.pin} glyphColor={pinColors.glyph} borderColor={pinColors.glyph} />
-              </AdvancedMarker>
-              {accuracyMeters != null && accuracyMeters > 0 && (
-                <Circle
-                  center={{ lat, lng }}
-                  radius={Math.min(Math.max(accuracyMeters, 5), 80)}
-                  strokeColor={pinColors.pin}
-                  strokeOpacity={0.8}
-                  strokeWeight={2}
-                  fillColor={pinColors.pin}
-                  fillOpacity={0.15}
-                />
-              )}
-            </Map>
-          </APIProvider>
+          <MapErrorBoundary fallback={fallbackMap}>
+            <APIProvider apiKey={mapsApiKey}>
+              <Map
+                defaultCenter={{ lat, lng }}
+                center={{ lat, lng }}
+                defaultZoom={17}
+                zoom={17}
+                mapId="DEMO_MAP_ID"
+                internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+                disableDefaultUI={false}
+                style={{ width: '100%', height: '100%' }}
+              >
+                <AdvancedMarker position={{ lat, lng }}>
+                  <Pin background={pinColors.pin} glyphColor={pinColors.glyph} borderColor={pinColors.glyph} />
+                </AdvancedMarker>
+                {accuracyMeters != null && accuracyMeters > 0 && (
+                  <Circle
+                    center={{ lat, lng }}
+                    radius={Math.min(Math.max(accuracyMeters, 5), 80)}
+                    strokeColor={pinColors.pin}
+                    strokeOpacity={0.8}
+                    strokeWeight={2}
+                    fillColor={pinColors.pin}
+                    fillOpacity={0.15}
+                  />
+                )}
+              </Map>
+            </APIProvider>
+          </MapErrorBoundary>
         ) : (
-          /* Fallback interactive tile map with verified pin overlay */
-          <div className="relative h-full w-full">
-            <iframe
-              title={t('map.title', lang)}
-              loading="lazy"
-              width="100%"
-              height="100%"
-              frameBorder="0"
-              scrolling="no"
-              marginHeight={0}
-              marginWidth={0}
-              src={`https://www.openstreetmap.org/export/embed.html?bbox=${lng - 0.003}%2C${lat - 0.002}%2C${lng + 0.003}%2C${lat + 0.002}&layer=mapnik&marker=${lat}%2C${lng}`}
-              className="h-full w-full"
-            />
-
-            {/* Custom Overlay Pin & Pulsing Radius */}
-            {/* Static "you are here" marker: the position is a single fix,
-                not a live stream, so it does not pulse. */}
-            <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="relative flex items-center justify-center">
-                <div className="bg-pine/15 border-pine/60 absolute h-20 w-20 rounded-full border-2"></div>
-                <div className="bg-pine/30 border-pine-deep absolute h-14 w-14 rounded-full border"></div>
-                <div className="bg-pine text-on-pine border-on-pine z-10 -translate-y-3 rounded-full border-2 p-2 shadow-xl">
-                  <MapPin className="h-7 w-7" />
-                </div>
-              </div>
-            </div>
-
-            {/* In-map info pill */}
-            <div className="border-line bg-surface/95 text-ink absolute top-3 right-3 left-3 flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-semibold shadow-md backdrop-blur-md sm:right-auto">
-              {isVerified ? (
-                <ShieldCheck aria-hidden="true" className="text-pine h-5 w-5 shrink-0" />
-              ) : (
-                <MapPin aria-hidden="true" className="text-sky h-5 w-5 shrink-0" />
-              )}
-              <div className="min-w-0 truncate">
-                <span className={`font-bold ${isVerified ? 'text-pine-deep' : 'text-sky'}`}>
-                  {t(isVerified ? 'map.verifiedPin' : 'map.gpsPin', lang)}
-                </span>{' '}
-                {address}
-              </div>
-            </div>
-
-            {/* Open externally */}
-            <div className="pointer-events-auto absolute right-3 bottom-3 flex flex-col gap-1.5">
-              <button type="button" onClick={openInGoogleMaps} className="btn btn-md btn-secondary shadow-md">
-                <ExternalLink aria-hidden="true" className="text-sky h-4 w-4" />
-                <span>Google Maps</span>
-              </button>
-            </div>
-          </div>
+          fallbackMap
         )}
       </div>
 
