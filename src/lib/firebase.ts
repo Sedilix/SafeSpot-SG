@@ -36,7 +36,7 @@ import {
 } from 'firebase/firestore';
 import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { UserProfile, EmergencyContact, Incident } from '../types';
-import { isNativeApp } from './native';
+import { isNativeApp, firebaseNativeReady } from './native';
 
 // SafeSpot's own Firebase project (safespot-sg). Web config values are
 // public identifiers, not secrets; the fallbacks keep local builds working
@@ -111,6 +111,7 @@ export const googleProvider = new GoogleAuthProvider();
  * treat it the same as a closed popup on the website.
  */
 export async function nativeGoogleCredential(): Promise<OAuthCredential> {
+  if (!firebaseNativeReady()) throw new Error('Google sign-in is not set up in this version of the app yet. Continue as a guest for now.');
   let idToken: string | undefined;
   try {
     const result = await FirebaseAuthentication.signInWithGoogle();

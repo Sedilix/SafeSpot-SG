@@ -22,6 +22,14 @@ export const apiBase = (): string =>
 export const publicBaseUrl = (): string => (isNativeApp() ? apiBase() : window.location.origin);
 
 /**
+ * True when the app was built with android/app/google-services.json. Without
+ * it the Firebase Authentication plugin fails to load at start-up, and FCM's
+ * register() would crash the app natively, so sign-in and push check this
+ * first and show a readable error instead.
+ */
+export const firebaseNativeReady = (): boolean => Capacitor.isPluginAvailable('FirebaseAuthentication');
+
+/**
  * In the app, sends fetch('/api/...') to the server. Called once at start-up,
  * so the existing fetch and authFetch calls need no changes.
  */

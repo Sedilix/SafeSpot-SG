@@ -10,6 +10,7 @@ import type { Language } from '../types';
 import { t } from '../locales/translations';
 import { authFetch, responseError } from '../lib/authFetch';
 import { PushAlertsSection } from './PushAlertsSection';
+import { isNativeApp } from '../lib/native';
 
 interface LinkedChat {
   chatId: string;
@@ -31,7 +32,7 @@ interface PendingLink {
  * when SMS isn't actually configured on the server.
  */
 export const AlertChannelsPanel: React.FC<{ user: FirebaseUser | null; lang: Language }> = ({ user, lang }) => {
-  const [channels, setChannels] = useState<{ sms: boolean; telegram: boolean; push: boolean; vapidPublicKey: string | null } | null>(null);
+  const [channels, setChannels] = useState<{ sms: boolean; telegram: boolean; push: boolean; fcm: boolean; vapidPublicKey: string | null } | null>(null);
   const [chats, setChats] = useState<LinkedChat[]>([]);
   const [pending, setPending] = useState<PendingLink | null>(null);
   const [busy, setBusy] = useState(false);
@@ -70,7 +71,7 @@ export const AlertChannelsPanel: React.FC<{ user: FirebaseUser | null; lang: Lan
       .then((r) => r.json())
       .then((d) => {
         setChannelsFailed(false);
-        setChannels({ sms: Boolean(d.sms), telegram: Boolean(d.telegram), push: Boolean(d.push), vapidPublicKey: d.vapidPublicKey || null });
+        setChannels({ sms: Boolean(d.sms), telegram: Boolean(d.telegram), push: Boolean(d.push), fcm: Boolean(d.fcm), vapidPublicKey: d.vapidPublicKey || null });
       })
       .catch(() => {
         setChannels(null);
@@ -241,7 +242,7 @@ export const AlertChannelsPanel: React.FC<{ user: FirebaseUser | null; lang: Lan
         </p>
       )}
 
-      {user && channels?.push && channels.vapidPublicKey && (
+      {user && channels?.push && (isNativeApp() ? channels.fcm : channels.vapidPublicKey) && (
         <PushAlertsSection user={user} lang={lang} vapidPublicKey={channels.vapidPublicKey} />
       )}
     </section>

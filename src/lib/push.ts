@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { isNativeApp } from './native';
+import { firebaseNativeReady, isNativeApp } from './native';
 
 // Browser side of web push: permission, service worker, subscription.
 // Inside the Android app there is no service worker or PushManager, so the
@@ -138,12 +138,13 @@ export function isInAppPath(url: unknown): url is string {
 /**
  * Asks permission and gets this phone's FCM token. If getting the token fails
  * (no network, Play services missing) or never answers, give up after a while
- * with a readable error instead of spinning forever. Note: a build without
- * android/app/google-services.json crashes natively inside register() (the
- * plugin calls FirebaseMessaging.getInstance() unguarded), which JS can't
- * catch, so every app build must include that file.
+ * with a readable error instead of spinning forever. A build without
+ * android/app/google-services.json would crash natively inside register()
+ * (the plugin calls FirebaseMessaging.getInstance() unguarded), so stop
+ * before that.
  */
 async function registerNative(): Promise<string> {
+  if (!firebaseNativeReady()) throw new Error(NATIVE_NOT_READY);
   const { PushNotifications } = await import('@capacitor/push-notifications');
   let perm = await PushNotifications.checkPermissions();
   if (perm.receive !== 'granted' && perm.receive !== 'denied') perm = await PushNotifications.requestPermissions();

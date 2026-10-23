@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { native, plugin, fa } = vi.hoisted(() => ({
-  native: { on: false },
+  native: { on: false, firebase: true },
   plugin: { signInWithGoogle: vi.fn(), signOut: vi.fn() },
   fa: {
     auth: { currentUser: null as any },
@@ -18,7 +18,7 @@ const { native, plugin, fa } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('./native', () => ({ isNativeApp: () => native.on }));
+vi.mock('./native', () => ({ isNativeApp: () => native.on, firebaseNativeReady: () => native.firebase }));
 vi.mock('@capacitor-firebase/authentication', () => ({ FirebaseAuthentication: plugin }));
 vi.mock('firebase/app', () => ({ initializeApp: () => ({}), getApps: () => [], getApp: () => ({}) }));
 vi.mock('firebase/firestore', () => ({ initializeFirestore: () => ({}), persistentLocalCache: () => ({}), persistentMultipleTabManager: () => ({}) }));
@@ -43,6 +43,7 @@ describe('Google sign-in', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     native.on = false;
+    native.firebase = true;
     fa.auth.currentUser = null;
     fa.signInWithPopup.mockResolvedValue({ user });
     fa.linkWithPopup.mockResolvedValue({ user });
@@ -63,6 +64,13 @@ describe('Google sign-in', () => {
     expect(await signInWithGoogle()).toBe(user);
     expect(fa.signInWithPopup).not.toHaveBeenCalled();
     expect(fa.signInWithCredential).toHaveBeenCalledWith(fa.auth, { providerId: 'google.com', idToken: 'tok' });
+  });
+
+  it('explains when the app was built without google-services.json', async () => {
+    native.on = true;
+    native.firebase = false;
+    await expect(signInWithGoogle()).rejects.toThrow(/not set up/);
+    expect(plugin.signInWithGoogle).not.toHaveBeenCalled();
   });
 
   it('reports a dismissed native picker like a closed popup', async () => {

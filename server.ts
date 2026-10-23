@@ -1906,7 +1906,7 @@ app.post('/api/alerts/test', async (req, res) => {
   return res.json({
     sms: { sent: smsSent, attempted: recipients.length, configured: smsConfigured() },
     telegram: { sent: telegramSent, configured: telegramConfigured() },
-    push: { sent: pushSent, configured: pushConfigured() },
+    push: { sent: pushSent, configured: pushConfigured() || fcmAvailable() },
     reachedSomeone: smsSent + telegramSent + pushSent > 0,
   });
 });
@@ -2074,7 +2074,7 @@ app.get('/manifest-join/:code.webmanifest', (req, res) => {
 app.post('/api/notify/telegram-pin', async (req, res) => {
   const uid = await requireFirebaseUid(req, res);
   if (!uid) return;
-  if (!telegramConfigured() && !pushConfigured()) return res.status(503).json({ error: 'Telegram alerts are not set up yet.' });
+  if (!telegramConfigured() && !pushConfigured() && !fcmAvailable()) return res.status(503).json({ error: 'Telegram alerts are not set up yet.' });
   if (!allowNotify(uid)) return res.status(429).json({ error: 'Too many messages sent. Please wait a while.' });
   const { address, lat, lng, driverHint, seniorName, incidentId, emergency } = req.body || {};
   const hasPos = inSingaporeBounds(lat, lng);
