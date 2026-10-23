@@ -8,6 +8,7 @@ import { Car, Footprints, Navigation, MapPin, Accessibility, Loader2 } from 'luc
 import { Language } from '../types';
 import { t } from '../locales/translations';
 import type { ScoredPickup } from '../utils/pickupOptimizer';
+import { appPermissionKey, permissionText, watchPosition } from '../lib/geolocation';
 
 const REFRESH_MS = 30_000;
 
@@ -25,7 +26,7 @@ export const PickupOptionsCard: React.FC<{ incidentId: string; lang: Language }>
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const driverRef = useRef<{ lat: number; lng: number } | null>(null);
-  const watchIdRef = useRef<number | null>(null);
+  const stopWatchRef = useRef<(() => void) | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -58,9 +59,7 @@ export const PickupOptionsCard: React.FC<{ incidentId: string; lang: Language }>
     return () => clearInterval(id);
   }, [refresh]);
 
-  useEffect(() => () => {
-    if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
-  }, []);
+  useEffect(() => () => stopWatchRef.current?.(), []);
 
   const startSharing = () => {
     if (!('geolocation' in navigator)) {
@@ -69,7 +68,7 @@ export const PickupOptionsCard: React.FC<{ incidentId: string; lang: Language }>
     }
     setSharing(true);
     let first = true;
-    watchIdRef.current = navigator.geolocation.watchPosition(
+    stopWatchRef.current = watchPosition(
       (pos) => {
         driverRef.current = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         if (first) {
@@ -77,17 +76,19 @@ export const PickupOptionsCard: React.FC<{ incidentId: string; lang: Language }>
           void refresh();
         }
       },
-      () => {
+      (err) => {
         setSharing(false);
-        setError(t('pickup.noLocation', lang));
+        // In the app, a refusal points to Android Settings instead.
+        const appKey = appPermissionKey(err, 'location');
+        setError(appKey ? permissionText(appKey, lang) : t('pickup.noLocation', lang));
       },
       { enableHighAccuracy: true, maximumAge: 15_000 },
     );
   };
 
   const stopSharing = () => {
-    if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
-    watchIdRef.current = null;
+    stopWatchRef.current?.();
+    stopWatchRef.current = null;
     driverRef.current = null;
     setSharing(false);
     void refresh();

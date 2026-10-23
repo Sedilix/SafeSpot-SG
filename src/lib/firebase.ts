@@ -9,6 +9,9 @@ import {
   GoogleAuthProvider, 
   signInWithPopup, 
   linkWithPopup,
+  signInWithCredential,
+  linkWithCredential,
+  OAuthCredential,
   signInWithPhoneNumber, 
   RecaptchaVerifier, 
   signInAnonymously, 
@@ -31,7 +34,9 @@ import {
   serverTimestamp,
   deleteField 
 } from 'firebase/firestore';
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { UserProfile, EmergencyContact, Incident } from '../types';
+import { isNativeApp, firebaseNativeReady } from './native';
 
 // SafeSpot's own Firebase project (safespot-sg). Web config values are
 // public identifiers, not secrets; the fallbacks keep local builds working
@@ -98,8 +103,33 @@ function createFirestore() {
 export const db = createFirestore();
 export const googleProvider = new GoogleAuthProvider();
 
+/**
+ * Popups don't work in the Android WebView, so the app gets a Google ID token
+ * from the native account picker (skipNativeAuth: the plugin only fetches the
+ * token) and hands it to the web SDK, which stays the single source of auth.
+ * A dismissed picker is reported as 'auth/popup-closed-by-user' so callers
+ * treat it the same as a closed popup on the website.
+ */
+export async function nativeGoogleCredential(): Promise<OAuthCredential> {
+  if (!firebaseNativeReady()) throw new Error('Google sign-in is not set up in this version of the app yet. Continue as a guest for now.');
+  let idToken: string | undefined;
+  try {
+    const result = await FirebaseAuthentication.signInWithGoogle();
+    idToken = result.credential?.idToken;
+  } catch (err: any) {
+    if (/cancel/i.test(err?.message || '')) throw Object.assign(new Error('Sign-in cancelled'), { code: 'auth/popup-closed-by-user' });
+    throw err;
+  }
+  if (!idToken) throw new Error('Google sign-in returned no ID token');
+  return GoogleAuthProvider.credential(idToken);
+}
+
 // Google Sign-In
 export async function signInWithGoogle(): Promise<FirebaseUser> {
+  if (isNativeApp()) {
+    const result = await signInWithCredential(auth, await nativeGoogleCredential());
+    return result.user;
+  }
   const result = await signInWithPopup(auth, googleProvider);
   return result.user;
 }
@@ -112,7 +142,9 @@ export async function upgradeGuestToGoogle(): Promise<FirebaseUser> {
   const current = auth.currentUser;
   if (!current || !current.isAnonymous) return signInWithGoogle();
   try {
-    const result = await linkWithPopup(current, googleProvider);
+    const result = isNativeApp()
+      ? await linkWithCredential(current, await nativeGoogleCredential())
+      : await linkWithPopup(current, googleProvider);
     return result.user;
   } catch (err: any) {
     if (err?.code === 'auth/credential-already-in-use') {
@@ -167,6 +199,8 @@ export async function sendPhoneOtp(
 
 // Sign Out
 export async function signOutUser(): Promise<void> {
+  // Also clears the native Google account choice, so the next sign-in shows the picker.
+  if (isNativeApp()) await FirebaseAuthentication.signOut().catch((err) => console.warn('Native sign-out failed:', err));
   await firebaseSignOut(auth);
 }
 

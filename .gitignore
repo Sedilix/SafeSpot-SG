@@ -21,3 +21,7 @@ data/graph/
 # Route probe output (research data)
 tools/route-probe/out/
 tools/routing/out/shadow/
+
+# Android app build output (the android/ project itself is committed)
+dist-android/
+android/app/google-services.json

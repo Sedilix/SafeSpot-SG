@@ -31,6 +31,7 @@ import { EMERGENCY_995_CONTACT, ensureEmergency995 } from '../data/defaultContac
 import { importContactsFromPhone, isContactPickerSupported, createManualContact, getPreferredContact, setPreferredContact } from '../utils/contacts';
 import { SAVED_PLACE_KINDS, SAVED_PLACE_META } from '../utils/places';
 import { t } from '../locales/translations';
+import { appPermissionKey, permissionText } from '../lib/geolocation';
 
 const BLOOD_TYPES: BloodType[] = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'Unknown'];
 
@@ -92,7 +93,8 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   // Live selfie capture only — gallery uploads are deliberately absent so the
   // photo responders see is always authentic and current.
   const [isSelfieCameraOn, setIsSelfieCameraOn] = useState(false);
-  const [cameraUnavailable, setCameraUnavailable] = useState(false);
+  // Translation key of the camera problem, or null.
+  const [cameraUnavailable, setCameraUnavailable] = useState<string | null>(null);
   const selfieVideoRef = useRef<HTMLVideoElement | null>(null);
   const selfieStreamRef = useRef<MediaStream | null>(null);
 
@@ -125,7 +127,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
 
   const startSelfieCamera = async () => {
     try {
-      setCameraUnavailable(false);
+      setCameraUnavailable(null);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 640 } },
         audio: false,
@@ -135,7 +137,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
     } catch (err) {
       console.warn('Selfie camera unavailable:', err);
       setIsSelfieCameraOn(false);
-      setCameraUnavailable(true);
+      setCameraUnavailable(appPermissionKey(err, 'camera') ?? 'onboard.cameraUnavailable');
     }
   };
 
@@ -368,7 +370,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                 </div>
                 {cameraUnavailable && (
                   <p role="status" className="text-ochre-deep text-sm font-semibold">
-                    {t('onboard.cameraUnavailable', lang)}
+                    {permissionText(cameraUnavailable, lang)}
                   </p>
                 )}
               </div>

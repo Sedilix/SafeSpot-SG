@@ -24,7 +24,8 @@ interface PushDeviceRow {
 export const PushAlertsSection: React.FC<{
   user: FirebaseUser;
   lang: Language;
-  vapidPublicKey: string;
+  /** Null when only the Android app's notifications (FCM) are set up. */
+  vapidPublicKey: string | null;
   onDevicesChanged?: (count: number) => void;
 }> = ({ user, lang, vapidPublicKey, onDevicesChanged }) => {
   const [devices, setDevices] = useState<PushDeviceRow[]>([]);
@@ -63,10 +64,10 @@ export const PushAlertsSection: React.FC<{
 
   const turnOnHere = () =>
     run('on', async () => {
-      const subscription = await subscribeThisDevice(vapidPublicKey);
+      const registration = await subscribeThisDevice(vapidPublicKey);
       const res = await authFetch('/api/alerts/push/subscribe', {
         method: 'POST',
-        body: JSON.stringify({ subscription, label: deviceLabel() }),
+        body: JSON.stringify({ ...registration, label: deviceLabel() }),
       });
       if (!res.ok) throw new Error(await responseError(res, t('push.failed', lang)));
       await load();

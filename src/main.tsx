@@ -2,9 +2,12 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { installApiFetch, isNativeApp } from './lib/native';
 
-// Register PWA Service Worker
-if (typeof window !== 'undefined' && 'serviceWorker' in navigator && import.meta.env.PROD) {
+installApiFetch();
+
+// Register PWA Service Worker (website only; the Android app ships its files)
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator && import.meta.env.PROD && !isNativeApp()) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('/sw.js')

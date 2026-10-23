@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SafeSpot SG</string>
+    <string name="title_activity_main">SafeSpot SG</string>
+    <string name="package_name">sg.safespot.app</string>
+    <string name="custom_url_scheme">sg.safespot.app</string>
+</resources>
