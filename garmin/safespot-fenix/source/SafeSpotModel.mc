@@ -233,7 +233,8 @@ class SafeSpotModel {
         }
         var system = null;
         var info = Position.getInfo();
-        if (info != null) {
+        // QUALITY_NOT_AVAILABLE means the position is a placeholder, not a fix.
+        if (info != null && info.accuracy != Position.QUALITY_NOT_AVAILABLE) {
             var pos = info.position;
             var when = info.when;
             if (pos != null && when != null) {

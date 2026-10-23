@@ -37,10 +37,18 @@ describe('parseWearableEvent', () => {
     expect(typeof parseWearableEvent(null)).toBe('string');
     expect(typeof parseWearableEvent({ ...base, deviceId: '' })).toBe('string');
     expect(typeof parseWearableEvent({ ...base, eventType: 'PARTY' })).toBe('string');
-    expect(typeof parseWearableEvent({ ...base, lat: 1.3 })).toBe('string');
-    expect(typeof parseWearableEvent({ ...base, lat: 91, lng: 103 })).toBe('string');
     expect(typeof parseWearableEvent({ ...base, battery: 140 })).toBe('string');
     expect(typeof parseWearableEvent({ ...base, heartRate: '80' })).toBe('string');
+  });
+
+  it('drops a bad position but keeps the event', () => {
+    // Garmin's "no fix" placeholder, sent by watch 0.6.1 indoors.
+    const sos = parseWearableEvent({ ...base, eventType: 'SOS_TRIGGER', lat: 180, lng: 180, positionAge: 5, accuracy: 20, battery: 50 });
+    expect(sos).toMatchObject({ eventType: 'SOS_TRIGGER', battery: 50 });
+    expect(sos).toMatchObject({ lat: undefined, lng: undefined, positionAge: undefined, accuracy: undefined });
+    expect(parseWearableEvent({ ...base, lat: 1.3 })).toMatchObject({ lat: undefined, lng: undefined });
+    expect(parseWearableEvent({ ...base, lat: 91, lng: 103 })).toMatchObject({ lat: undefined });
+    expect(parseWearableEvent({ ...base, lat: '1.3', lng: 103 })).toMatchObject({ lat: undefined });
   });
 });
 
@@ -194,7 +202,7 @@ describe('positionAge', () => {
     expect(applyWearableEvent(s1, ev({ lat: 1.31, lng: 103.81 }), 3000, null).accuracy).toBeNull(); // new coords, unknown accuracy
     expect(typeof parseWearableEvent({ ...base, accuracy: 0 })).toBe('string');
     expect(typeof parseWearableEvent({ ...base, accuracy: 'good' })).toBe('string');
-    expect(parseWearableEvent({ ...base, accuracy: 12.6 })).toMatchObject({ accuracy: 13 });
+    expect(parseWearableEvent({ ...base, lat: 1.3, lng: 103.8, accuracy: 12.6 })).toMatchObject({ accuracy: 13 });
   });
 
   it('keeps a floor estimate only while the watch is sending one', () => {
@@ -209,7 +217,7 @@ describe('positionAge', () => {
     expect(typeof parseWearableEvent({ ...base, positionAge: -1 })).toBe('string');
     expect(typeof parseWearableEvent({ ...base, isBackground: 'yes' })).toBe('string');
     expect(typeof parseWearableEvent({ ...base, sosActive: 'true' })).toBe('string');
-    expect(parseWearableEvent({ ...base, positionAge: 12.4, isBackground: true, sosActive: true })).toMatchObject({
+    expect(parseWearableEvent({ ...base, lat: 1.3, lng: 103.8, positionAge: 12.4, isBackground: true, sosActive: true })).toMatchObject({
       positionAge: 12,
       isBackground: true,
       sosActive: true,

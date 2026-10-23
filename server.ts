@@ -2240,7 +2240,11 @@ app.post('/api/wearable/event', async (req, res) => {
 
   const event = parseWearableEvent(req.body);
   if (typeof event === 'string') {
+    console.warn(`[WEARABLE] rejected event: ${event}`);
     return res.status(400).json({ error: event });
+  }
+  if ((req.body.lat != null || req.body.lng != null) && event.lat === undefined) {
+    console.warn(`[WEARABLE] ${event.deviceId}: dropped invalid position ${req.body.lat}, ${req.body.lng}`);
   }
 
   if (!wearableStates.has(event.deviceId) && wearableStates.size >= MAX_WEARABLE_DEVICES) {

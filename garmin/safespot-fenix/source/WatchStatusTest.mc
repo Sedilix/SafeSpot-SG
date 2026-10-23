@@ -21,3 +21,11 @@ function freshestPrefersNewerAndDropsStale(logger as Logger) as Boolean {
         && WatchStatus.freshest(stale, stored) == stored
         && WatchStatus.freshest(null, null) == null;
 }
+
+(:test)
+function freshestIgnoresNoFixPlaceholder(logger as Logger) as Boolean {
+    var stored = [1.30, 103.80, 600];
+    var placeholder = [180.0, 180.0, 5];
+    return WatchStatus.freshest(stored, placeholder) == stored
+        && WatchStatus.freshest(null, placeholder) == null;
+}

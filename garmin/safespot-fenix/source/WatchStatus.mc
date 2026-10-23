@@ -25,15 +25,28 @@ module WatchStatus {
     }
 
     // Picks the fresher of two last-known positions, each [lat, lng, ageSeconds]
-    // (or null). Positions older than MAX_FALLBACK_AGE_SECONDS are ignored.
+    // (or null). Positions older than MAX_FALLBACK_AGE_SECONDS are ignored, as
+    // are impossible ones such as Garmin's 180°/180° "no fix" placeholder.
     function freshest(a as Array?, b as Array?) as Array? {
-        var aAge = a != null ? a[2] as Number : null;
-        var bAge = b != null ? b[2] as Number : null;
+        var aAge = usable(a) ? (a as Array)[2] as Number : null;
+        var bAge = usable(b) ? (b as Array)[2] as Number : null;
         var aOk = aAge != null && aAge <= MAX_FALLBACK_AGE_SECONDS;
         var bOk = bAge != null && bAge <= MAX_FALLBACK_AGE_SECONDS;
         if (aOk && bOk) {
             return (aAge as Number) <= (bAge as Number) ? a : b;
         }
         return aOk ? a : (bOk ? b : null);
+    }
+
+    function usable(p as Array?) as Boolean {
+        if (p == null) {
+            return false;
+        }
+        var lat = p[0];
+        var lng = p[1];
+        if (!(lat instanceof Float || lat instanceof Double) || !(lng instanceof Float || lng instanceof Double)) {
+            return false;
+        }
+        return (lat as Float or Double).abs() <= 90 && (lng as Float or Double).abs() <= 180;
     }
 }
