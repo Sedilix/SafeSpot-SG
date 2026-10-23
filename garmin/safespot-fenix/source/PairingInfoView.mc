@@ -29,6 +29,9 @@ class PairingInfoView extends WatchUi.View {
         dc.setColor(Graphics.COLOR_GREEN, Graphics.COLOR_TRANSPARENT);
         Layout.fitText(dc, cx, Layout.y(dc, 150), Layout.SMALL_FONTS, "Profile > Garmin Watch", Graphics.TEXT_JUSTIFY_CENTER);
 
+        dc.setColor(Graphics.COLOR_LT_GRAY, Graphics.COLOR_TRANSPARENT);
+        Layout.fitText(dc, cx, Layout.y(dc, 178), Layout.SMALL_FONTS, "App v" + Version.APP_VERSION, Graphics.TEXT_JUSTIFY_CENTER);
+
         dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
         Layout.fitText(dc, cx, h - Layout.y(dc, 34), Layout.SMALL_FONTS, "BACK = Return", Graphics.TEXT_JUSTIFY_CENTER);
     }
