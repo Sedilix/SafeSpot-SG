@@ -39,36 +39,30 @@ describe('shadow-report: Statistics & Time Slots', () => {
     expect(resolveTimeOfDay('2026-10-13T14:00:00.000Z')).toBe('Night / Off-Peak');
   });
 
-  it('computes median absolute error, mean signed error, and latency quantiles', () => {
+  it('computes engine ETA, distance and latency statistics', () => {
     const samples: ShadowRecord[] = [
-      { at: '2026-10-13T00:30:00.000Z', pairId: 'p1', localSec: 1000, googleSec: 900, diffPct: 11.1, localMs: 120, localMeters: 10000, googleMeters: 9800, googleOk: true },
-      { at: '2026-10-13T00:30:00.000Z', pairId: 'p1', localSec: 950, googleSec: 1000, diffPct: -5.0, localMs: 150, localMeters: 9500, googleMeters: 10000, googleOk: true },
-      { at: '2026-10-13T00:30:00.000Z', pairId: 'p2', localSec: 800, googleSec: 800, diffPct: 0.0, localMs: 110, localMeters: 8000, googleMeters: 8000, googleOk: true },
+      { at: '2026-10-13T00:30:00.000Z', pairId: 'p1', localSec: 1000, localMs: 120, localMeters: 10000 },
+      { at: '2026-10-13T00:30:00.000Z', pairId: 'p1', localSec: 950, localMs: 150, localMeters: 9500 },
+      { at: '2026-10-13T00:30:00.000Z', pairId: 'p2', localSec: 800, localMs: 110, localMeters: 8000 },
     ];
-
     const stats = computeStats(samples);
-    expect(stats.count).toBe(3);
-    // Absolute diffs: [0.0, 5.0, 11.1], median is 5.0
-    expect(stats.medianAbsErrorPct).toBe(5.0);
-    // Signed diffs: (11.1 - 5.0 + 0) / 3 = 2.03
-    expect(stats.meanSignedErrorPct).toBeCloseTo(2.03, 1);
-    expect(stats.medianLatencyMs).toBe(120);
-    expect(stats.p95LatencyMs).toBe(150);
-    expect(stats.medianLocalMeters).toBe(9500);
-    expect(stats.medianGoogleMeters).toBe(9800);
+    expect(stats).toMatchObject({
+      count: 3, failures: 0, medianLocalSec: 950, minLocalSec: 800, maxLocalSec: 1000,
+      medianLatencyMs: 120, p95LatencyMs: 150, medianLocalMeters: 9500,
+    });
   });
 
-  it('generates report markdown containing computed status and breakdown tables', () => {
+  it('generates report markdown with computed statuses and breakdown tables', () => {
     const samples: ShadowRecord[] = [
-      { at: '2026-10-13T00:30:00.000Z', pairId: 'toa-payoh-to-raffles-place', localSec: 1200, googleSec: 1150, diffPct: 4.3, localMs: 95, localMeters: 10500, googleMeters: 10400, googleOk: true },
+      { at: '2026-10-13T00:30:00.000Z', pairId: 'toa-payoh-to-raffles-place', localSec: 1200, localMs: 95, localMeters: 10500 },
     ];
-
     const md = generateReportMarkdown(samples);
     expect(md).toContain('SafeSpot Routing Engine — Scheduled Drive Shadow Probe Report');
     expect(md).toContain('toa-payoh-to-raffles-place');
     expect(md).toContain('Morning Peak (07:00-09:30)');
-    expect(md).toContain('PASS');
-    expect(md).toContain('10.50 km / 10.40 km');
+    expect(md).toContain('| **Median Engine Latency** | $< 200$ ms | **PASS**');
+    expect(md).toContain('10.50 km');
+    expect(md).not.toMatch(/google/i);
   });
 });
 
@@ -76,11 +70,8 @@ import { buildGraphFromElements } from '../../tools/osm/build-graph';
 import { RoadGraph } from '../../src/routing/graph';
 
 describe('shadow-probe execution', () => {
-  it('runs probe cycle for single corridor in simulation mode', async () => {
-    const pair = SHADOW_PAIRS[0];
-    const midLat = (pair.origin.lat + pair.dest.lat) / 2;
-    const midLng = (pair.origin.lng + pair.dest.lng) / 2;
-    const mockGraph = new RoadGraph(
+  const lineGraph = (pair: (typeof SHADOW_PAIRS)[number]) =>
+    new RoadGraph(
       buildGraphFromElements([
         {
           type: 'way',
@@ -88,79 +79,48 @@ describe('shadow-probe execution', () => {
           tags: { highway: 'primary', maxspeed: '60' },
           geometry: [
             { lat: pair.origin.lat, lon: pair.origin.lng },
-            { lat: midLat, lon: midLng },
-            { lat: pair.dest.lat, lon: pair.dest.lng },
-          ],
-        },
-      ])
-    );
-
-    const records = await runShadowProbe({
-      simulateGoogle: true,
-      pairs: [pair],
-      graph: mockGraph,
-      upload: false,
-    });
-
-    expect(records.length).toBe(1);
-    expect(records[0].pairId).toBe(pair.id);
-    expect(records[0].localSec).toBeGreaterThan(0);
-    expect(records[0].googleSec).toBeGreaterThan(0);
-    expect(records[0].localMeters).toBeGreaterThan(0);
-    expect(records[0].googleMeters).toBeGreaterThan(0);
-    expect(records[0].simulated).toBe(true);
-    expect(records[0].googleOk).toBe(false);
-  });
-
-  it('records a Google failure as a failure, never as a 0% match, and fails the run', async () => {
-    const pair = SHADOW_PAIRS[0];
-    const midLat = (pair.origin.lat + pair.dest.lat) / 2;
-    const midLng = (pair.origin.lng + pair.dest.lng) / 2;
-    const graph = new RoadGraph(
-      buildGraphFromElements([
-        {
-          type: 'way',
-          id: 202,
-          tags: { highway: 'primary', maxspeed: '60' },
-          geometry: [
-            { lat: pair.origin.lat, lon: pair.origin.lng },
-            { lat: midLat, lon: midLng },
+            { lat: (pair.origin.lat + pair.dest.lat) / 2, lon: (pair.origin.lng + pair.dest.lng) / 2 },
             { lat: pair.dest.lat, lon: pair.dest.lng },
           ],
         },
       ]),
     );
-    const prevKey = process.env.MAPS_SERVER_KEY;
-    process.env.MAPS_SERVER_KEY = 'test-key';
-    const calls: any[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string, init: any) => {
-        calls.push({ url, body: init?.body ? JSON.parse(init.body) : null });
-        return { ok: false, status: 400, text: async () => '{"error":{"message":"Timestamp must be set to a future time."}}' } as any;
-      }),
-    );
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+  it('records engine-only rows and never calls Google', async () => {
+    const pair = SHADOW_PAIRS[0];
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(String(url));
+      return { ok: false, status: 503, json: async () => ({}) } as any;
+    }));
     try {
-      await expect(runShadowProbe({ pairs: [pair], graph, upload: false })).rejects.toThrow(/Every Google query failed/);
-      const google = calls.find((c) => String(c.url).includes('computeRoutes'));
-      expect(google.body.departureTime).toBeUndefined();
+      const records = await runShadowProbe({ pairs: [pair], graph: lineGraph(pair), upload: false, writeLocal: false });
+      expect(records).toHaveLength(1);
+      expect(records[0].pairId).toBe(pair.id);
+      expect(records[0].localSec).toBeGreaterThan(0);
+      expect(records[0].localMeters).toBeGreaterThan(0);
+      expect(Object.keys(records[0]).some((k) => /google|diff/i.test(k))).toBe(false);
+      expect(calls.some((u) => u.includes('googleapis.com'))).toBe(false);
     } finally {
       vi.unstubAllGlobals();
-      warn.mockRestore();
-      if (prevKey === undefined) delete process.env.MAPS_SERVER_KEY;
-      else process.env.MAPS_SERVER_KEY = prevKey;
     }
   });
 
-  it('reports ignore failed, simulated and pre-fix rows', () => {
+  it('fails the run loudly when the engine routes no pair', async () => {
+    const pair = SHADOW_PAIRS[0];
+    const far = { ...pair, origin: { lat: 1.45, lng: 103.65 }, dest: { lat: 1.45, lng: 103.651 } }; // nowhere near the test road
+    const empty = new RoadGraph(buildGraphFromElements([]));
+    await expect(runShadowProbe({ pairs: [far], graph: empty, upload: false, writeLocal: false })).rejects.toThrow(/no route for any pair/);
+  });
+
+  it('reports ignore engine failures and never read legacy Google fields', () => {
     const rows: any[] = [
-      { at: 'x', pairId: 'a', localSec: 988, googleSec: 988, diffPct: 0, localMs: 100 },
-      { at: 'x', pairId: 'a', localSec: 900, googleSec: null, diffPct: null, localMs: 100, googleOk: false, error: 'HTTP 400' },
-      { at: 'x', pairId: 'a', localSec: 900, googleSec: 1000, diffPct: -10, localMs: 100, googleOk: true },
+      { at: 'x', pairId: 'a', localSec: 988, googleSec: 1, diffPct: 98700, localMs: 100 }, // legacy row: Google fields ignored
+      { at: 'x', pairId: 'a', localSec: 950, googleSec: null, localMs: 100, error: 'Google Routes HTTP 400' }, // Google failed, engine fine
+      { at: 'x', pairId: 'a', localSec: 0, localMs: 100, error: 'Engine found no route' },
+      { at: 'x', pairId: 'a', localSec: 900, localMs: 100 },
+      { at: 'x', pairId: 'a', localSec: 5, localMs: 1, simulated: true }, // test row: skipped entirely
     ];
-    expect(rows.filter(isUsable)).toHaveLength(1);
-    expect(computeStats(rows).count).toBe(1);
-    expect(computeStats(rows).medianAbsErrorPct).toBe(10);
+    expect(computeStats(rows)).toMatchObject({ count: 3, failures: 1, medianLocalSec: 950 });
   });
 });

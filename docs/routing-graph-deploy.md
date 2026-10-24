@@ -104,6 +104,6 @@ When `ROUTING_SHADOW_DRIVE=1` is active:
 - SafeSpot's background worker executes `Router.findRoutesToMany` asynchronously.
 - Cloud Run logs emit structured evaluation JSON lines:
   ```json
-  [PICKUP_DRIVE_EVAL] {"candidateId":"lta-42","departure":"08:30","localSec":720,"googleSec":690,"diffSec":30,"diffPct":"4.3","localMs":185}
+  [PICKUP_DRIVE_EVAL] {"candidateId":"lta-42","departure":"08:30","localSec":720,"localMs":185}
   ```
 - No user PII, coordinates, device IDs, or names are ever logged.

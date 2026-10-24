@@ -2,8 +2,14 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * shadow-probe.ts: Scheduled background probe comparing SafeSpot traffic-aware
- * routing engine vs Google Routes TRAFFIC_AWARE across 10 fixed Singapore O-D corridors.
+ * shadow-probe.ts: Scheduled background probe of the SafeSpot traffic-aware routing
+ * engine across 10 fixed Singapore O-D corridors: ETA, distance and latency.
+ *
+ * Engine only. It used to store Google Routes ETAs next to ours; the Google Maps
+ * Platform terms allow no caching of route durations or distances and bar using
+ * Google results to build or tune a substitute (ToS §3.2.3 (b)-(d)), so it no
+ * longer calls Google. Ground truth comes from LTA speed bands and our own measured
+ * trips instead (docs/clean-room-calibration.md).
  *
  * Runs 6x daily (07:30, 08:30, 12:00, 17:30, 18:30, 22:00 SGT).
  * Emits 10 records per run to gs://safespot-sg-speedbands/shadow/YYYY-MM-DD.jsonl
@@ -31,16 +37,11 @@ export interface ShadowRecord {
   at: string;        // ISO timestamp
   pairId: string;    // Identifier of fixed OD corridor
   localSec: number;  // SafeSpot engine duration in seconds (0 = engine found no route)
-  googleSec: number | null; // Google Routes TRAFFIC_AWARE duration in seconds; null if the query failed
-  diffPct: number | null;   // ((localSec - googleSec) / googleSec) * 100; null unless both sides succeeded
   localMs: number;   // Engine search execution latency in ms
-  localMeters?: number;     // SafeSpot engine distance in meters (0 = engine found no route)
-  googleMeters?: number | null; // Google Routes distanceMeters; null if the query failed
-  /** True only when Google really answered and the engine found a route. Reports use only these rows. */
-  googleOk?: boolean;
-  /** Test-only rows with a made-up Google time. Never uploaded. */
-  simulated?: boolean;
-  /** Why the row can't be compared, e.g. the Google error message. */
+  localMeters?: number; // SafeSpot engine distance in meters (0 = engine found no route)
+  /** Live LTA incidents loaded into the engine for this run. */
+  incidents?: number;
+  /** Why the row has no ETA, e.g. the engine found no route. */
   error?: string;
 }
 
@@ -118,63 +119,6 @@ export function resolveKey(envName: string, filePath: string): string {
     if (content) return content;
   }
   return '';
-}
-
-export interface GoogleDrivingResult {
-  durationSec: number;
-  distanceMeters: number;
-}
-
-/** Queries Google Routes API v2 computeRoutes with TRAFFIC_AWARE routing. */
-export async function queryGoogleDriving(
-  origin: { lat: number; lng: number },
-  dest: { lat: number; lng: number },
-  mapsKey: string,
-): Promise<GoogleDrivingResult | null> {
-  const url = 'https://routes.googleapis.com/directions/v2:computeRoutes';
-  const body = {
-    origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
-    destination: { location: { latLng: { latitude: dest.lat, longitude: dest.lng } } },
-    travelMode: 'DRIVE',
-    routingPreference: 'TRAFFIC_AWARE',
-    // No departureTime: Google then uses "now". Sending our own "now" fails
-    // with "Timestamp must be set to a future time" once it reaches Google.
-  };
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': mapsKey,
-      'X-Goog-FieldMask': 'routes.duration,routes.staticDuration,routes.distanceMeters',
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10000),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`Google Routes HTTP ${res.status}: ${errText.slice(0, 100)}`);
-  }
-
-  const data = (await res.json()) as any;
-  const route = data.routes?.[0];
-  if (!route?.duration) return null;
-
-  return {
-    durationSec: parseInt(String(route.duration).replace('s', ''), 10),
-    distanceMeters: route.distanceMeters ? Number(route.distanceMeters) : 0,
-  };
-}
-
-/** Queries Google Routes API v2 computeRoutes with TRAFFIC_AWARE routing. */
-export async function queryGoogleDrivingSeconds(
-  origin: { lat: number; lng: number },
-  dest: { lat: number; lng: number },
-  mapsKey: string,
-): Promise<number | null> {
-  const res = await queryGoogleDriving(origin, dest, mapsKey);
-  return res ? res.durationSec : null;
 }
 
 /** Fetches live incidents from LTA DataMall if key is provided. */
@@ -284,12 +228,12 @@ async function loadOrDownloadRoadGraph(): Promise<RoadGraph> {
 export async function runShadowProbe(options?: {
   bucket?: string;
   pairs?: ShadowPair[];
-  simulateGoogle?: boolean;
   /** false = never write to Cloud Storage (tests). */
   upload?: boolean;
+  /** false = don't append to tools/routing/out/shadow/ (tests). */
+  writeLocal?: boolean;
   graph?: RoadGraph;
 }): Promise<ShadowRecord[]> {
-  const mapsKey = resolveKey('MAPS_SERVER_KEY', 'C:/Users/SIT EUC/maps_server_key.txt');
   const ltaKey = resolveKey('LTA_DATAMALL_KEY', 'C:/Users/SIT EUC/lta_datamall_key.txt');
   const bucket = options?.bucket || process.env.SPEEDBANDS_BUCKET || 'safespot-sg-speedbands';
   const pairs = options?.pairs || SHADOW_PAIRS;
@@ -298,85 +242,37 @@ export async function runShadowProbe(options?: {
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10);
 
-  // 1. Prepare engine
   const graph = options?.graph ?? (await loadOrDownloadRoadGraph());
   const router = new Router(graph);
   const speedProfiles = new SpeedProfileEngine();
-  const incidents = new IncidentLayer(await fetchLiveIncidents(ltaKey));
+  const liveIncidents = await fetchLiveIncidents(ltaKey);
+  const incidents = new IncidentLayer(liveIncidents);
   const erp = new ErpEngine();
 
   const records: ShadowRecord[] = [];
-
   for (const p of pairs) {
-    // 2. Compute engine ETA
     const t0 = performance.now();
-    const route = router.findRoute(p.origin, p.dest, {
-      departureTime: now,
-      speedProfiles,
-      incidents,
-      erp,
-    });
+    const route = router.findRoute(p.origin, p.dest, { departureTime: now, speedProfiles, incidents, erp });
     const localMs = Math.round(performance.now() - t0);
-    const localSec = route ? Math.round(route.durationSeconds) : 0;
-    const localMeters = route ? Math.round(route.distanceMeters) : 0;
-
-    // 3. Query Google Routes TRAFFIC_AWARE. A failure is recorded as a
-    // failure (googleSec null, googleMeters null), never filled in with the engine's own time.
-    let googleSec: number | null = null;
-    let googleMeters: number | null = null;
-    let error: string | undefined;
-    if (options?.simulateGoogle) {
-      googleSec = Math.round(localSec * (1 + Math.sin(localMs) * 0.05));
-      googleMeters = Math.round(localMeters * (1 + Math.cos(localMs) * 0.02));
-    } else if (!mapsKey) {
-      error = 'MAPS_SERVER_KEY not set';
-    } else {
-      try {
-        const gRes = await queryGoogleDriving(p.origin, p.dest, mapsKey);
-        if (gRes === null) {
-          error = 'Google returned no route';
-        } else {
-          googleSec = gRes.durationSec;
-          googleMeters = gRes.distanceMeters;
-        }
-      } catch (err: any) {
-        error = String(err.message).slice(0, 160);
-        console.warn(`[SHADOW_PROBE] Google query error for ${p.id}: ${error}`);
-      }
-    }
-    if (localSec <= 0 && !error) error = 'Engine found no route';
-
-    const comparable = googleSec !== null && googleSec > 0 && localSec > 0;
-    const diffPct = comparable ? Number((((localSec - googleSec!) / googleSec!) * 100).toFixed(1)) : null;
-
     const rec: ShadowRecord = {
       at: now.toISOString(),
       pairId: p.id,
-      localSec,
-      googleSec,
-      diffPct,
+      localSec: route ? Math.round(route.durationSeconds) : 0,
       localMs,
-      localMeters,
-      googleMeters,
-      googleOk: comparable && !options?.simulateGoogle,
-      ...(options?.simulateGoogle ? { simulated: true } : {}),
-      ...(error ? { error } : {}),
+      localMeters: route ? Math.round(route.distanceMeters) : 0,
+      incidents: liveIncidents.length,
+      ...(route ? {} : { error: 'Engine found no route' }),
     };
     records.push(rec);
-
-    console.log(
-      `  -> ${p.id.padEnd(28)}: local=${localSec}s (${localMeters}m) google=${googleSec ?? 'FAILED'}s (${googleMeters !== null ? `${googleMeters}m` : 'FAILED'}) ` +
-        (diffPct === null ? `(${error})` : `diff=${diffPct > 0 ? '+' : ''}${diffPct}%`) +
-        ` (${localMs}ms)`,
-    );
+    console.log(`  -> ${p.id.padEnd(28)}: ${route ? `${rec.localSec}s (${rec.localMeters}m)` : 'NO ROUTE'} (${localMs}ms)`);
   }
 
-  // 4. Save locally
-  const localFile = appendLocalShadowRecords(records, dateStr);
-  console.log(`[SHADOW_PROBE] Appended ${records.length} records to local: ${localFile}`);
+  if (options?.writeLocal !== false) {
+    const localFile = appendLocalShadowRecords(records, dateStr);
+    console.log(`[SHADOW_PROBE] Appended ${records.length} records to local: ${localFile}`);
+  }
 
-  // 5. Upload/append to GCS if accessible
-  if (bucket && !options?.simulateGoogle && options?.upload !== false) {
+  if (bucket && options?.upload !== false) {
     try {
       const gcsUri = await appendGcsShadowRecords(records, bucket, dateStr);
       console.log(`[SHADOW_PROBE] Synchronized records to Cloud Storage: ${gcsUri}`);
@@ -385,12 +281,11 @@ export async function runShadowProbe(options?: {
     }
   }
 
-  const ok = records.filter((r) => r.googleOk).length;
-  console.log(`[SHADOW_PROBE] ${ok}/${records.length} pairs compared successfully.`);
-  if (!options?.simulateGoogle && records.length > 0 && ok === 0) {
-    throw new Error('Every Google query failed; no usable comparisons this run.');
+  const ok = records.filter((r) => !r.error).length;
+  console.log(`[SHADOW_PROBE] ${ok}/${records.length} pairs routed.`);
+  if (records.length > 0 && ok === 0) {
+    throw new Error('The engine found no route for any pair; no usable rows this run.');
   }
-
   return records;
 }
 
