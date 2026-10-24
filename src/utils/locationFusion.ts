@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { BLEBeaconScan, LocationSource } from '../types';
+import { BLEBeaconScan, Incident, LocationSource, SourceFix } from '../types';
 import { hasVenueGradePrecision } from './ble';
 import { haversineMeters } from './geo';
 
@@ -12,20 +12,21 @@ export interface WatchLocationInput {
   lng: number | null | undefined;
   timestamp: number;
   positionAge?: number | null; // Age in seconds reported by watch (e.g. background fix)
-  accuracy?: number; // Estimated accuracy in meters
+  accuracy?: number | null; // Estimated accuracy in meters; null/undefined = not reported
 }
 
 export interface PhoneLocationInput {
   latitude: number | null | undefined;
   longitude: number | null | undefined;
-  accuracy: number;
+  accuracy: number | null; // null = the device didn't report one
   timestamp: number;
 }
 
 export interface FusedLocationResult {
   lat: number;
   lng: number;
-  accuracy: number;
+  /** Metres; null when the chosen source didn't report an accuracy (never invented). */
+  accuracy: number | null;
   timestamp: number;
   source: LocationSource;
   sourceLabelKey: 'fusion.watchGps' | 'fusion.phoneBle' | 'fusion.phoneGps' | 'fusion.combined';
@@ -43,10 +44,13 @@ export const MAX_FRESH_AGE_MS = 180_000;
 export const MAX_BEACON_AGE_MS = 60_000;
 /** Sub-5m beacon proximity for indoor floor precision */
 export const VENUE_PRECISION_DISTANCE_M = 5;
-/** Default baseline accuracy for Garmin multi-GNSS outdoor fix */
-export const DEFAULT_WATCH_ACCURACY_M = 15;
 /** Roughly how far an elderly person walks per second; widens an older fix's uncertainty. */
 export const WALKING_SPEED_MPS = 1.0;
+
+/** A reported accuracy radius, or null when it is missing or not a positive finite number. */
+export function reportedAccuracy(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
 
 /** A fix's uncertainty grows with its age, because the person may have moved since. */
 export function ageAdjustedAccuracy(accuracyM: number, ageMs: number): number {
@@ -82,11 +86,11 @@ export function combineAgreeingFixes(
  * 1. Phone BLE Beacon Micro-Location: In Singapore HDB void decks, lift lobbies,
  *    and MRT stations where satellite GNSS signals drop or reflect, a nearby
  *    surveyed venue beacon (<5m) provides verified sub-3m/floor-level precision.
- * 2. Garmin Watch Multi-GNSS: Outdoors, the watch GPS fix is preferred when fresh
- *    (<3 min) because wrist-worn hardware has unobstructed sky view, unlike a phone
- *    carried in a pocket or bag.
- * 3. Phone GPS: Used when the watch fix is absent, stale (>3 min), or when the watch
- *    is offline.
+ * 2. Watch + phone GNSS: fresh (<3 min) fixes that agree are combined by inverse
+ *    variance; otherwise the fresh fix with the tighter age-adjusted accuracy wins
+ *    (the watch on a tie or when neither reports accuracy: wrist-worn hardware has a
+ *    clearer sky view than a phone in a pocket or bag).
+ * 3. Neither fresh: the newer stale fix, flagged isStale.
  */
 export function fuseLocations(params: {
   watchLocation?: WatchLocationInput | null;
@@ -134,152 +138,145 @@ export function fuseLocations(params: {
     }
   }
 
-  // ── 2. Evaluate Watch GPS Coordinates ─────────────────────────────────────
-  const hasWatchCoords =
-    watchLocation != null &&
-    watchLocation.lat != null &&
-    watchLocation.lng != null &&
-    !isNaN(watchLocation.lat) &&
-    !isNaN(watchLocation.lng) &&
-    (watchLocation.lat !== 0 || watchLocation.lng !== 0);
+  // ── 2. Watch and phone GNSS candidates ────────────────────────────────────
+  const validCoords = (lat: number | null | undefined, lng: number | null | undefined): boolean =>
+    lat != null && lng != null && !isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0);
 
-  const watchAgeMs = hasWatchCoords
-    ? Math.max(0, now - watchLocation!.timestamp) +
-      Math.max(0, (watchLocation!.positionAge || 0) * 1000)
-    : Number.POSITIVE_INFINITY;
-  const isWatchFresh = hasWatchCoords && watchAgeMs <= MAX_FRESH_AGE_MS;
+  type Candidate = {
+    lat: number;
+    lng: number;
+    accuracy: number | null;
+    timestamp: number;
+    ageMs: number;
+    fresh: boolean;
+    source: 'watch_gps' | 'phone_gps';
+  };
+  const candidates: Candidate[] = [];
 
-  // ── 3. Evaluate Phone GPS Coordinates ─────────────────────────────────────
-  const hasPhoneCoords =
-    phoneLocation != null &&
-    phoneLocation.latitude != null &&
-    phoneLocation.longitude != null &&
-    !isNaN(phoneLocation.latitude) &&
-    !isNaN(phoneLocation.longitude) &&
-    (phoneLocation.latitude !== 0 || phoneLocation.longitude !== 0);
-
-  const phoneAgeMs = hasPhoneCoords
-    ? Math.max(0, now - phoneLocation!.timestamp)
-    : Number.POSITIVE_INFINITY;
-  const isPhoneFresh = hasPhoneCoords && phoneAgeMs <= MAX_FRESH_AGE_MS;
-
-  // ── 4. Decision Matrix: Watch vs Phone ─────────────────────────────────────
-  if (hasWatchCoords && hasPhoneCoords) {
-    // Both fresh and in agreement: combine them for a tighter fix.
-    if (isWatchFresh && isPhoneFresh) {
-      const combined = combineAgreeingFixes(
-        {
-          lat: watchLocation!.lat!,
-          lng: watchLocation!.lng!,
-          accuracy: ageAdjustedAccuracy(watchLocation!.accuracy ?? DEFAULT_WATCH_ACCURACY_M, watchAgeMs),
-        },
-        {
-          lat: phoneLocation!.latitude!,
-          lng: phoneLocation!.longitude!,
-          accuracy: ageAdjustedAccuracy(phoneLocation!.accuracy, phoneAgeMs),
-        },
-      );
-      if (combined) {
-        return {
-          ...combined,
-          timestamp: Math.max(watchLocation!.timestamp, phoneLocation!.timestamp),
-          source: 'fused_gps',
-          sourceLabelKey: 'fusion.combined',
-          isIndoorAssisted: false,
-          isStale: false,
-          effectiveAgeSeconds: Math.round(Math.min(watchAgeMs, phoneAgeMs) / 1000),
-        };
-      }
-    }
-
-    // Disagreeing (or only the watch is fresh): prefer the watch outdoors,
-    // which has a clearer view of the sky than a phone in a pocket or bag.
-    if (isWatchFresh) {
-      return {
-        lat: watchLocation!.lat!,
-        lng: watchLocation!.lng!,
-        accuracy: watchLocation!.accuracy ?? DEFAULT_WATCH_ACCURACY_M,
-        timestamp: watchLocation!.timestamp,
-        source: 'watch_gps',
-        sourceLabelKey: 'fusion.watchGps',
-        isIndoorAssisted: false,
-        isStale: false,
-        effectiveAgeSeconds: Math.round(watchAgeMs / 1000),
-      };
-    }
-
-    // Watch fix is stale (>3 min). If phone fix is fresh, fallback to phone!
-    if (isPhoneFresh) {
-      return {
-        lat: phoneLocation!.latitude!,
-        lng: phoneLocation!.longitude!,
-        accuracy: phoneLocation!.accuracy,
-        timestamp: phoneLocation!.timestamp,
-        source: 'phone_gps',
-        sourceLabelKey: 'fusion.phoneGps',
-        isIndoorAssisted: false,
-        isStale: false,
-        effectiveAgeSeconds: Math.round(phoneAgeMs / 1000),
-      };
-    }
-
-    // Neither is fresh: select the fresher of the two stale fixes
-    if (watchAgeMs <= phoneAgeMs) {
-      return {
-        lat: watchLocation!.lat!,
-        lng: watchLocation!.lng!,
-        accuracy: watchLocation!.accuracy ?? DEFAULT_WATCH_ACCURACY_M,
-        timestamp: watchLocation!.timestamp,
-        source: 'watch_gps',
-        sourceLabelKey: 'fusion.watchGps',
-        isIndoorAssisted: false,
-        isStale: true,
-        effectiveAgeSeconds: Math.round(watchAgeMs / 1000),
-      };
-    } else {
-      return {
-        lat: phoneLocation!.latitude!,
-        lng: phoneLocation!.longitude!,
-        accuracy: phoneLocation!.accuracy,
-        timestamp: phoneLocation!.timestamp,
-        source: 'phone_gps',
-        sourceLabelKey: 'fusion.phoneGps',
-        isIndoorAssisted: false,
-        isStale: true,
-        effectiveAgeSeconds: Math.round(phoneAgeMs / 1000),
-      };
-    }
-  }
-
-  // ── 5. Single Source Availability ──────────────────────────────────────────
-  if (hasWatchCoords) {
-    return {
-      lat: watchLocation!.lat!,
-      lng: watchLocation!.lng!,
-      accuracy: watchLocation!.accuracy ?? DEFAULT_WATCH_ACCURACY_M,
-      timestamp: watchLocation!.timestamp,
+  if (watchLocation && validCoords(watchLocation.lat, watchLocation.lng)) {
+    const ageMs = Math.max(0, now - watchLocation.timestamp) + Math.max(0, (watchLocation.positionAge || 0) * 1000);
+    candidates.push({
+      lat: watchLocation.lat!,
+      lng: watchLocation.lng!,
+      accuracy: reportedAccuracy(watchLocation.accuracy),
+      timestamp: watchLocation.timestamp,
+      ageMs,
+      fresh: ageMs <= MAX_FRESH_AGE_MS,
       source: 'watch_gps',
-      sourceLabelKey: 'fusion.watchGps',
-      isIndoorAssisted: false,
-      isStale: !isWatchFresh,
-      effectiveAgeSeconds: Math.round(watchAgeMs / 1000),
-    };
+    });
   }
-
-  if (hasPhoneCoords) {
-    return {
-      lat: phoneLocation!.latitude!,
-      lng: phoneLocation!.longitude!,
-      accuracy: phoneLocation!.accuracy,
-      timestamp: phoneLocation!.timestamp,
+  if (phoneLocation && validCoords(phoneLocation.latitude, phoneLocation.longitude)) {
+    const ageMs = Math.max(0, now - phoneLocation.timestamp);
+    candidates.push({
+      lat: phoneLocation.latitude!,
+      lng: phoneLocation.longitude!,
+      accuracy: reportedAccuracy(phoneLocation.accuracy),
+      timestamp: phoneLocation.timestamp,
+      ageMs,
+      fresh: ageMs <= MAX_FRESH_AGE_MS,
       source: 'phone_gps',
-      sourceLabelKey: 'fusion.phoneGps',
-      isIndoorAssisted: false,
-      isStale: !isPhoneFresh,
-      effectiveAgeSeconds: Math.round(phoneAgeMs / 1000),
-    };
+    });
+  }
+  if (candidates.length === 0) return null;
+
+  const single = (c: Candidate): FusedLocationResult => ({
+    lat: c.lat,
+    lng: c.lng,
+    accuracy: c.accuracy,
+    timestamp: c.timestamp,
+    source: c.source,
+    sourceLabelKey: c.source === 'watch_gps' ? 'fusion.watchGps' : 'fusion.phoneGps',
+    isIndoorAssisted: false,
+    isStale: !c.fresh,
+    effectiveAgeSeconds: Math.round(c.ageMs / 1000),
+  });
+
+  const fresh = candidates.filter((c) => c.fresh);
+
+  // ── 3. Both fresh and both with a reported accuracy: combine if they agree ──
+  if (fresh.length === 2 && fresh[0].accuracy !== null && fresh[1].accuracy !== null) {
+    const [a, b] = fresh;
+    const combined = combineAgreeingFixes(
+      { lat: a.lat, lng: a.lng, accuracy: ageAdjustedAccuracy(a.accuracy!, a.ageMs) },
+      { lat: b.lat, lng: b.lng, accuracy: ageAdjustedAccuracy(b.accuracy!, b.ageMs) },
+    );
+    if (combined) {
+      return {
+        ...combined,
+        timestamp: Math.max(a.timestamp, b.timestamp),
+        source: 'fused_gps',
+        sourceLabelKey: 'fusion.combined',
+        isIndoorAssisted: false,
+        isStale: false,
+        effectiveAgeSeconds: Math.round(Math.min(a.ageMs, b.ageMs) / 1000),
+      };
+    }
   }
 
-  // ── 6. Neither Source Available ────────────────────────────────────────────
-  return null;
+  // ── 4. Otherwise pick one ──────────────────────────────────────────────────
+  // Among fresh fixes, the tighter age-adjusted accuracy wins (a 60 m watch fix
+  // loses to a 5 m phone fix). A fix with no reported accuracy ranks after any
+  // that has one; between two of those the watch wins (clearer view of the sky
+  // than a phone in a pocket). With nothing fresh, the newer stale fix wins.
+  if (fresh.length > 0) {
+    const rank = (c: Candidate) => (c.accuracy === null ? Number.POSITIVE_INFINITY : ageAdjustedAccuracy(c.accuracy, c.ageMs));
+    const best = [...fresh].sort((x, y) => rank(x) - rank(y) || (x.source === 'watch_gps' ? -1 : 1))[0];
+    return single(best);
+  }
+  return single([...candidates].sort((x, y) => x.ageMs - y.ageMs || (x.source === 'watch_gps' ? -1 : 1))[0]);
+}
+
+/** The location fields of an incident, recomputed from its per-source fixes. */
+export type IncidentLocation = Pick<Incident, 'currentGps' | 'locationSource' | 'floorLevel' | 'venueName'>;
+
+/**
+ * Fuses an incident's latest watch and phone fixes. The watch (server) and the
+ * phone (client) each write only their own fix, then call this with the other
+ * side's latest one, so neither blindly overwrites a better fix from the other.
+ * A fresh venue-beacon placement on the phone side wins, as in fuseLocations.
+ */
+export function fuseIncidentFixes(
+  watchFix: SourceFix | null | undefined,
+  phoneFix: SourceFix | null | undefined,
+  now: number = Date.now(),
+): IncidentLocation | null {
+  if (phoneFix?.source === 'phone_ble_assisted' && now - phoneFix.timestamp <= MAX_BEACON_AGE_MS) {
+    return {
+      currentGps: { lat: phoneFix.lat, lng: phoneFix.lng, accuracy: phoneFix.accuracy, timestamp: phoneFix.timestamp },
+      locationSource: 'phone_ble_assisted',
+      floorLevel: phoneFix.floorLevel,
+      venueName: phoneFix.venueName,
+    };
+  }
+  const fused = fuseLocations({
+    watchLocation: watchFix ? { lat: watchFix.lat, lng: watchFix.lng, timestamp: watchFix.timestamp, accuracy: watchFix.accuracy } : null,
+    phoneLocation: phoneFix ? { latitude: phoneFix.lat, longitude: phoneFix.lng, timestamp: phoneFix.timestamp, accuracy: phoneFix.accuracy } : null,
+    now,
+  });
+  if (!fused) return null;
+  return {
+    currentGps: { lat: fused.lat, lng: fused.lng, accuracy: fused.accuracy, timestamp: fused.timestamp },
+    locationSource: fused.source,
+    floorLevel: undefined,
+    venueName: undefined,
+  };
+}
+
+/** The phone side's own fix: a fresh venue-beacon placement if one is in range, else its GNSS fix. */
+export function phoneSideFix(
+  phone: { latitude: number; longitude: number; accuracy: number | null; timestamp: number } | null | undefined,
+  beacons: BLEBeaconScan[],
+  now: number = Date.now(),
+): SourceFix | null {
+  const f = fuseLocations({ phoneLocation: phone ?? null, beacons, now });
+  if (!f) return null;
+  return {
+    lat: f.lat,
+    lng: f.lng,
+    accuracy: f.accuracy,
+    timestamp: f.timestamp,
+    source: f.source,
+    floorLevel: f.floorLevel,
+    venueName: f.venueName,
+  };
 }

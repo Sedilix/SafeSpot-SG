@@ -277,7 +277,7 @@ export const HeroPickMeUpCamera: React.FC<HeroPickMeUpCameraProps> = ({
             <span className="sr-only">{t('hero.compassHeading', lang)} </span>
             {liveOrientation?.heading != null ? `${Math.round(liveOrientation.heading)}°` : '—'}
           </span>
-          {gps && (
+          {gps && gps.accuracy != null && (
             <span
               className={gps.accuracy <= 15 ? 'text-pine-deep' : gps.accuracy <= 40 ? 'text-ochre-deep' : 'text-brick'}
             >

@@ -70,10 +70,11 @@ import {
   CrashEventData 
 } from './utils/fallDetection';
 import { getBeaconsForVerification, getNearbyBeacons, startBeaconScan, stopBeaconScan, updateBeaconsFromGps } from './utils/ble';
-import { fuseLocations, WatchLocationInput } from './utils/locationFusion';
+import { fuseIncidentFixes, phoneSideFix, reportedAccuracy, WatchLocationInput } from './utils/locationFusion';
+import type { SourceFix } from './types';
 import { getPreferredContact } from './utils/contacts';
 import { resolveSavedPlace } from './utils/places';
-import { auth, subscribeToUserProfile, saveUserProfile, createIncident, updateIncident } from './lib/firebase';
+import { auth, subscribeToUserProfile, saveUserProfile, createIncident, updateIncident, subscribeToIncident } from './lib/firebase';
 import { authFetch } from './lib/authFetch';
 import { publicBaseUrl } from './lib/native';
 import { appPermissionKey, getCurrentPosition, permissionText, watchPosition } from './lib/geolocation';
@@ -389,7 +390,7 @@ function SeniorSafeSpotHome() {
           const loc: GPSLocation = {
             latitude: pos.coords.latitude,
             longitude: pos.coords.longitude,
-            accuracy: pos.coords.accuracy || 15,
+            accuracy: reportedAccuracy(pos.coords.accuracy),
             heading: pos.coords.heading,
             speed: pos.coords.speed,
             altitude: pos.coords.altitude,
@@ -491,7 +492,7 @@ function SeniorSafeSpotHome() {
             const freshLoc: GPSLocation = {
               latitude: pos.coords.latitude,
               longitude: pos.coords.longitude,
-              accuracy: pos.coords.accuracy || 15,
+              accuracy: reportedAccuracy(pos.coords.accuracy),
               heading: pos.coords.heading,
               speed: pos.coords.speed,
               altitude: pos.coords.altitude,
@@ -577,25 +578,18 @@ function SeniorSafeSpotHome() {
         }
       }
 
-      const fused = fuseLocations({
-        watchLocation: watchLoc,
-        phoneLocation: gps
-          ? {
-              latitude: gps.latitude,
-              longitude: gps.longitude,
-              accuracy: gps.accuracy,
-              timestamp: gps.timestamp,
-            }
-          : null,
-        beacons: getNearbyBeacons(),
-        now,
-      });
-
-      const currentGps = fused
-        ? { lat: fused.lat, lng: fused.lng, accuracy: fused.accuracy, timestamp: fused.timestamp }
-        : gps
-          ? { lat: gps.latitude, lng: gps.longitude, accuracy: gps.accuracy, timestamp: gps.timestamp }
-          : null;
+      // Each source keeps its own fix on the incident; currentGps is their fusion.
+      const phoneFix = phoneSideFix(gps, getNearbyBeacons(), now);
+      const watchFix: SourceFix | null = watchLoc
+        ? {
+            lat: watchLoc.lat!,
+            lng: watchLoc.lng!,
+            accuracy: reportedAccuracy(watchLoc.accuracy),
+            timestamp: watchLoc.timestamp - (watchLoc.positionAge || 0) * 1000,
+            source: 'watch_gps',
+          }
+        : null;
+      const fused = fuseIncidentFixes(watchFix, phoneFix, now);
 
       const incidentId = await createIncident({
         deviceId: userProfile?.wearableDeviceId,
@@ -606,8 +600,10 @@ function SeniorSafeSpotHome() {
         medicalNotes: userProfile?.medicalNotes || '',
         incidentType,
         crashMetrics,
-        currentGps,
-        locationSource: fused?.source || (gps ? 'phone_gps' : undefined),
+        currentGps: fused?.currentGps ?? null,
+        watchFix,
+        phoneFix,
+        locationSource: fused?.locationSource,
         floorLevel: fused?.floorLevel,
         venueName: fused?.venueName,
         batteryLevel: batt.level,
@@ -673,6 +669,11 @@ function SeniorSafeSpotHome() {
   useEffect(() => {
     if (!activeIncidentId) return;
 
+    let latestWatchFix: SourceFix | null = null;
+    const unsubscribeIncident = subscribeToIncident(activeIncidentId, (inc) => {
+      latestWatchFix = inc?.watchFix ?? null;
+    });
+
     let stopWatch: (() => void) | null = null;
     if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
       stopWatch = watchPosition(
@@ -681,35 +682,16 @@ function SeniorSafeSpotHome() {
           if (now - lastIncidentGpsPushRef.current < 5000) return;
           lastIncidentGpsPushRef.current = now;
 
-          const fusedStream = fuseLocations({
-            phoneLocation: {
-              latitude: pos.coords.latitude,
-              longitude: pos.coords.longitude,
-              accuracy: pos.coords.accuracy || 15,
-              timestamp: pos.timestamp,
-            },
-            beacons: getNearbyBeacons(),
+          // Write only the phone's own fix, fused with the watch's latest one
+          // (kept fresh by the subscription below), so a phone tick never
+          // overwrites a better watch fix.
+          const phoneFix = phoneSideFix(
+            { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: reportedAccuracy(pos.coords.accuracy), timestamp: pos.timestamp },
+            getNearbyBeacons(),
             now,
-          });
-
-          void updateIncident(activeIncidentId, {
-            currentGps: fusedStream
-              ? {
-                  lat: fusedStream.lat,
-                  lng: fusedStream.lng,
-                  accuracy: fusedStream.accuracy,
-                  timestamp: fusedStream.timestamp,
-                }
-              : {
-                  lat: pos.coords.latitude,
-                  lng: pos.coords.longitude,
-                  accuracy: pos.coords.accuracy || 15,
-                  timestamp: pos.timestamp,
-                },
-            locationSource: fusedStream?.source ?? 'phone_gps',
-            floorLevel: fusedStream?.floorLevel,
-            venueName: fusedStream?.venueName,
-          });
+          );
+          const fused = fuseIncidentFixes(latestWatchFix, phoneFix, now);
+          void updateIncident(activeIncidentId, { phoneFix, ...(fused ?? {}) });
         },
         () => {},
         { enableHighAccuracy: true, maximumAge: 3000 }
@@ -726,6 +708,7 @@ function SeniorSafeSpotHome() {
     return () => {
       stopWatch?.();
       unwatchBattery();
+      unsubscribeIncident();
     };
   }, [activeIncidentId]);
 

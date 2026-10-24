@@ -6,7 +6,7 @@
 export interface GPSLocation {
   latitude: number;
   longitude: number;
-  accuracy: number; // in meters
+  accuracy: number | null; // in meters; null when the device didn't report one
   heading: number | null;
   speed: number | null;
   altitude: number | null;
@@ -50,7 +50,7 @@ export interface LocationVerificationResult {
   originalCoordinates: {
     lat: number;
     lng: number;
-    accuracyMeters: number;
+    accuracyMeters: number | null;
   };
   verifiedCoordinates: {
     lat: number;
@@ -310,6 +310,20 @@ export interface AccessibilitySettings {
 
 export type LocationSource = 'watch_gps' | 'phone_gps' | 'phone_ble_assisted' | 'fused_gps';
 
+/** One source's latest fix on an incident; `currentGps` is recomputed from these by whoever writes. */
+export interface SourceFix {
+  lat: number;
+  lng: number;
+  /** Metres; null when the source didn't report one. */
+  accuracy: number | null;
+  /** When the fix was taken (ms), not when it was sent. */
+  timestamp: number;
+  /** For the phone: 'phone_ble_assisted' when a surveyed venue beacon placed it. */
+  source?: LocationSource;
+  floorLevel?: string;
+  venueName?: string;
+}
+
 /**
  * Live incident document stored at Firestore `Incidents/{incidentId}`.
  * Created when the elder alerts family or when a crash/fall is detected.
@@ -331,9 +345,12 @@ export interface Incident {
   currentGps: {
     lat: number;
     lng: number;
-    accuracy: number;
+    accuracy: number | null; // metres; null = not reported by the source
     timestamp: number;
   } | null;
+  /** Latest watch and phone fixes; currentGps is the fusion of the two. */
+  watchFix?: SourceFix | null;
+  phoneFix?: SourceFix | null;
   locationSource?: LocationSource;
   floorLevel?: string;
   venueName?: string;

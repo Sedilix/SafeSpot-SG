@@ -11,8 +11,11 @@ import {
   MAX_FRESH_AGE_MS,
   WatchLocationInput,
   PhoneLocationInput,
+  reportedAccuracy,
+  fuseIncidentFixes,
+  phoneSideFix,
 } from './locationFusion';
-import { BLEBeaconScan } from '../types';
+import { BLEBeaconScan, SourceFix } from '../types';
 
 describe('locationFusion', () => {
   const BASE_TIME = 1_700_000_000_000;
@@ -20,7 +23,7 @@ describe('locationFusion', () => {
   const validWatch: WatchLocationInput = {
     lat: 1.2965,
     lng: 103.7865,
-    timestamp: BASE_TIME - 30_000, // 30s ago
+    timestamp: BASE_TIME - 5_000, // 5s ago: still ±12 m, tighter than the phone's ±25 m
     positionAge: 0,
     accuracy: 12,
   };
@@ -195,11 +198,94 @@ describe('locationFusion', () => {
       expect(result!.accuracy).toBe(6); // 1/sqrt(1/36 + 1/324) = 5.7, rounded
     });
 
-    it('does not average fixes that disagree; prefers the fresh watch fix', () => {
+    it('does not average fixes that disagree; keeps the tighter one (here the watch)', () => {
       const result = fuseLocations({ watchLocation: validWatch, phoneLocation: validPhone, now: BASE_TIME });
-      expect(result?.source).toBe('watch_gps'); // about 78 m apart vs 57 m combined uncertainty
+      expect(result?.source).toBe('watch_gps'); // about 78 m apart vs 37 m combined uncertainty
     });
 
+    it('a 5 m phone fix beats a disagreeing 60 m watch fix', () => {
+      const result = fuseLocations({
+        watchLocation: { ...validWatch, accuracy: 60 },
+        phoneLocation: { ...validPhone, accuracy: 5 },
+        now: BASE_TIME,
+      });
+      expect(result?.source).toBe('phone_gps');
+      expect(result?.accuracy).toBe(5);
+    });
+
+    it('compares age-adjusted accuracy: a ±12 m watch fix 30 s old loses to a ±25 m phone fix 10 s old', () => {
+      const result = fuseLocations({
+        watchLocation: { ...validWatch, timestamp: BASE_TIME - 30_000 }, // ±12 + 20 s × 1 m/s = ±32 m now
+        phoneLocation: validPhone,
+        now: BASE_TIME,
+      });
+      expect(result?.source).toBe('phone_gps');
+    });
+  });
+
+  describe('Unreported accuracy', () => {
+    it('reportedAccuracy keeps positive finite numbers and nulls everything else', () => {
+      expect(reportedAccuracy(8.5)).toBe(8.5);
+      for (const v of [0, -3, NaN, Infinity, null, undefined]) expect(reportedAccuracy(v as any)).toBeNull();
+    });
+
+    it('never combines with, or prefers, a fix that has no accuracy over one that has', () => {
+      const result = fuseLocations({
+        watchLocation: { ...validWatch, accuracy: undefined },
+        phoneLocation: { ...validPhone, latitude: validWatch.lat!, longitude: validWatch.lng! }, // same spot
+        now: BASE_TIME,
+      });
+      expect(result?.source).toBe('phone_gps');
+      expect(result?.accuracy).toBe(25);
+    });
+
+    it('reports null, not a default, when the only fix has no accuracy', () => {
+      const result = fuseLocations({ watchLocation: { ...validWatch, accuracy: undefined }, phoneLocation: null, now: BASE_TIME });
+      expect(result?.source).toBe('watch_gps');
+      expect(result?.accuracy).toBeNull();
+    });
+
+    it('prefers the watch when neither fresh fix reports accuracy', () => {
+      const result = fuseLocations({
+        watchLocation: { ...validWatch, accuracy: null },
+        phoneLocation: { ...validPhone, accuracy: null },
+        now: BASE_TIME,
+      });
+      expect(result?.source).toBe('watch_gps');
+      expect(result?.accuracy).toBeNull();
+    });
+  });
+
+  describe('Incident fixes (watch writes watchFix, phone writes phoneFix)', () => {
+    const watchFix: SourceFix = { lat: 1.2965, lng: 103.7865, accuracy: 60, timestamp: BASE_TIME - 5_000, source: 'watch_gps' };
+    const phoneFix: SourceFix = { lat: 1.297, lng: 103.787, accuracy: 5, timestamp: BASE_TIME - 2_000, source: 'phone_gps' };
+
+    it('fuses the two sides into currentGps', () => {
+      const loc = fuseIncidentFixes(watchFix, phoneFix, BASE_TIME);
+      expect(loc?.locationSource).toBe('phone_gps');
+      expect(loc?.currentGps).toEqual({ lat: 1.297, lng: 103.787, accuracy: 5, timestamp: BASE_TIME - 2_000 });
+    });
+
+    it('uses either side alone, and returns null with neither', () => {
+      expect(fuseIncidentFixes(watchFix, null, BASE_TIME)?.locationSource).toBe('watch_gps');
+      expect(fuseIncidentFixes(null, phoneFix, BASE_TIME)?.locationSource).toBe('phone_gps');
+      expect(fuseIncidentFixes(null, null, BASE_TIME)).toBeNull();
+    });
+
+    it("a fresh beacon placement on the phone side wins, with its floor; a stale one doesn't", () => {
+      const beaconFix = phoneSideFix(null, [indoorBeacon], BASE_TIME)!;
+      expect(beaconFix.source).toBe('phone_ble_assisted');
+      const loc = fuseIncidentFixes(watchFix, beaconFix, BASE_TIME);
+      expect(loc?.locationSource).toBe('phone_ble_assisted');
+      expect(loc?.floorLevel).toBe('Level 1 (Ground)');
+
+      const stale = fuseIncidentFixes(watchFix, beaconFix, BASE_TIME + 120_000);
+      expect(stale?.locationSource).not.toBe('phone_ble_assisted');
+      expect(stale?.floorLevel).toBeUndefined();
+    });
+  });
+
+  describe('Accuracy arithmetic', () => {
     it('never claims better than 3 m', () => {
       const c = combineAgreeingFixes({ lat: 1.3, lng: 103.8, accuracy: 3 }, { lat: 1.3, lng: 103.8, accuracy: 3 });
       expect(c?.accuracy).toBe(3);

@@ -184,7 +184,7 @@ export const CaregiverLiveTracker: React.FC<CaregiverLiveTrackerProps> = ({ inci
                     <Clock className="text-ink-soft h-4 w-4 shrink-0" aria-hidden="true" />
                     <span>
                       {t('tracker.lastUpdated', lang)}: {lastUpdatedText}
-                      {gps && ` • ±${Math.round(gps.accuracy)}m`}
+                      {gps?.accuracy != null && ` • ±${Math.round(gps.accuracy)}m`}
                     </span>
                   </div>
 
