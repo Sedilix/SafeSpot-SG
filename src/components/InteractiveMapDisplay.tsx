@@ -20,7 +20,7 @@ import { t } from '../locales/translations';
  * show the OpenStreetMap fallback instead. Without this, React 19 unmounts
  * the whole app on the uncaught error and the screen goes blank.
  */
-type MapErrorBoundaryProps = { fallback: React.ReactNode; children: React.ReactNode };
+type MapErrorBoundaryProps = { fallback: React.ReactNode; children: React.ReactNode; onFail?: () => void };
 class MapErrorBoundary extends React.Component<MapErrorBoundaryProps, { failed: boolean }> {
   declare props: MapErrorBoundaryProps;
   state = { failed: false };
@@ -29,6 +29,7 @@ class MapErrorBoundary extends React.Component<MapErrorBoundaryProps, { failed: 
   }
   componentDidCatch(err: unknown) {
     console.warn('Google map failed, showing the fallback map:', err);
+    this.props.onFail?.();
   }
   render() {
     return this.state.failed ? this.props.fallback : this.props.children;
@@ -81,17 +82,26 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
     }
   }, [dynamicKey]);
 
+  const mapsAuthFailed = useMapsAuthFailed();
+  const [googleMapFailed, setGoogleMapFailed] = useState(false);
+  const mapsApiKey = mapsAuthFailed ? '' : dynamicKey;
+  // The OpenStreetMap fallback may only show the device's own GPS fix: the
+  // verified pin and address can come from Street View, Roads or Geocoding, and
+  // the Google Maps Platform terms bar showing Google content with or near a
+  // non-Google map (ToS §3.2.3(e)). So the whole card switches to raw GPS.
+  const onFallback = !mapsApiKey || googleMapFailed;
+  const useVerified = !onFallback && Boolean(verification?.verifiedCoordinates);
+
   // Never show a made-up position: with no fix, the card says it is waiting
   // instead of pinning (and offering to navigate to) a default location.
-  const lat = verification?.verifiedCoordinates?.lat ?? gps?.latitude ?? null;
-  const lng = verification?.verifiedCoordinates?.lng ?? gps?.longitude ?? null;
-  const isVerified = Boolean(verification?.verifiedCoordinates);
-  const address = verification?.formattedAddress || (lat !== null && lng !== null ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : '');
-  const accuracyMeters =
-    verification?.originalCoordinates?.accuracyMeters ?? gps?.accuracy ?? null;
-
-  const mapsAuthFailed = useMapsAuthFailed();
-  const mapsApiKey = mapsAuthFailed ? '' : dynamicKey;
+  const lat = useVerified ? verification!.verifiedCoordinates.lat : gps?.latitude ?? null;
+  const lng = useVerified ? verification!.verifiedCoordinates.lng : gps?.longitude ?? null;
+  const isVerified = useVerified;
+  const coordsText = lat !== null && lng !== null ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : '';
+  const address = useVerified ? verification?.formattedAddress || coordsText : coordsText;
+  const accuracyMeters = useVerified
+    ? verification?.originalCoordinates?.accuracyMeters ?? gps?.accuracy ?? null
+    : gps?.accuracy ?? null;
 
   // The Google map draws its marker and accuracy ring itself, so it needs
   // real colour values: read the theme's pine token instead of hard-coding
@@ -203,7 +213,7 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
             <p className="text-ink-soft mt-1 text-sm font-normal tabular-nums sm:text-base">
               {t('map.precision', lang)} {lat.toFixed(5)}, {lng.toFixed(5)}
               {accuracyMeters != null && ` • ±${Math.round(accuracyMeters)}m`}
-              {verification?.refinedByCandidate && ` • ${t('map.streetViewChecked', lang)}`}
+              {useVerified && verification?.refinedByCandidate && ` • ${t('map.streetViewChecked', lang)}`}
             </p>
           </div>
         </div>
@@ -217,7 +227,7 @@ export const InteractiveMapDisplay: React.FC<InteractiveMapDisplayProps> = ({
       {/* Map Container */}
       <div className="border-line-strong/60 bg-well relative h-72 w-full overflow-hidden rounded-xl border-2 shadow-inner sm:h-96">
         {mapsApiKey ? (
-          <MapErrorBoundary fallback={fallbackMap}>
+          <MapErrorBoundary fallback={fallbackMap} onFail={() => setGoogleMapFailed(true)}>
             <APIProvider apiKey={mapsApiKey}>
               <Map
                 defaultCenter={{ lat, lng }}

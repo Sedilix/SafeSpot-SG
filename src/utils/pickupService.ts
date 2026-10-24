@@ -175,7 +175,6 @@ async function fetchGoogleRouteMatrix(
 function triggerDriveShadowEvaluation(
   origin: GeoPoint,
   destinations: PickupCandidate[],
-  googleResult: Map<string, RouteLeg | null>,
   liveIncidents?: TrafficIncident[]
 ): void {
   setImmediate(async () => {
@@ -193,25 +192,21 @@ function triggerDriveShadowEvaluation(
 
       if (!workerRes) return;
 
+      // Engine only: Google's ETAs are never logged next to ours (Maps Platform
+      // terms bar caching route durations and using them to tune a substitute).
+      // Accuracy is measured against real trips instead (docs/clean-room-calibration.md).
       for (const d of destinations) {
         const localLeg = workerRes.results.get(d.id);
-        const googleLeg = googleResult.get(d.id);
-        if (localLeg && googleLeg && googleLeg.seconds > 0) {
-          const diffSec = localLeg.seconds - googleLeg.seconds;
-          const diffPct = Number(((diffSec / googleLeg.seconds) * 100).toFixed(1));
-          // Exactly one [PICKUP_DRIVE_EVAL] JSON line. No coordinates, device IDs, or names.
-          console.log(
-            `[PICKUP_DRIVE_EVAL] ${JSON.stringify({
-              candidateId: d.id,
-              departure: departureHhmm,
-              localSec: localLeg.seconds,
-              googleSec: googleLeg.seconds,
-              diffSec,
-              diffPct,
-              localMs: workerRes.durationMs,
-            })}`
-          );
-        }
+        if (!localLeg) continue;
+        // Exactly one [PICKUP_DRIVE_EVAL] JSON line. No coordinates, device IDs, or names.
+        console.log(
+          `[PICKUP_DRIVE_EVAL] ${JSON.stringify({
+            candidateId: d.id,
+            departure: departureHhmm,
+            localSec: localLeg.seconds,
+            localMs: workerRes.durationMs,
+          })}`
+        );
       }
     } catch (err: any) {
       console.warn('[PICKUP_DRIVE_EVAL] Shadow evaluation error:', err.message);
@@ -325,7 +320,7 @@ export async function routeMatrix(
 
   // If shadow evaluation is enabled for DRIVE mode, schedule non-blocking evaluation
   if (mode === 'DRIVE' && shadowDrive) {
-    triggerDriveShadowEvaluation(origin, destinations, googleLegs, liveIncidents);
+    triggerDriveShadowEvaluation(origin, destinations, liveIncidents);
   }
 
   return googleLegs;

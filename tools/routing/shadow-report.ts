@@ -2,13 +2,14 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * shadow-report.ts: Synthesizes comparative evaluation telemetry from
- * shadow-probe records into a structured markdown report.
+ * shadow-report.ts: Summarises shadow-probe records into tools/routing/out/shadow-report.md:
+ * engine ETA, distance and latency (median, p95) overall, by time of day and by pair.
  *
- * Evaluates:
- *  - Median absolute error & mean signed error overall, by time of day, and by pair.
- *  - Median and p95 latency.
- *  - Generates tools/routing/out/shadow-report.md.
+ * Engine only. Rows written before 2026-10-24 also carry Google Routes fields
+ * (googleSec, googleMeters, diffPct); this report never reads them, because the
+ * Google Maps Platform terms bar caching route durations and using them to tune a
+ * substitute. Accuracy is measured against LTA speed bands and our own measured
+ * trips instead (docs/clean-room-calibration.md).
  */
 
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
@@ -17,66 +18,50 @@ import { ShadowRecord } from './shadow-probe';
 
 export interface GroupStats {
   count: number;
-  medianAbsErrorPct: number;
-  meanSignedErrorPct: number;
+  failures: number;
+  medianLocalSec: number;
+  minLocalSec: number;
+  maxLocalSec: number;
   medianLatencyMs: number;
   p95LatencyMs: number;
   medianLocalMeters?: number;
-  medianGoogleMeters?: number;
 }
 
 /**
- * Rows where Google really answered. Rows from before 2026-10-13 ~08:00 UTC
- * (no `googleOk` field) were written while every Google query failed and the
- * engine's own time was copied in, so they read as false 0% errors.
+ * Rows where the engine produced an ETA. Legacy rows can carry an `error` from
+ * the Google query; that says nothing about the engine, so only localSec counts.
+ * Test-only simulated rows are skipped entirely.
  */
 export function isUsable(r: ShadowRecord): boolean {
-  return r.googleOk === true && typeof r.diffPct === 'number' && !r.simulated;
+  return typeof r.localSec === 'number' && r.localSec > 0;
 }
 
-export function computeStats(all: ShadowRecord[]): GroupStats {
+const isReal = (r: ShadowRecord) => !(r as { simulated?: boolean }).simulated;
+
+const median = (sorted: number[]) => sorted[Math.floor(sorted.length / 2)];
+
+export function computeStats(input: ShadowRecord[]): GroupStats {
+  const all = input.filter(isReal);
   const records = all.filter(isUsable);
+  const failures = all.length - records.length;
   if (records.length === 0) {
-    return {
-      count: 0,
-      medianAbsErrorPct: 0,
-      meanSignedErrorPct: 0,
-      medianLatencyMs: 0,
-      p95LatencyMs: 0,
-    };
+    return { count: 0, failures, medianLocalSec: 0, minLocalSec: 0, maxLocalSec: 0, medianLatencyMs: 0, p95LatencyMs: 0 };
   }
-
-  const absErrors = records.map((r) => Math.abs(r.diffPct as number)).sort((a, b) => a - b);
-  const signedErrors = records.map((r) => r.diffPct as number);
+  const secs = records.map((r) => r.localSec).sort((a, b) => a - b);
   const latencies = records.map((r) => r.localMs).sort((a, b) => a - b);
-
-  const medianAbs = absErrors[Math.floor(absErrors.length / 2)];
-  const meanSigned = signedErrors.reduce((a, b) => a + b, 0) / signedErrors.length;
-
-  const medianLat = latencies[Math.floor(latencies.length / 2)];
-  const p95Idx = Math.min(latencies.length - 1, Math.floor(latencies.length * 0.95));
-  const p95Lat = latencies[p95Idx];
-
-  const localMetersList = records
+  const meters = records
     .filter((r) => typeof r.localMeters === 'number' && (r.localMeters as number) > 0)
     .map((r) => r.localMeters as number)
     .sort((a, b) => a - b);
-  const googleMetersList = records
-    .filter((r) => typeof r.googleMeters === 'number' && (r.googleMeters as number) > 0)
-    .map((r) => r.googleMeters as number)
-    .sort((a, b) => a - b);
-
-  const medianLocalM = localMetersList.length > 0 ? localMetersList[Math.floor(localMetersList.length / 2)] : undefined;
-  const medianGoogleM = googleMetersList.length > 0 ? googleMetersList[Math.floor(googleMetersList.length / 2)] : undefined;
-
   return {
     count: records.length,
-    medianAbsErrorPct: Number(medianAbs.toFixed(2)),
-    meanSignedErrorPct: Number(meanSigned.toFixed(2)),
-    medianLatencyMs: Math.round(medianLat),
-    p95LatencyMs: Math.round(p95Lat),
-    medianLocalMeters: medianLocalM,
-    medianGoogleMeters: medianGoogleM,
+    failures,
+    medianLocalSec: median(secs),
+    minLocalSec: secs[0],
+    maxLocalSec: secs[secs.length - 1],
+    medianLatencyMs: Math.round(median(latencies)),
+    p95LatencyMs: Math.round(latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * 0.95))]),
+    medianLocalMeters: meters.length > 0 ? median(meters) : undefined,
   };
 }
 
@@ -114,81 +99,71 @@ export function loadLocalRecords(shadowDir: string): ShadowRecord[] {
 
 export function generateReportMarkdown(records: ShadowRecord[]): string {
   const overall = computeStats(records);
-  const targetMae = 20.0;
   const targetLatency = 200;
+  const min = (sec: number) => (sec / 60).toFixed(1);
 
-  let md = `# SafeSpot Routing Engine — Scheduled Drive Shadow Probe Report\n\n`;
-  md += `**Generated**: ${new Date().toISOString()}  \n`;
-  md += `**Usable Observations**: ${records.filter(isUsable).length} of ${records.length} (rows where Google failed, or written before the 2026-10-13 fix, are excluded)  \n`;
-  md += `**Evaluation Basis**: SafeSpot Traffic-Aware Engine vs Google Routes API (TRAFFIC_AWARE)  \n\n`;
+  let md = `# SafeSpot Routing Engine — Scheduled Drive Shadow Probe Report
 
-  md += `## Acceptance Criteria Summary\n\n`;
-  md += `| Metric | Target | Status | Measured Value |\n`;
-  md += `|---|---|---|---|\n`;
+`;
+  md += `**Generated**: ${new Date().toISOString()}  
+`;
+  md += `**Rows with an engine ETA**: ${overall.count} of ${records.filter(isReal).length}  
+`;
+  md += `**Basis**: engine only. Accuracy is not measured here; see docs/clean-room-calibration.md.  
 
-  const maePass = overall.count > 0 && overall.medianAbsErrorPct <= targetMae;
-  md += `| **Median Absolute Error** | $\\le 20.0\\%$ | **${maePass ? 'PASS' : 'FAIL'}** | ${overall.medianAbsErrorPct}% |\n`;
+`;
 
+  md += `## Acceptance Criteria Summary
+
+`;
+  md += `| Metric | Target | Status | Measured Value |
+`;
+  md += `|---|---|---|---|
+`;
   const latPass = overall.count > 0 && overall.medianLatencyMs < targetLatency;
-  md += `| **Median Engine Latency** | $< 200$ ms | **${latPass ? 'PASS' : 'FAIL'}** | ${overall.medianLatencyMs} ms (p95: ${overall.p95LatencyMs} ms) |\n`;
+  md += `| **Median Engine Latency** | $< 200$ ms | **${latPass ? 'PASS' : 'FAIL'}** | ${overall.medianLatencyMs} ms (p95: ${overall.p95LatencyMs} ms) |
+`;
+  md += `| **Rows Without a Route** | 0 | **${overall.failures === 0 ? 'PASS' : 'FAIL'}** | ${overall.failures} |
 
-  md += `| **Mean Signed Error** | Bias monitor | **INFO** | ${overall.meanSignedErrorPct > 0 ? '+' : ''}${overall.meanSignedErrorPct}% |\n\n`;
+`;
 
-  // Time of day breakdown
-  md += `## Time-of-Day Performance Breakdown\n\n`;
-  md += `| Time Slot (SGT) | Probes | Median Abs Error | Mean Signed Error | Median Latency | p95 Latency |\n`;
-  md += `|---|---|---|---|---|---|\n`;
+  md += `## Time-of-Day Breakdown
 
+`;
+  md += `| Time Slot (SGT) | Rows | Median ETA | Median Latency | p95 Latency |
+`;
+  md += `|---|---|---|---|---|
+`;
   const timeGroups = new Map<string, ShadowRecord[]>();
   for (const r of records) {
     const slot = resolveTimeOfDay(r.at);
-    let list = timeGroups.get(slot);
-    if (!list) {
-      list = [];
-      timeGroups.set(slot, list);
-    }
-    list.push(r);
+    timeGroups.set(slot, [...(timeGroups.get(slot) ?? []), r]);
   }
-
-  const slotsOrder = [
-    'Morning Peak (07:00-09:30)',
-    'Midday (11:30-14:00)',
-    'Evening Peak (17:00-20:00)',
-    'Night / Off-Peak',
-  ];
-
-  for (const slot of slotsOrder) {
-    const list = timeGroups.get(slot) || [];
-    const stats = computeStats(list);
-    md += `| **${slot}** | ${stats.count} | ${stats.medianAbsErrorPct}% | ${stats.meanSignedErrorPct > 0 ? '+' : ''}${stats.meanSignedErrorPct}% | ${stats.medianLatencyMs} ms | ${stats.p95LatencyMs} ms |\n`;
+  for (const slot of ['Morning Peak (07:00-09:30)', 'Midday (11:30-14:00)', 'Evening Peak (17:00-20:00)', 'Night / Off-Peak']) {
+    const stats = computeStats(timeGroups.get(slot) || []);
+    md += `| **${slot}** | ${stats.count} | ${min(stats.medianLocalSec)} min | ${stats.medianLatencyMs} ms | ${stats.p95LatencyMs} ms |
+`;
   }
-  md += `\n`;
+  md += `
+`;
 
-  // By Pair breakdown
-  md += `## Corridor Pairwise Breakdown (10 Fixed Corridors)\n\n`;
-  md += `| Corridor ID | Observations | Median Abs Error | Mean Signed Error | Median Latency | Median Distance (Local / Google) |\n`;
-  md += `|---|---|---|---|---|---|\n`;
+  md += `## Corridor Breakdown (10 Fixed Corridors)
 
+`;
+  md += `| Corridor ID | Rows | Median ETA | ETA Range | Median Distance | Median Latency |
+`;
+  md += `|---|---|---|---|---|---|
+`;
   const pairGroups = new Map<string, ShadowRecord[]>();
-  for (const r of records) {
-    let list = pairGroups.get(r.pairId);
-    if (!list) {
-      list = [];
-      pairGroups.set(r.pairId, list);
-    }
-    list.push(r);
-  }
-
+  for (const r of records) pairGroups.set(r.pairId, [...(pairGroups.get(r.pairId) ?? []), r]);
   for (const [pairId, list] of pairGroups.entries()) {
     const stats = computeStats(list);
-    const distCol =
-      stats.medianLocalMeters && stats.medianGoogleMeters
-        ? `${(stats.medianLocalMeters / 1000).toFixed(2)} km / ${(stats.medianGoogleMeters / 1000).toFixed(2)} km`
-        : 'N/A';
-    md += `| \`${pairId}\` | ${stats.count} | ${stats.medianAbsErrorPct}% | ${stats.meanSignedErrorPct > 0 ? '+' : ''}${stats.meanSignedErrorPct}% | ${stats.medianLatencyMs} ms | ${distCol} |\n`;
+    const dist = stats.medianLocalMeters ? `${(stats.medianLocalMeters / 1000).toFixed(2)} km` : 'N/A';
+    md += `| \`${pairId}\` | ${stats.count} | ${min(stats.medianLocalSec)} min | ${min(stats.minLocalSec)}–${min(stats.maxLocalSec)} min | ${dist} | ${stats.medianLatencyMs} ms |
+`;
   }
-  md += `\n`;
-
+  md += `
+`;
   return md;
 }
 

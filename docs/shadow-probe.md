@@ -6,7 +6,10 @@
 
 ## 1. Objective & Architecture
 
-To evaluate the accuracy of SafeSpot's traffic-aware routing engine against Google Routes without waiting for user-initiated pickups, a background probe continuously monitors **10 fixed Singapore Origin–Destination (O-D) corridors** 6 times per day.
+A background probe runs SafeSpot's traffic-aware routing engine over **10 fixed Singapore Origin–Destination (O-D) corridors** 6 times per day and records the engine's ETA, distance and latency. That gives a time series per corridor and time of day, to compare with LTA speed bands and our own measured trips (see `docs/clean-room-calibration.md`).
+
+> [!IMPORTANT]
+> **Engine only since 2026-10-24.** The probe used to store Google Routes ETAs next to ours and report the error against them. The Google Maps Platform terms allow no caching of route durations or distances, and bar using Google results to build or tune a substitute (ToS §3.2.3 (b)–(d); Routes Service Specific Terms §19). So the probe no longer calls Google, and the report never reads the Google fields still present in rows written before that date. Section 5 covers removing those rows.
 
 ```
 Cloud Scheduler (6x daily: 07:30, 08:30, 12:00, 17:30, 18:30, 22:00 SGT)
@@ -16,13 +19,12 @@ Cloud Scheduler (6x daily: 07:30, 08:30, 12:00, 17:30, 18:30, 22:00 SGT)
                     │
                     ├─► Downloads road graph from GCS (if not cached locally)
                     ├─► Computes SafeSpot traffic-aware ETA (SpeedProfileEngine + IncidentLayer + ErpEngine)
-                    ├─► Queries Google Routes computeRoutes (TRAFFIC_AWARE)
                     └─► Appends 10 structured records:
                             - Local: tools/routing/out/shadow/YYYY-MM-DD.jsonl
                             - GCS: gs://safespot-sg-speedbands/shadow/YYYY-MM-DD.jsonl
                     │
                     ▼
-          shadow-report.ts: Computes Median Abs Error, Mean Signed Error, Latency Quantiles
+          shadow-report.ts: Engine ETA, distance and latency (median, p95) by time of day and corridor
 ```
 
 ### 10 Monitored Corridors
@@ -42,16 +44,9 @@ Cloud Scheduler (6x daily: 07:30, 08:30, 12:00, 17:30, 18:30, 22:00 SGT)
 
 ---
 
-## 2. API SKU, Pricing & Free Quota Verification
+## 2. Cost
 
-- **API**: Google Maps Platform — Routes API (`v2:computeRoutes`)
-- **SKU**: **Routes: Compute Routes - Advanced** (Traffic-Aware Driving: `travelMode: DRIVE`, `routingPreference: TRAFFIC_AWARE`)
-- **Published Unit Price**: $10.00 USD per 1,000 calls (for 0 – 100,000 monthly calls).
-- **Probed Frequency**: 10 corridors × 6 runs/day × 30 days = **1,800 requests/month**.
-- **Monthly Cost**: 1,800 calls × $0.010 = **$18.00 USD / month**.
-- **Free Monthly Allowance**: Google Cloud grants a **$200.00 USD recurring monthly credit** to every Google Maps Platform billing account (equivalent to 20,000 Compute Routes - Advanced calls).
-- **Net Billable Cost**: 1,800 calls consumes **9.0%** of the monthly free tier allowance. **$0.00 billable spend**.
-- **Source**: [Google Maps Platform Routes Pricing](https://developers.google.com/maps/documentation/routes/usage-and-billing) (accessed 2026-10-13).
+No Google Maps Platform calls. The job only reads LTA DataMall `TrafficIncidents` (free, commercial use allowed under the Singapore Open Data Licence) and runs the engine locally.
 
 ---
 
@@ -60,14 +55,10 @@ Cloud Scheduler (6x daily: 07:30, 08:30, 12:00, 17:30, 18:30, 22:00 SGT)
 Run the following commands in your authenticated shell.
 
 ### Step 1: Ensure Secrets in Secret Manager
-Verify that `MAPS_SERVER_KEY` and `LTA_DATAMALL_KEY` exist in project `safespot-sg`:
+Verify that `LTA_DATAMALL_KEY` exists in project `safespot-sg` (the probe no longer needs `MAPS_SERVER_KEY`):
 
 ```bash
 # If not already present:
-gcloud secrets create MAPS_SERVER_KEY \
-  --data-file="C:/Users/SIT EUC/maps_server_key.txt" \
-  --project=safespot-sg
-
 gcloud secrets create LTA_DATAMALL_KEY \
   --data-file="C:/Users/SIT EUC/lta_datamall_key.txt" \
   --project=safespot-sg
@@ -75,11 +66,6 @@ gcloud secrets create LTA_DATAMALL_KEY \
 
 Ensure the logger / shadow service account has Secret Accessor permission:
 ```bash
-gcloud secrets add-iam-policy-binding MAPS_SERVER_KEY \
-  --member="serviceAccount:speedbands-logger@safespot-sg.iam.gserviceaccount.com" \
-  --role="roles/secretmanager.secretAccessor" \
-  --project=safespot-sg
-
 gcloud secrets add-iam-policy-binding LTA_DATAMALL_KEY \
   --member="serviceAccount:speedbands-logger@safespot-sg.iam.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor" \
@@ -111,7 +97,7 @@ gcloud run jobs create routing-shadow-probe \
   --command=node \
   --args=dist/shadow-probe.cjs,--once \
   --set-env-vars=SPEEDBANDS_BUCKET=safespot-sg-speedbands,ROUTING_GRAPH_URI=gs://safespot-sg-speedbands/graph/2026-10-12/singapore-road-graph.json.gz \
-  --set-secrets=MAPS_SERVER_KEY=MAPS_SERVER_KEY:latest,LTA_DATAMALL_KEY=LTA_DATAMALL_KEY:latest \
+  --set-secrets=LTA_DATAMALL_KEY=LTA_DATAMALL_KEY:latest \
   --service-account=speedbands-logger@safespot-sg.iam.gserviceaccount.com \
   --tasks=1 \
   --max-retries=1 \
@@ -155,9 +141,7 @@ gcloud run jobs execute routing-shadow-probe \
 
 ---
 
-## 4. Generating Comparative Shadow Reports
-
-To download telemetry from Cloud Storage and generate the analysis report:
+## 4. Generating Shadow Reports
 
 ```bash
 # Sync remote telemetry locally
@@ -167,8 +151,36 @@ gcloud storage cp -r "gs://safespot-sg-speedbands/shadow/*.jsonl" tools/routing/
 npx tsx tools/routing/shadow-report.ts
 ```
 
-The report is written to `tools/routing/out/shadow-report.md`, summarizing:
-- Overall Median Absolute Error vs $\le 20.0\%$ target (Computed PASS/FAIL).
-- Median & p95 search latency vs $< 200$ ms target (Computed PASS/FAIL).
-- Time-of-day accuracy breakdown (Morning Peak, Midday, Evening Peak, Night).
-- Corridor-level bias (Mean Signed Error).
+The report is written to `tools/routing/out/shadow-report.md`:
+- Median & p95 engine latency vs the $< 200$ ms target (computed PASS/FAIL), and rows with no route (computed PASS/FAIL).
+- Median engine ETA by time of day (Morning Peak, Midday, Evening Peak, Night).
+- Per corridor: median ETA, ETA range, median distance, median latency.
+
+Accuracy is not measured here: it comes from measured trips and LTA speed bands (`docs/clean-room-calibration.md`).
+
+---
+
+## 5. Switching an existing deployment to engine-only (for the user to run)
+
+The job deployed on 2026-10-13 still runs the old image, which calls Google and stores its ETAs. Rebuild and redeploy, and drop the Maps key from the job:
+
+```bash
+gcloud builds submit \
+  --tag=asia-southeast1-docker.pkg.dev/safespot-sg/safespot-repo/routing-shadow-probe:latest \
+  --project=safespot-sg
+
+gcloud run jobs update routing-shadow-probe \
+  --project=safespot-sg \
+  --region=asia-southeast1 \
+  --image=asia-southeast1-docker.pkg.dev/safespot-sg/safespot-repo/routing-shadow-probe:latest \
+  --remove-secrets=MAPS_SERVER_KEY
+```
+
+Rows written from 2026-10-13 up to the redeploy hold Google ETAs (`googleSec`, `googleMeters`, `diffPct`). To stop storing them, delete those files. **This is permanent.** List them first, then remove only dates before the redeploy:
+
+```bash
+gcloud storage ls "gs://safespot-sg-speedbands/shadow/"
+gcloud storage rm "gs://safespot-sg-speedbands/shadow/2026-10-1*.jsonl" "gs://safespot-sg-speedbands/shadow/2026-10-2*.jsonl"
+```
+
+If the redeploy happens on a date the second pattern covers, list that day's file and keep it out of the `rm`.
