@@ -136,6 +136,12 @@ export class Router {
   public static readonly DELAY_LEFT_SEC = 5.0;
   public static readonly DELAY_RIGHT_SEC = 18.0;
   public static readonly DELAY_UTURN_SEC = 28.0;
+  /**
+   * Expected wait at a signalized junction for movements that would otherwise cost less
+   * (straight, left). UNVERIFIED heuristic: random arrival at a ~120 s cycle with a green wave
+   * on arterials; to be replaced by measured values in Fix H.
+   */
+  public static readonly DELAY_SIGNAL_SEC = 9.0;
   private static readonly MAX_SPEED_MS = 90 / 3.6;
   /** Heuristic slack (m) so the half-edge accounting at the destination can't make h inadmissible. */
   private static readonly HEURISTIC_SLACK_M = 200;
@@ -155,6 +161,13 @@ export class Router {
   /** Signed turn angle in degrees, positive = right, in (-180, 180]. */
   public turnAngle(from: CompactEdge, to: CompactEdge): number {
     return ((this.graph.edgeBearings[to.id] - this.graph.edgeBearings[from.id] + 540) % 360) - 180;
+  }
+
+  /** True when `from` -> `to` enters a traffic-signal cluster (one charge per signalized junction). */
+  public chargesSignal(from: CompactEdge, to: CompactEdge): boolean {
+    const via = from.to;
+    if (!this.graph.hasTrafficSignal[via] || to.to === from.from) return false;
+    return this.graph.signalCluster[from.from] !== this.graph.signalCluster[via];
   }
 
   /** Whether `from` -> `to` is legal, and the delay it costs. */
@@ -190,13 +203,15 @@ export class Router {
       return { allowed: true, delaySec: Router.DELAY_UTURN_SEC };
     }
 
-    if (!this.graph.isJunction[via]) return { allowed: true, delaySec: 0 };
+    // Signals are often mapped on stop lines just before the junction node, so they apply off-junction too.
+    const signal = this.chargesSignal(from, to) ? Router.DELAY_SIGNAL_SEC : 0;
+    if (!this.graph.isJunction[via]) return { allowed: true, delaySec: signal };
 
     const a = this.turnAngle(from, to);
-    if (Math.abs(a) > 135) return { allowed: true, delaySec: Router.DELAY_UTURN_SEC };
-    if (a > 30) return { allowed: true, delaySec: Router.DELAY_RIGHT_SEC };
-    if (a < -30) return { allowed: true, delaySec: Router.DELAY_LEFT_SEC };
-    return { allowed: true, delaySec: Router.DELAY_STRAIGHT_SEC };
+    if (Math.abs(a) > 135) return { allowed: true, delaySec: Math.max(signal, Router.DELAY_UTURN_SEC) };
+    if (a > 30) return { allowed: true, delaySec: Math.max(signal, Router.DELAY_RIGHT_SEC) };
+    if (a < -30) return { allowed: true, delaySec: Math.max(signal, Router.DELAY_LEFT_SEC) };
+    return { allowed: true, delaySec: Math.max(signal, Router.DELAY_STRAIGHT_SEC) };
   }
 
   public findRoute(
