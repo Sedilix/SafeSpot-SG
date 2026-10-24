@@ -74,6 +74,7 @@ import { classifyAddressQuery, mergeAddressSuggestions } from './src/utils/addre
 import { findPickupOptions } from './src/utils/pickupService';
 import { maybeInitDriveWorkerAtStartup } from './src/routing/driveWorkerClient';
 import { checkOfflineWatches, recordWatchSeen } from './src/utils/watchHealth';
+import { reportedAccuracy } from './src/utils/locationFusion';
 import { timingSafeEqual } from 'crypto';
 import type { AddressSuggestion } from './src/types';
 
@@ -1052,12 +1053,13 @@ async function fetchImageBase64(url: string): Promise<string | null> {
 async function retrieveStreetViewCandidates(opts: {
   lat: number;
   lng: number;
-  accuracy: number;
+  accuracy: number | null;
   deviceHeading: number | null;
   mapsKey: string;
 }): Promise<StreetViewCandidate[]> {
   // Clamp the probe radius: below 15m nothing new is found, above 60m the
-  // ring starts landing on the next street over.
+  // ring starts landing on the next street over. An unreported accuracy
+  // searches the middle 20 m box (a search size, not a claimed accuracy).
   const radius = Math.min(Math.max(opts.accuracy || 20, 15), 60);
   const user = { lat: opts.lat, lng: opts.lng };
   const samplePoints = ringSamplePoints(user, radius, 8);
@@ -1121,7 +1123,9 @@ app.post('/api/gemini/analyze-location', async (req, res) => {
       return res.status(400).json({ error: 'Valid GPS coordinates (latitude, longitude) are required.' });
     }
 
-    const { latitude, longitude, accuracy = 20, heading = 0, speed = 0, altitude = 0 } = gps;
+    const { latitude, longitude, heading = 0, speed = 0, altitude = 0 } = gps;
+    // Null when the device didn't report one: shown as unknown, never invented.
+    const accuracy = reportedAccuracy(gps.accuracy);
 
     // Phase 1: the shutter-time compass heading beats the GNSS course, which
     // is usually null on phones. It orients the whole candidate retrieval.
@@ -1171,7 +1175,7 @@ app.post('/api/gemini/analyze-location', async (req, res) => {
         originalCoordinates: { lat: latitude, lng: longitude, accuracyMeters: accuracy },
         verifiedCoordinates: { lat: effectiveLat, lng: effectiveLng },
         confidenceScore: photoBase64 ? 92 : 84,
-        accuracyLevel: accuracy <= 15 ? 'HIGH' : 'MODERATE',
+        accuracyLevel: accuracy == null ? 'ESTIMATED' : accuracy <= 15 ? 'HIGH' : 'MODERATE',
         formattedAddress: approximateAddress || `${effectiveLat.toFixed(5)}, ${effectiveLng.toFixed(5)}`,
         streetName: approximateAddress ? approximateAddress.split(',')[0] : 'Current Street',
         nearbyCrossStreet: nearbyPlaces[0]?.name ? `Near ${nearbyPlaces[0].name}` : 'Near main roadway / entrance',
@@ -1280,7 +1284,7 @@ You are an expert AI Location Specialist and Elder Pickup Assistant for Singapor
 The goal is to provide maximum location accuracy and reassurance for an elderly person waiting to be picked up by a caregiver, family member, or ride/emergency responder.
 
 Google Maps Platform Multi-API & BLE Grounding:
-- Raw GPS: Latitude ${latitude}, Longitude ${longitude} (Accuracy: ${accuracy}m)
+- Raw GPS: Latitude ${latitude}, Longitude ${longitude} (Accuracy: ${accuracy != null ? `${accuracy}m` : 'not reported'})
 - ${roadsContext}
 - ${placesContext}
 - ${bleContext}

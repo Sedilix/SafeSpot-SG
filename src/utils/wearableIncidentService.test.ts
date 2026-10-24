@@ -243,6 +243,65 @@ describe('wearableIncidentService', () => {
       expect(doc?.nearestLandmarks).toEqual(['New Landmark Near Bishan']);
     });
 
+    it("keeps the watch's reported accuracy and fix time (not 10 m and send time)", async () => {
+      const t = Math.floor(Date.now() / 1000);
+      const res = await handleWatchAlertTrigger({
+        event: { deviceId: 'fenix-acc', eventType: 'SOS_TRIGGER', lat: 1.35, lng: 103.85, accuracy: 18, positionAge: 30, timestamp: t },
+      });
+      await handleWatchIncidentUpdate(res.incidentId, {
+        deviceId: 'fenix-acc', eventType: 'HEARTBEAT', lat: 1.3501, lng: 103.85, accuracy: 42, positionAge: 20, timestamp: t + 60,
+      });
+      const doc = await getIncidentById(res.incidentId);
+      expect(doc?.watchFix).toMatchObject({ accuracy: 42, timestamp: (t + 60) * 1000 - 20_000 });
+      expect(doc?.currentGps?.accuracy).toBe(42);
+      expect(doc?.currentGps?.timestamp).toBe((t + 60) * 1000 - 20_000);
+    });
+
+    it('records an unreported watch accuracy as null, never an invented value', async () => {
+      const res = await handleWatchAlertTrigger({
+        event: { deviceId: 'fenix-noacc', eventType: 'SOS_TRIGGER', lat: 1.35, lng: 103.85, timestamp: Math.floor(Date.now() / 1000) },
+      });
+      const doc = await getIncidentById(res.incidentId);
+      expect(doc?.currentGps?.accuracy).toBeNull();
+      expect(doc?.locationSource).toBe('watch_gps');
+    });
+
+    it("a watch tick fuses with the phone's fix in a transaction instead of overwriting it", async () => {
+      // Minimal Firestore fake: documents by path, merge sets, transactions run inline.
+      const store = new Map<string, any>();
+      const ref = (path: string) => ({
+        get: async () => ({ exists: store.has(path), data: () => store.get(path) }),
+        set: async (data: any, opts?: { merge?: boolean }) => {
+          store.set(path, opts?.merge ? { ...(store.get(path) ?? {}), ...data } : data);
+        },
+        _path: path,
+      });
+      const db: any = {
+        collection: (c: string) => ({ doc: (id: string) => ref(`${c}/${id}`) }),
+        runTransaction: async (fn: any) =>
+          fn({ get: (r: any) => r.get(), set: (r: any, data: any, opts: any) => { void r.set(data, opts); } }),
+      };
+      _setAdminDbForTest(db);
+
+      const now = Date.now();
+      // The phone (client) already wrote a tight, fresh fix ~78 m away from where the watch will report.
+      store.set('Incidents/inc_tx', {
+        incidentId: 'inc_tx',
+        status: 'active',
+        phoneFix: { lat: 1.297, lng: 103.787, accuracy: 5, timestamp: now - 2_000, source: 'phone_gps' },
+      });
+
+      await handleWatchIncidentUpdate('inc_tx', {
+        deviceId: 'fenix-tx', eventType: 'HEARTBEAT', lat: 1.2965, lng: 103.7865, accuracy: 60, timestamp: Math.floor(now / 1000),
+      });
+
+      const saved = store.get('Incidents/inc_tx');
+      expect(saved.watchFix).toMatchObject({ lat: 1.2965, accuracy: 60 });
+      expect(saved.phoneFix).toMatchObject({ lat: 1.297, accuracy: 5 }); // untouched
+      expect(saved.locationSource).toBe('phone_gps'); // 5 m phone beats 60 m watch
+      expect(saved.currentGps).toMatchObject({ lat: 1.297, lng: 103.787, accuracy: 5 });
+    });
+
     it('resolves incident and dispatches cancellation SMS on alert cancel', async () => {
       const sendSpy = vi.spyOn(notifications, 'sendSms').mockResolvedValue({
         success: true,

@@ -4,7 +4,8 @@
  */
 
 import admin from 'firebase-admin';
-import type { Incident, EmergencyContact } from '../types';
+import type { Incident, EmergencyContact, SourceFix } from '../types';
+import { fuseIncidentFixes, reportedAccuracy } from './locationFusion';
 import { sendSms, smsAlertRecipients } from './notifications';
 import { notifyPushDevices, notifyTelegramAlert, resolveTelegramIncident, updateTelegramIncidentLocation } from './alertChannels';
 import { formatTelegramAlert, formatTelegramResolved } from './telegram';
@@ -39,6 +40,18 @@ function within<T>(task: Promise<T>, ms?: number): Promise<T | null> {
 
 let adminDb: admin.firestore.Firestore | null = null;
 const inMemoryIncidents = new Map<string, Incident>();
+
+/** The watch's fix as reported: its own accuracy (or null), timed when it was taken, not sent. */
+export function watchFixFromEvent(event: WearableEvent, now: number): SourceFix | null {
+  if (event.lat === undefined || event.lng === undefined) return null;
+  return {
+    lat: event.lat,
+    lng: event.lng,
+    accuracy: reportedAccuracy(event.accuracy),
+    timestamp: (event.timestamp ? event.timestamp * 1000 : now) - (event.positionAge ?? 0) * 1000,
+    source: 'watch_gps',
+  };
+}
 const inMemoryPairings = new Map<string, PairedWearableDoc>();
 let adminDbForced = false;
 
@@ -332,6 +345,7 @@ export async function handleWatchAlertTrigger(params: {
 
   const profile = await getDevicePairedProfile(event.deviceId);
   const now = Date.now();
+  const watchFix = watchFixFromEvent(event, now);
   const incidentId = `inc_w_${now.toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
   const incidentDoc: Incident = {
@@ -342,17 +356,10 @@ export async function handleWatchAlertTrigger(params: {
     bloodType: (profile.bloodType as any) || 'Unknown',
     medicalNotes: profile.medicalNotes || '',
     incidentType: mapEventToIncidentType(event.eventType),
-    currentGps:
-      event.lat !== undefined && event.lng !== undefined
-        ? {
-            lat: event.lat,
-            lng: event.lng,
-            accuracy: event.accuracy ?? 10,
-            // When the fix was taken, not when the alert was sent.
-            timestamp: (event.timestamp ? event.timestamp * 1000 : now) - (event.positionAge ?? 0) * 1000,
-          }
-        : null,
-    locationSource: event.lat !== undefined && event.lng !== undefined ? 'watch_gps' : undefined,
+    currentGps: null,
+    watchFix,
+    phoneFix: null,
+    ...fuseIncidentFixes(watchFix, null, now),
     batteryLevel: event.battery ?? null,
     isCharging: null,
     nearestLandmarks: landmark ? [landmark] : [],
@@ -487,15 +494,7 @@ export async function handleWatchIncidentUpdate(
     updatedAt: now,
   };
 
-  if (event.lat !== undefined && event.lng !== undefined) {
-    updates.currentGps = {
-      lat: event.lat,
-      lng: event.lng,
-      accuracy: 10,
-      timestamp: event.timestamp ? event.timestamp * 1000 : now,
-    };
-    updates.locationSource = 'watch_gps';
-  }
+  const watchFix = watchFixFromEvent(event, now);
   if (event.battery !== undefined) {
     updates.batteryLevel = event.battery;
   }
@@ -506,17 +505,28 @@ export async function handleWatchIncidentUpdate(
     updates.formattedAddress = formattedAddress;
   }
 
-  if (existing) {
-    Object.assign(existing, updates);
-  }
+  // The phone writes its own fix to the same doc; fuse with its latest one so a
+  // watch tick never overwrites a better phone fix (and vice versa on the phone).
+  const withLocation = (phoneFix: SourceFix | null | undefined): Partial<Incident> =>
+    watchFix ? { ...updates, watchFix, ...fuseIncidentFixes(watchFix, phoneFix, now) } : updates;
 
   const db = getFirebaseAdminDb();
   if (db) {
     try {
-      await db.collection('Incidents').doc(incidentId).set(updates, { merge: true });
+      const ref = db.collection('Incidents').doc(incidentId);
+      const written = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const data = withLocation(snap.exists ? (snap.data() as Incident).phoneFix : existing?.phoneFix);
+        tx.set(ref, data, { merge: true });
+        return data;
+      });
+      if (existing) Object.assign(existing, written);
     } catch (e: any) {
       console.warn(`[WEARABLE_INCIDENT] Failed to update Incidents/${incidentId}:`, e.message);
+      if (existing) Object.assign(existing, withLocation(existing.phoneFix));
     }
+  } else if (existing) {
+    Object.assign(existing, withLocation(existing.phoneFix));
   }
 
   if (event.lat !== undefined && event.lng !== undefined) {
