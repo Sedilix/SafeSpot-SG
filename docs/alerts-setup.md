@@ -75,7 +75,7 @@ When the watch battery is low, many Garmin watches enter power-saving mode and s
 
 - **Low battery:** when the watch reports **15% or less**, one warning goes out (Telegram, phone notifications and SMS). It re-arms once the battery is back above 30%.
 - **Watch stopped reporting:** the watch checks in every 5 minutes. After **20 minutes** of silence, one warning goes out (Telegram, phone notifications and SMS). A "reporting again" notice (Telegram and phones only) follows when it comes back. Watches silent for more than 3 days are ignored.
-- **Quiet hours, 23:00–07:00 Singapore time:** these warnings wait until 07:00. SOS, fall and heart-rate alerts are **never** delayed.
+- **Any hour:** these warnings go out day and night, so overnight battery drain or disconnection is reported when it happens, with accurate times. SOS, fall and heart-rate alerts are never delayed either.
 - Only paired watches (linked to an account) are checked. State is stored in the server-only Firestore collection `WatchHealth`.
 
 **Setup:**
