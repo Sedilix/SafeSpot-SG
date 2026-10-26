@@ -11,6 +11,8 @@ import { maskPhone, sendSms, smsAlertRecipients } from './notifications';
 // Warnings to family about the watch itself, so a flat or disconnected
 // watch doesn't fail silently. In power-saving mode watches switch off
 // Bluetooth and GPS, and then SOS and fall alerts can't be sent at all.
+// Sent at any hour: a watch that goes quiet overnight is exactly when the
+// family needs to know, and the timestamps keep the record accurate.
 //
 //   WatchHealth/{deviceId} (server-only): lastSeenAt, lastBattery,
 //     lowBatteryNotifiedAt (cleared when the battery recovers),
@@ -38,12 +40,6 @@ const cache = new Map<string, HealthState>();
 
 export function _resetWatchHealthForTest(): void {
   cache.clear();
-}
-
-/** 23:00–07:00 Singapore time: non-emergency warnings wait until morning. */
-export function isQuietHours(now: number): boolean {
-  const h = new Date(now + 8 * 3600_000).getUTCHours();
-  return h >= 23 || h < 7;
 }
 
 function sgtTime(ms: number): string {
@@ -144,7 +140,7 @@ export async function recordWatchSeen(deviceId: string, battery: number | undefi
     if (battery >= BATTERY_RECOVERED_PCT && state.lowBatteryNotifiedAt) {
       patch.lowBatteryNotifiedAt = null;
       mustWrite = true;
-    } else if (battery <= LOW_BATTERY_PCT && !state.lowBatteryNotifiedAt && !isQuietHours(now)) {
+    } else if (battery <= LOW_BATTERY_PCT && !state.lowBatteryNotifiedAt) {
       patch.lowBatteryNotifiedAt = now;
       mustWrite = true;
       const name = (await getDevicePairedProfile(deviceId)).elderName;
@@ -168,7 +164,6 @@ export async function recordWatchSeen(deviceId: string, battery: number | undefi
  * watches that stopped reporting, once per silence.
  */
 export async function checkOfflineWatches(now = Date.now()): Promise<{ checked: number; notified: number }> {
-  if (isQuietHours(now)) return { checked: 0, notified: 0 };
   const db = getFirebaseAdminDb();
   const candidates: Array<{ deviceId: string; lastSeenAt: number; lastBattery?: number | null; offlineNotifiedAt?: number | null }> = [];
   if (db) {

@@ -7,7 +7,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   recordWatchSeen,
   checkOfflineWatches,
-  isQuietHours,
   OFFLINE_AFTER_MS,
   _resetWatchHealthForTest,
 } from './watchHealth';
@@ -39,12 +38,6 @@ describe('watchHealth', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('knows Singapore quiet hours (23:00–07:00)', () => {
-    expect(isQuietHours(NOON_SGT)).toBe(false);
-    expect(isQuietHours(MIDNIGHT_SGT)).toBe(true);
-    expect(isQuietHours(Date.parse('2026-10-21T23:00:00Z'))).toBe(false); // 07:00 SGT
-  });
-
   it('warns once per discharge when the battery is low, on every channel', async () => {
     await recordWatchSeen('SS-HLTH-0000-0001', 40, NOON_SGT);
     expect(telegram).not.toHaveBeenCalled();
@@ -63,9 +56,11 @@ describe('watchHealth', () => {
     expect(telegram).toHaveBeenCalledTimes(2); // re-armed after recovery
   });
 
-  it('holds the low-battery warning during quiet hours', async () => {
+  it('sends the low-battery warning at night too (no quiet hours)', async () => {
     await recordWatchSeen('SS-HLTH-0000-0001', 10, MIDNIGHT_SGT);
-    expect(telegram).not.toHaveBeenCalled();
+    expect(telegram).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(sms).toHaveBeenCalledTimes(1);
   });
 
   it('warns once when a watch goes silent, and says when it is back', async () => {
@@ -88,10 +83,14 @@ describe('watchHealth', () => {
     expect(sms).toHaveBeenCalledTimes(1); // "back" is Telegram + phones only
   });
 
-  it('ignores unpaired watches and skips the check during quiet hours', async () => {
+  it('ignores unpaired watches', async () => {
     await recordWatchSeen('SS-NOPAIR-0000-01', 50, NOON_SGT);
     expect((await checkOfflineWatches(NOON_SGT + OFFLINE_AFTER_MS + 60_000)).notified).toBe(0);
+  });
+
+  it('warns about a silent watch at night too (no quiet hours)', async () => {
     await recordWatchSeen('SS-HLTH-0000-0001', 50, MIDNIGHT_SGT - OFFLINE_AFTER_MS * 2);
-    expect(await checkOfflineWatches(MIDNIGHT_SGT)).toEqual({ checked: 0, notified: 0 });
+    expect(await checkOfflineWatches(MIDNIGHT_SGT)).toEqual({ checked: 1, notified: 1 });
+    expect(String(telegram.mock.calls[0][1].text)).toContain('23:50'); // last heard, Singapore time
   });
 });
