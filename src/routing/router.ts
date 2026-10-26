@@ -267,7 +267,8 @@ export class Router {
     const hFast = (toNode: number) => {
       const dx = (destLng - this.graph.nodeLng[toNode]) * destCos;
       const dy = destLat - this.graph.nodeLat[toNode];
-      return (Math.sqrt(dx * dx + dy * dy) * 111000) / Router.MAX_SPEED_MS;
+      const distM = Math.sqrt(dx * dx + dy * dy) * 111000;
+      return Math.max(0, distM - Router.HEURISTIC_SLACK_M) / Router.MAX_SPEED_MS;
     };
 
     const departureTime = options?.departureTime || new Date();

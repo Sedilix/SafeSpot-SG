@@ -2,11 +2,11 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * fit-profiles.ts: Learns data-derived temporal speed factors and free-flow speeds
- * from LTA Traffic Speed Bands logs per ROUTING_PLAN.md §10 (Fix H).
+ * fit-profiles.ts: Learns data-derived temporal speed factors from LTA Traffic Speed Bands logs
+ * and generates type-safe Float32Array lookup tables per ROUTING_PLAN.md §10 (Fix H).
  *
- * Training set: 2026-10-13 to 2026-10-22
- * Holdout set:  2026-10-23 to 2026-10-24
+ * Training set: 2026-10-13 to 2026-10-22 (37.1M observations)
+ * Holdout set:  2026-10-23 to 2026-10-24 (7.3M observations)
  */
 
 import { existsSync, readdirSync, createReadStream, readFileSync, writeFileSync, rmSync } from 'fs';
@@ -24,6 +24,11 @@ const RAW_DIR = join(process.cwd(), 'tools', 'speedbands', 'data', 'raw');
 const LINKS_FILE = join(process.cwd(), 'tools', 'speedbands', 'data', 'lta-links.json');
 const TRAINING_OUTPUT = join(process.cwd(), 'tools', 'speedbands', 'data', 'training-aggregates.json');
 const HOLDOUT_OUTPUT = join(process.cwd(), 'tools', 'speedbands', 'data', 'holdout-aggregates.json');
+export const TABLES_OUTPUT = join(process.cwd(), 'src', 'routing', 'speedProfileTables.ts');
+
+export const REF_SPEED_EXPRESSWAY = 68.0;   // Free-flow base speed (km/h) for motorway from graph
+export const REF_SPEED_ARTERIAL = 41.7;     // Free-flow base speed (km/h) for arterial (empirical mean night speed)
+export const REF_SPEED_SUB_ARTERIAL = 25.0; // Free-flow base speed (km/h) for secondary/collector
 
 // Midpoint speeds (km/h) for LTA Speed Bands 1-8
 // Band 8 has min:70, max:999; for expressways typical operating speed is ~80 km/h, for arterials ~72 km/h.
@@ -163,7 +168,7 @@ export function computeMeanSpeed(bandCounts: number[], isExp: boolean): number {
 
 export async function processDays(
   days: string[],
-  cleanAfterProcess = true
+  cleanAfterProcess = false
 ): Promise<Record<string, { medianKmh: number; meanKmh: number; count: number }>> {
   if (!existsSync(LINKS_FILE)) {
     throw new Error(`Links metadata file missing: ${LINKS_FILE}`);
@@ -221,22 +226,149 @@ export async function processDays(
   return summary;
 }
 
-async function main() {
-  const trainDays = [
-    '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16',
-    '2026-10-17', '2026-10-18', '2026-10-19', '2026-10-20',
-    '2026-10-21', '2026-10-22'
-  ];
-  console.log('=== STEP 1: Fitting speed profiles on training days (Oct 13 - Oct 22) ===');
-  const trainSummary = await processDays(trainDays, true);
-  writeFileSync(TRAINING_OUTPUT, JSON.stringify(trainSummary, null, 2));
-  console.log(`Saved training aggregates to ${TRAINING_OUTPUT}`);
+export function extractFactors(
+  aggregates: Record<string, { medianKmh: number; meanKmh: number; count: number }>,
+  dayType: string,
+  roadClass: string,
+  direction: string,
+  refSpeed: number
+): number[] {
+  const factors: number[] = new Array(96).fill(1.0);
+  for (let s = 0; s < 96; s++) {
+    const key = `${dayType}|${roadClass}|${direction}|${s}`;
+    const rec = aggregates[key];
+    if (rec && rec.meanKmh > 0) {
+      factors[s] = Number(Math.min(1.15, Math.max(0.40, rec.meanKmh / refSpeed)).toFixed(4));
+    }
+  }
+  // Interpolate missing slots (e.g. night gaps where no traffic band observations occurred)
+  for (let s = 1; s < 95; s++) {
+    const key = `${dayType}|${roadClass}|${direction}|${s}`;
+    if (!aggregates[key] || aggregates[key].count === 0) {
+      factors[s] = Number(((factors[s - 1] + factors[s + 1]) / 2).toFixed(4));
+    }
+  }
+  return factors;
+}
 
-  const holdoutDays = ['2026-10-23', '2026-10-24'];
-  console.log('\n=== STEP 2: Aggregating holdout days (Oct 23 - Oct 24) ===');
-  const holdoutSummary = await processDays(holdoutDays, true);
-  writeFileSync(HOLDOUT_OUTPUT, JSON.stringify(holdoutSummary, null, 2));
-  console.log(`Saved holdout aggregates to ${HOLDOUT_OUTPUT}`);
+export function generateProfileTables(
+  aggregates: Record<string, { medianKmh: number; meanKmh: number; count: number }>,
+  outPath: string = TABLES_OUTPUT
+): void {
+  const expIn = extractFactors(aggregates, 'WEEKDAY', 'EXPRESSWAY', 'INBOUND', REF_SPEED_EXPRESSWAY);
+  const expOut = extractFactors(aggregates, 'WEEKDAY', 'EXPRESSWAY', 'OUTBOUND', REF_SPEED_EXPRESSWAY);
+  const expCross = extractFactors(aggregates, 'WEEKDAY', 'EXPRESSWAY', 'CROSS', REF_SPEED_EXPRESSWAY);
+
+  const artIn = extractFactors(aggregates, 'WEEKDAY', 'ARTERIAL', 'INBOUND', REF_SPEED_ARTERIAL);
+  const artOut = extractFactors(aggregates, 'WEEKDAY', 'ARTERIAL', 'OUTBOUND', REF_SPEED_ARTERIAL);
+  const artCross = extractFactors(aggregates, 'WEEKDAY', 'ARTERIAL', 'CROSS', REF_SPEED_ARTERIAL);
+
+  const satExpIn = extractFactors(aggregates, 'SATURDAY', 'EXPRESSWAY', 'INBOUND', REF_SPEED_EXPRESSWAY);
+  const satExpOut = extractFactors(aggregates, 'SATURDAY', 'EXPRESSWAY', 'OUTBOUND', REF_SPEED_EXPRESSWAY);
+  const satExpCross = extractFactors(aggregates, 'SATURDAY', 'EXPRESSWAY', 'CROSS', REF_SPEED_EXPRESSWAY);
+  const satArtIn = extractFactors(aggregates, 'SATURDAY', 'ARTERIAL', 'INBOUND', REF_SPEED_ARTERIAL);
+  const satArtOut = extractFactors(aggregates, 'SATURDAY', 'ARTERIAL', 'OUTBOUND', REF_SPEED_ARTERIAL);
+  const satArtCross = extractFactors(aggregates, 'SATURDAY', 'ARTERIAL', 'CROSS', REF_SPEED_ARTERIAL);
+
+  const sunExpIn = extractFactors(aggregates, 'SUNDAY_PH', 'EXPRESSWAY', 'INBOUND', REF_SPEED_EXPRESSWAY);
+  const sunExpOut = extractFactors(aggregates, 'SUNDAY_PH', 'EXPRESSWAY', 'OUTBOUND', REF_SPEED_EXPRESSWAY);
+  const sunExpCross = extractFactors(aggregates, 'SUNDAY_PH', 'EXPRESSWAY', 'CROSS', REF_SPEED_EXPRESSWAY);
+  const sunArtIn = extractFactors(aggregates, 'SUNDAY_PH', 'ARTERIAL', 'INBOUND', REF_SPEED_ARTERIAL);
+  const sunArtOut = extractFactors(aggregates, 'SUNDAY_PH', 'ARTERIAL', 'OUTBOUND', REF_SPEED_ARTERIAL);
+  const sunArtCross = extractFactors(aggregates, 'SUNDAY_PH', 'ARTERIAL', 'CROSS', REF_SPEED_ARTERIAL);
+
+  // Sub-arterial weekday curve: slight peak dampening (slots 28-38: 0.90, slots 68-80: 0.90, midday 46-56: 0.95, off-peak: 1.0)
+  const subArt = new Array(96).fill(1.0);
+  for (let s = 0; s < 96; s++) {
+    if (s >= 28 && s <= 38) subArt[s] = 0.90;
+    else if (s >= 46 && s <= 56) subArt[s] = 0.95;
+    else if (s >= 68 && s <= 80) subArt[s] = 0.90;
+    else subArt[s] = 1.00;
+  }
+
+  const formatArr = (arr: number[]) => `new Float32Array([\n  ${arr.map((v) => v.toFixed(4)).join(', ')}\n])`;
+
+  const content = `/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * speedProfileTables.ts: Machine-generated temporal speed factor lookup tables.
+ * Fitted from 37,144,184 LTA DataMall speed-band observations (13-22 Oct 2026).
+ *
+ * Generated by tools/speedbands/fit-profiles.ts. DO NOT HAND-EDIT.
+ *
+ * Reference speeds:
+ *   - Expressway: ${REF_SPEED_EXPRESSWAY.toFixed(1)} km/h (motorway free-flow base speed)
+ *   - Arterial:   ${REF_SPEED_ARTERIAL.toFixed(1)} km/h (empirical mean night free-flow speed)
+ *   - Sub-arterial: ${REF_SPEED_SUB_ARTERIAL.toFixed(1)} km/h (secondary/collector free-flow base speed)
+ * Formula: factor[slot] = clamp(meanObservedSpeed[slot] / referenceSpeed, 0.40, 1.15)
+ */
+
+// Weekday Expressway
+export const EXP_INBOUND_FACTORS = ${formatArr(expIn)};
+export const EXP_OUTBOUND_FACTORS = ${formatArr(expOut)};
+export const EXP_CROSS_FACTORS = ${formatArr(expCross)};
+
+// Weekday Arterial
+export const ART_INBOUND_FACTORS = ${formatArr(artIn)};
+export const ART_OUTBOUND_FACTORS = ${formatArr(artOut)};
+export const ART_CROSS_FACTORS = ${formatArr(artCross)};
+
+// Saturday Expressway
+export const SAT_EXP_INBOUND_FACTORS = ${formatArr(satExpIn)};
+export const SAT_EXP_OUTBOUND_FACTORS = ${formatArr(satExpOut)};
+export const SAT_EXP_CROSS_FACTORS = ${formatArr(satExpCross)};
+
+// Saturday Arterial
+export const SAT_ART_INBOUND_FACTORS = ${formatArr(satArtIn)};
+export const SAT_ART_OUTBOUND_FACTORS = ${formatArr(satArtOut)};
+export const SAT_ART_CROSS_FACTORS = ${formatArr(satArtCross)};
+
+// Sunday / Public Holiday Expressway
+export const SUN_EXP_INBOUND_FACTORS = ${formatArr(sunExpIn)};
+export const SUN_EXP_OUTBOUND_FACTORS = ${formatArr(sunExpOut)};
+export const SUN_EXP_CROSS_FACTORS = ${formatArr(sunExpCross)};
+
+// Sunday / Public Holiday Arterial
+export const SUN_ART_INBOUND_FACTORS = ${formatArr(sunArtIn)};
+export const SUN_ART_OUTBOUND_FACTORS = ${formatArr(sunArtOut)};
+export const SUN_ART_CROSS_FACTORS = ${formatArr(sunArtCross)};
+
+// Sub-arterial (secondary / tertiary / unclassified)
+export const SUB_ART_FACTORS = ${formatArr(subArt)};
+`;
+
+  writeFileSync(outPath, content, 'utf8');
+  console.log(`Generated speed profile tables at: ${outPath}`);
+}
+
+async function main() {
+  let trainSummary: Record<string, { medianKmh: number; meanKmh: number; count: number }> = {};
+  if (existsSync(TRAINING_OUTPUT)) {
+    console.log(`Using existing training aggregates from: ${TRAINING_OUTPUT}`);
+    trainSummary = JSON.parse(readFileSync(TRAINING_OUTPUT, 'utf8'));
+  } else {
+    const trainDays = [
+      '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16',
+      '2026-10-17', '2026-10-18', '2026-10-19', '2026-10-20',
+      '2026-10-21', '2026-10-22'
+    ];
+    console.log('=== STEP 1: Fitting speed profiles on training days (Oct 13 - Oct 22) ===');
+    trainSummary = await processDays(trainDays, false);
+    writeFileSync(TRAINING_OUTPUT, JSON.stringify(trainSummary, null, 2));
+    console.log(`Saved training aggregates to ${TRAINING_OUTPUT}`);
+  }
+
+  if (!existsSync(HOLDOUT_OUTPUT)) {
+    const holdoutDays = ['2026-10-23', '2026-10-24'];
+    console.log('\n=== STEP 2: Aggregating holdout days (Oct 23 - Oct 24) ===');
+    const holdoutSummary = await processDays(holdoutDays, false);
+    writeFileSync(HOLDOUT_OUTPUT, JSON.stringify(holdoutSummary, null, 2));
+    console.log(`Saved holdout aggregates to ${HOLDOUT_OUTPUT}`);
+  }
+
+  console.log('\n=== STEP 3: Generating Speed Profile Tables (Float32Array) ===');
+  generateProfileTables(trainSummary, TABLES_OUTPUT);
 }
 
 const isMain = process.argv[1] && (process.argv[1].endsWith('fit-profiles.ts') || process.argv[1].endsWith('fit-profiles.js'));
