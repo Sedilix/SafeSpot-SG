@@ -63,9 +63,9 @@ describe('build-graph: Expressway Corridor Link Normalization', () => {
     const edge = graphData.edges[0];
     expect(edge.highway).toBe('primary_link');
 
-    // Capped at primary_link free flow assumption (25 km/h)
+    // Capped at primary_link free flow assumption (35 km/h)
     const effectiveKmh = (edge.length / edge.seconds) * 3.6;
-    expect(effectiveKmh).toBeCloseTo(25, 0);
+    expect(effectiveKmh).toBeCloseTo(35, 0);
   });
 
   it('normalizes secondary_link or trunk_link with expressway ref to motorway_link', () => {

@@ -28,7 +28,7 @@ export const TABLES_OUTPUT = join(process.cwd(), 'src', 'routing', 'speedProfile
 
 export const REF_SPEED_EXPRESSWAY = 68.0;   // Free-flow base speed (km/h) for motorway from graph
 export const REF_SPEED_ARTERIAL = 41.7;     // Free-flow base speed (km/h) for arterial (empirical mean night speed)
-export const REF_SPEED_SUB_ARTERIAL = 25.0; // Free-flow base speed (km/h) for secondary/collector
+export const REF_SPEED_SUB_ARTERIAL = 21.4; // Free-flow base speed (km/h) for secondary/collector
 
 // Midpoint speeds (km/h) for LTA Speed Bands 1-8
 // Band 8 has min:70, max:999; for expressways typical operating speed is ~80 km/h, for arterials ~72 km/h.
@@ -277,14 +277,9 @@ export function generateProfileTables(
   const sunArtOut = extractFactors(aggregates, 'SUNDAY_PH', 'ARTERIAL', 'OUTBOUND', REF_SPEED_ARTERIAL);
   const sunArtCross = extractFactors(aggregates, 'SUNDAY_PH', 'ARTERIAL', 'CROSS', REF_SPEED_ARTERIAL);
 
-  // Sub-arterial weekday curve: slight peak dampening (slots 28-38: 0.90, slots 68-80: 0.90, midday 46-56: 0.95, off-peak: 1.0)
-  const subArt = new Array(96).fill(1.0);
-  for (let s = 0; s < 96; s++) {
-    if (s >= 28 && s <= 38) subArt[s] = 0.90;
-    else if (s >= 46 && s <= 56) subArt[s] = 0.95;
-    else if (s >= 68 && s <= 80) subArt[s] = 0.90;
-    else subArt[s] = 1.00;
-  }
+  const subArt = extractFactors(aggregates, 'WEEKDAY', 'SUB_ARTERIAL', 'CROSS', REF_SPEED_SUB_ARTERIAL);
+  const satSubArt = extractFactors(aggregates, 'SATURDAY', 'SUB_ARTERIAL', 'CROSS', REF_SPEED_SUB_ARTERIAL);
+  const sunSubArt = extractFactors(aggregates, 'SUNDAY_PH', 'SUB_ARTERIAL', 'CROSS', REF_SPEED_SUB_ARTERIAL);
 
   const formatArr = (arr: number[]) => `new Float32Array([\n  ${arr.map((v) => v.toFixed(4)).join(', ')}\n])`;
 
@@ -336,6 +331,8 @@ export const SUN_ART_CROSS_FACTORS = ${formatArr(sunArtCross)};
 
 // Sub-arterial (secondary / tertiary / unclassified)
 export const SUB_ART_FACTORS = ${formatArr(subArt)};
+export const SAT_SUB_ART_FACTORS = ${formatArr(satSubArt)};
+export const SUN_SUB_ART_FACTORS = ${formatArr(sunSubArt)};
 `;
 
   writeFileSync(outPath, content, 'utf8');

@@ -32,6 +32,8 @@ import {
   SUN_ART_OUTBOUND_FACTORS,
   SUN_ART_CROSS_FACTORS,
   SUB_ART_FACTORS,
+  SAT_SUB_ART_FACTORS,
+  SUN_SUB_ART_FACTORS,
 } from './speedProfileTables';
 
 export {
@@ -54,6 +56,8 @@ export {
   SUN_ART_OUTBOUND_FACTORS,
   SUN_ART_CROSS_FACTORS,
   SUB_ART_FACTORS,
+  SAT_SUB_ART_FACTORS,
+  SUN_SUB_ART_FACTORS,
 };
 
 export type DayType = 'WEEKDAY' | 'SATURDAY' | 'SUNDAY_PH';
@@ -143,7 +147,7 @@ export class SpeedProfileEngine {
             ? SAT_ART_OUTBOUND_FACTORS[slotIndex]
             : SAT_ART_CROSS_FACTORS[slotIndex];
       }
-      return SUB_ART_FACTORS[slotIndex] >= 0.95 ? 1.0 : 0.95;
+      return SAT_SUB_ART_FACTORS[slotIndex];
     }
 
     if (dayType === 'SUNDAY_PH') {
@@ -161,7 +165,7 @@ export class SpeedProfileEngine {
             ? SUN_ART_OUTBOUND_FACTORS[slotIndex]
             : SUN_ART_CROSS_FACTORS[slotIndex];
       }
-      return 1.0;
+      return SUN_SUB_ART_FACTORS[slotIndex];
     }
 
     return 1.0;
@@ -271,7 +275,7 @@ export class SpeedProfileEngine {
             ? SAT_ART_OUTBOUND_FACTORS[slotIndex]
             : SAT_ART_CROSS_FACTORS[slotIndex];
       } else {
-        factor = SUB_ART_FACTORS[slotIndex] >= 0.95 ? 1.0 : 0.95;
+        factor = SAT_SUB_ART_FACTORS[slotIndex];
       }
     } else if (dayType === 'SUNDAY_PH') {
       if (highwayType === 1) {
@@ -286,6 +290,8 @@ export class SpeedProfileEngine {
           : isOutbound
             ? SUN_ART_OUTBOUND_FACTORS[slotIndex]
             : SUN_ART_CROSS_FACTORS[slotIndex];
+      } else {
+        factor = SUN_SUB_ART_FACTORS[slotIndex];
       }
     }
 

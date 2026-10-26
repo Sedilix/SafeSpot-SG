@@ -52,8 +52,8 @@ describe('traffic signal delays', () => {
     const { g, r } = make([...cross(), signal(1, 0)]);
     expect(g.hasTrafficSignal[nodeAt(g, 1, 0)]).toBe(1);
     const inbound = edge(g, 11, [0, 0], [1, 0]);
-    expect(r.evaluateTurn(inbound, edge(g, 12, [1, 0], [2, 0])).delaySec).toBe(Router.DELAY_SIGNAL_SEC);
-    expect(r.evaluateTurn(inbound, edge(g, 21, [1, 0], [1, 1])).delaySec).toBe(Router.DELAY_SIGNAL_SEC); // left: max(5, signal)
+    expect(r.evaluateTurn(inbound, edge(g, 12, [1, 0], [2, 0])).delaySec).toBe(Router.DELAY_STRAIGHT_SEC);
+    expect(r.evaluateTurn(inbound, edge(g, 21, [1, 0], [1, 1])).delaySec).toBe(Router.DELAY_LEFT_SEC);
     expect(r.evaluateTurn(inbound, edge(g, 22, [1, 0], [1, -1])).delaySec).toBe(Router.DELAY_RIGHT_SEC); // right is already longer
   });
 

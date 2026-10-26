@@ -23,7 +23,7 @@ import { RoadGraph, haversineMeters, pointToSegmentDistance } from '../../src/ro
 import { Router } from '../../src/routing/router.js';
 import { SpeedProfileEngine } from '../../src/routing/speedProfiles.js';
 import { IncidentLayer } from '../../src/routing/incidents.js';
-import { SHADOW_PAIRS, resolveKey } from './shadow-probe.js';
+import { SHADOW_PAIRS } from './shadow-probe.js';
 
 export interface LatLng { lat: number; lng: number }
 
@@ -259,33 +259,6 @@ export function engineTimeOnGoogleRange(slices: EngineSlice[], t: GoogleTrack, f
   return { sec: Math.round(sec), signals };
 }
 
-async function fetchGoogleRoute(origin: LatLng, dest: LatLng, mapsKey: string, departure?: Date): Promise<GoogleRouteRaw> {
-  const body: Record<string, unknown> = {
-    origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
-    destination: { location: { latLng: { latitude: dest.lat, longitude: dest.lng } } },
-    travelMode: 'DRIVE',
-    routingPreference: 'TRAFFIC_AWARE',
-  };
-  // Google rejects "now" by the time it arrives; only send future departures.
-  if (departure) body.departureTime = departure.toISOString();
-  const res = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': mapsKey,
-      'X-Goog-FieldMask':
-        'routes.duration,routes.staticDuration,routes.distanceMeters,routes.polyline.encodedPolyline,' +
-        'routes.legs.steps.staticDuration,routes.legs.steps.distanceMeters,routes.legs.steps.polyline.encodedPolyline,' +
-        'routes.legs.steps.navigationInstruction',
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`Google Routes HTTP ${res.status}: ${(await res.text()).slice(0, 160)}`);
-  const route = ((await res.json()) as any).routes?.[0];
-  if (!route?.duration) throw new Error('Google returned no route');
-  return route;
-}
-
 export function engineSlices(graph: RoadGraph, router: Router, res: { edges: import('../../src/routing/graph.js').CompactEdge[] }, departure: Date, speedProfiles: SpeedProfileEngine): EngineSlice[] {
   const slices: EngineSlice[] = [];
   let elapsed = 0;
@@ -310,11 +283,11 @@ async function run() {
   const pairs = (arg('pairs') ?? 'novena-to-mbs,toa-payoh-to-raffles-place').split(',');
   const departureArg = arg('departure');
   const departure = departureArg ? new Date(departureArg) : new Date();
-  const cacheFile = arg('google-cache');
+  const traceFile = arg('trace');
   const outFile = arg('out') ?? 'tools/routing/out/corridor-step-audit.md';
 
-  const cache: Record<string, GoogleRouteRaw> = cacheFile && existsSync(cacheFile) ? JSON.parse(readFileSync(cacheFile, 'utf8')) : {};
-  const mapsKey = resolveKey('MAPS_SERVER_KEY', 'C:/Users/SIT EUC/maps_server_key.txt');
+  const traces: Record<string, GoogleRouteRaw> = traceFile && existsSync(traceFile) ? JSON.parse(readFileSync(traceFile, 'utf8')) : {};
+  // Clean-room protocol: zero Google API calls or key lookups
   const graphFile = arg('graph');
   const graph = graphFile ? new RoadGraph(JSON.parse(readFileSync(graphFile, 'utf8'))) : RoadGraph.loadDefault();
   const router = new Router(graph);
@@ -331,11 +304,11 @@ async function run() {
     const pair = SHADOW_PAIRS.find((p) => p.id === id);
     if (!pair) throw new Error(`Unknown pair ${id}`);
     console.log(`Auditing ${id}...`);
-    if (!cache[id]) {
-      if (!mapsKey) throw new Error('MAPS_SERVER_KEY not set and no cached Google route');
-      cache[id] = await fetchGoogleRoute(pair.origin, pair.dest, mapsKey, departureArg ? departure : undefined);
+    if (!traces[id]) {
+      console.warn(`[CLEAN_ROOM] No reference trip trace provided for ${id} via --trace=<file.json>. Skipping.`);
+      continue;
     }
-    const track = buildGoogleTrack(cache[id]);
+    const track = buildGoogleTrack(traces[id]);
     const res = router.findRoute(pair.origin, pair.dest, { departureTime: departure, speedProfiles, incidents: new IncidentLayer() });
     if (!res) throw new Error(`No route found for ${id}`);
     const slices = engineSlices(graph, router, res, departure, speedProfiles);
@@ -351,9 +324,9 @@ async function run() {
     const sign = (n: number) => (n > 0 ? `+${n}` : `${n}`);
     md += `## ${pair.name} (\`${id}\`)\n\n`;
     md += `| | Distance | Time | Signals |\n|---|---|---|---|\n`;
-    md += `| Google | ${cache[id].distanceMeters} m | ${track.totalSec} s | |\n`;
+    md += `| Google | ${traces[id].distanceMeters} m | ${track.totalSec} s | |\n`;
     md += `| Engine | ${engM} m | ${engSec} s | ${slices.reduce((n, s) => n + s.signals, 0)} |\n`;
-    md += `| Engine − Google | ${sign(engM - cache[id].distanceMeters)} m | ${sign(net)} s (${sign(Number(((net / track.totalSec) * 100).toFixed(1)))}%) | |\n`;
+    md += `| Engine − Google | ${sign(engM - traces[id].distanceMeters)} m | ${sign(net)} s (${sign(Number(((net / track.totalSec) * 100).toFixed(1)))}%) | |\n`;
     if (forced) {
       md += `| Engine timing of Google's road | ${Math.round(forced.distanceMeters)} m | ${Math.round(forced.durationSeconds)} s | ${forcedSlices.reduce((n, s) => n + s.signals, 0)} |\n`;
     }
@@ -372,7 +345,7 @@ async function run() {
     md += `\n---\n\n`;
   }
 
-  if (cacheFile) writeFileSync(cacheFile, JSON.stringify(cache));
+  
   writeFileSync(outFile, md, 'utf8');
   console.log(md);
   console.log(`Saved report to ${outFile}`);

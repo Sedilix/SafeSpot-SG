@@ -16,7 +16,8 @@
     "apk:debug": "npm run build:android && cd android && gradlew.bat assembleDebug",
     "apk:install": "adb install -r android/app/build/outputs/apk/debug/app-debug.apk",
     "fit:profiles": "tsx tools/speedbands/fit-profiles.ts",
-    "eval:profiles": "tsx tools/speedbands/evaluate-holdout.ts"
+    "eval:profiles": "tsx tools/speedbands/evaluate-holdout.ts",
+    "eval:links": "tsx tools/speedbands/evaluate-links-holdout.ts"
   },
   "dependencies": {
     "@capacitor-firebase/authentication": "^8.5.2",

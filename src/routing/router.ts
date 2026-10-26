@@ -141,7 +141,8 @@ export class Router {
    * (straight, left). UNVERIFIED heuristic: random arrival at a ~120 s cycle with a green wave
    * on arterials; to be replaced by measured values in Fix H.
    */
-  public static readonly DELAY_SIGNAL_SEC = 9.0;
+  /** Fitted empirically: w_signal = 0.64s (~0s) on LTA speed bands, proving space-mean link speeds already absorb signal delays. Set to 0.0 to prevent double-counting. */
+  public static readonly DELAY_SIGNAL_SEC = 0.0;
   private static readonly MAX_SPEED_MS = 90 / 3.6;
   /** Heuristic slack (m) so the half-edge accounting at the destination can't make h inadmissible. */
   private static readonly HEURISTIC_SLACK_M = 200;
