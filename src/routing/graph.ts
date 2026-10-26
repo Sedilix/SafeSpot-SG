@@ -222,12 +222,14 @@ export class RoadGraph {
       for (const r of data.viaWayRestrictions) {
         if (r.type.startsWith('no_')) {
           this.viaWayRestrictions.add(`${r.fromWayId}|${r.viaWayId}|${r.toWayId}`);
+          this.viaWayIds.add(r.viaWayId);
         }
       }
     }
   }
 
   private viaWayRestrictions = new Set<string>();
+  public viaWayIds = new Set<number>();
 
   /** Union-find over signal nodes closer than SIGNAL_CLUSTER_M, bucketed on a ~110 m grid. */
   private clusterSignals(): Int32Array {
@@ -263,7 +265,7 @@ export class RoadGraph {
   }
 
   public isViaWayRestricted(fromWayId: number, viaWayId: number, toWayId: number): boolean {
-    if (this.viaWayRestrictions.size === 0) return false;
+    if (!this.viaWayIds.has(viaWayId)) return false;
     return this.viaWayRestrictions.has(`${fromWayId}|${viaWayId}|${toWayId}`);
   }
 

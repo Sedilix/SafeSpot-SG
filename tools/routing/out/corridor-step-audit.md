@@ -1,6 +1,6 @@
 # Corridor audit: engine vs Google Routes
 
-- Departure: 2026-10-22T00:30:00.000Z (engine and Google; Google times are predicted traffic)
+- Departure: 2026-10-26T06:03:40.532Z (engine and Google)
 - Graph: 169316 nodes, 4933 traffic-signal nodes
 - An engine edge more than 35 m from Google's polyline is **divergent**; each run is compared with Google's route between the points where the engine leaves and rejoins it.
 - Google per-stretch seconds are step static durations scaled to the traffic-aware route total.
@@ -9,22 +9,22 @@
 
 | | Distance | Time | Signals |
 |---|---|---|---|
-| Google | 8128 m | 1333 s | |
-| Engine | 6580 m | 1236 s | 16 |
-| Engine − Google | -1548 m | -97 s (-7.3%) | |
-| Engine timing of Google's road | 8094 m | 1445 s | 21 |
+| Google | 8746 m | 1061 s | |
+| Engine | 6580 m | 1063 s | 16 |
+| Engine − Google | -2166 m | +2 s (+0.2%) | |
+| Engine timing of Google's road | 8738 m | 1140 s | 14 |
 
-Shared corridor: 21% of the engine's distance; 2 divergent run(s).
+Shared corridor: 6% of the engine's distance; 2 divergent run(s).
 
 "Engine s on Google's road" is the engine's own time for Google's stretch (its route forced onto Google's corridor).
 
 | # | Kind | Engine roads | Engine m | Engine s | Signals | Google roads | Google m | Google s | Diff (s) | Engine s on Google's road (signals) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | shared | Sinaran Drive | 113 | 25 | 0 | Head northeast; Keep right to continue toward Sinaran Dr | 87 | 34 | -9 | 18 (0) |
-| 2 | **divergent** | Sinaran Drive, tertiary_link, Irrawaddy Road, Thomson Road | 1018 | 240 | 3 | Keep right to continue toward Sinaran Dr; Turn right onto Sinaran Dr; Turn left after Novelis @ Novena (on the left); Continue onto Balestier Rd; Turn right onto the Rangoon Rd/CTE ramp to City; Take the CTE ramp to City; Merge onto Central Expw. | 2419 | 384 | -143 | 405 (3) |
-| 3 | shared | Thomson Road | 84 | 16 | 0 | Merge onto Central Expw. | 44 | 3 | +13 | 4 (0) |
-| 4 | **divergent** | Keng Lee Road, trunk_link, Bukit Timah Road, Sungei Road, Ophir Road, Republic Boulevard, Raffles Avenue | 4205 | 733 | 11 | Merge onto Central Expw.; Keep right to stay on Central Expw.; Slight left toward Buyong Rd (signs for Orchard Rd); Keep left to continue on Buyong Rd; Turn left onto Orchard Rd; Continue onto Bras Basah Rd; Continue onto Raffles Blvd; Turn right onto Temasek Ave | 4402 | 644 | +89 | 798 (16) |
-| 5 | shared | Raffles Avenue, Bayfront Avenue, Sheares Link, Sheares Avenue | 1158 | 222 | 2 | Turn right onto Temasek Ave; Continue onto Bayfront Ave; Turn left onto Sheares Link; Turn left onto Sheares Ave; Turn left; Turn right | 1176 | 268 | -46 | 220 (2) |
+| 1 | shared | Sinaran Drive | 113 | 22 | 0 | Head northeast; Keep right to continue toward Sinaran Dr | 87 | 33 | -11 | 15 (0) |
+| 2 | **divergent** | Sinaran Drive, tertiary_link, Irrawaddy Road, Thomson Road | 1018 | 201 | 3 | Keep right to continue toward Sinaran Dr; Turn right onto Sinaran Dr; Turn left after Novelis @ Novena (on the left); Continue onto Balestier Rd; Turn right onto the Rangoon Rd/CTE ramp to City; Take the CTE ramp to City; Merge onto Central Expw. | 2419 | 371 | -170 | 373 (3) |
+| 3 | shared | Thomson Road | 84 | 12 | 0 | Merge onto Central Expw. | 44 | 3 | +10 | 3 (0) |
+| 4 | **divergent** | Keng Lee Road, trunk_link, Bukit Timah Road, Sungei Road, Ophir Road, Republic Boulevard, Raffles Avenue, Bayfront Avenue, Sheares Link | 5146 | 789 | 13 | Merge onto Central Expw.; Keep right to stay on Central Expw.; Take exit 2 toward Havelock Rd; Merge onto Upper Cross St; Merge onto Havelock Rd; Continue onto Upper Pickering St; Continue onto Church St; Church St turns left and becomes Collyer Quay; Turn right onto Finlayson Green; Continue onto Marina Blvd; Turn left onto Sheares Ave | 5991 | 598 | +190 | 721 (11) |
+| 5 | shared | Sheares Link, Sheares Avenue | 218 | 39 | 0 | Turn left onto Sheares Ave; Turn left; Turn right | 203 | 56 | -17 | 28 (0) |
 
 ---
 
@@ -32,20 +32,20 @@ Shared corridor: 21% of the engine's distance; 2 divergent run(s).
 
 | | Distance | Time | Signals |
 |---|---|---|---|
-| Google | 9377 m | 1566 s | |
-| Engine | 10528 m | 1310 s | 11 |
-| Engine − Google | +1151 m | -256 s (-16.3%) | |
-| Engine timing of Google's road | 9058 m | 1400 s | 13 |
+| Google | 12701 m | 1176 s | |
+| Engine | 12368 m | 1075 s | 9 |
+| Engine − Google | -333 m | -101 s (-8.6%) | |
+| Engine timing of Google's road | 12368 m | 1075 s | 9 |
 
-Shared corridor: 5% of the engine's distance; 1 divergent run(s).
+Shared corridor: 98% of the engine's distance; 1 divergent run(s).
 
 "Engine s on Google's road" is the engine's own time for Google's stretch (its route forced onto Google's corridor).
 
 | # | Kind | Engine roads | Engine m | Engine s | Signals | Google roads | Google m | Google s | Diff (s) | Engine s on Google's road (signals) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | shared | Lorong 2 Toa Payoh, motorway_link | 315 | 67 | 1 | Head west toward Toa Payoh Central; Turn left onto Toa Payoh Central; Turn left onto Lor 2 Toa Payoh; Take the PIE ramp; Take the Pan Island Expressway ramp | 660 | 250 | -183 | 73 (1) |
-| 2 | **divergent** | motorway_link, Jalan Toa Payoh, Pan-Island Expressway, Kallang Way Flyover, Sims Way, Kallang Paya Lebar Expressway, Lorong 4 Geylang, primary_link, Nicoll Underpass, Nicoll Highway, Esplanade Drive, Fullerton Road, Collyer Quay, Raffles Quay, Cross Street, Cecil Street | 9957 | 1178 | 9 | Take the Pan Island Expressway ramp; Keep left, follow signs for Jln Datoh/Balestier Rd; Continue onto Jalan Datoh; Turn left onto Balestier Rd; Slight left to stay on Balestier Rd; Turn right onto the Rangoon Rd/CTE ramp to City; Take the CTE ramp to City; Merge onto Central Expw.; Keep right to stay on Central Expw.; Take exit 2 toward Havelock Rd; Merge onto Upper Cross St; Merge onto Havelock Rd; Continue onto Upper Pickering St; Continue onto Church St | 8500 | 1229 | -51 | 1270 (11) |
-| 3 | shared | Cecil Street, Collyer Quay, D'Almeida Street, Malacca Street | 257 | 65 | 1 | Continue onto Church St; Church St turns left and becomes Collyer Quay; Turn left onto D'almeida St | 209 | 87 | -22 | 56 (1) |
+| 1 | shared | Lorong 2 Toa Payoh, motorway_link, Jalan Toa Payoh, Pan-Island Expressway, Central Expressway | 9773 | 731 | 4 | Head west toward Toa Payoh Central; Turn left onto Toa Payoh Central; Turn left onto Lor 2 Toa Payoh; Take the PIE ramp; Slight left onto the Pan Island Expressway ramp; Merge onto PIE; Take exit 15 toward SLE/TPE; Take the Braddell Rd ramp; Take the ramp to Braddell Rd/Upp Serangoon Rd; Turn right onto the ramp to Central Expw.; Take the CTE ramp to City; Merge onto Central Expw.; Keep right to stay on Central Expw. | 10134 | 835 | -104 | 731 (4) |
+| 2 | **divergent** | Central Expressway | 198 | 11 | 0 | Keep right to stay on Central Expw. | 191 | 11 | +1 | 11 (0) |
+| 3 | shared | Central Expressway, motorway_link, Havelock Road, Upper Pickering Street, Pickering Street, Church Street, Cecil Street, Collyer Quay, D'Almeida Street, Malacca Street | 2397 | 333 | 5 | Keep right to stay on Central Expw.; Take exit 2 toward Havelock Rd; Merge onto Upper Cross St; Merge onto Havelock Rd; Continue onto Upper Pickering St; Continue onto Church St; Church St turns left and becomes Collyer Quay; Turn left onto D'almeida St | 2372 | 330 | +2 | 333 (5) |
 
 ---
 
