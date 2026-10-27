@@ -23,6 +23,17 @@ export interface PedestrianRoutingOptions {
   maxSnapRadiusMeters?: number;     // Default 400m
 }
 
+export interface PedestrianRouteSegment {
+  from: { lat: number; lng: number };
+  to: { lat: number; lng: number };
+  distanceMeters: number;
+  covered: boolean;
+  isSteps: boolean;
+  hasRamp: boolean;
+  name: string;
+  highway: string;
+}
+
 export interface PedestrianRouteResult {
   durationSeconds: number;          // Expected walking time for elderly
   distanceMeters: number;           // Total route distance in metres
@@ -33,6 +44,7 @@ export interface PedestrianRouteResult {
   path: Array<{ lat: number; lng: number }>;
   nodeIds: number[];
   edgeIds: number[];
+  segments: PedestrianRouteSegment[];
 }
 
 interface HeapItem {
@@ -97,11 +109,11 @@ export class PedestrianRouter {
     destination: { lat: number; lng: number },
     options: PedestrianRoutingOptions = {}
   ): Promise<PedestrianRouteResult | null> {
-    const pace = options.seniorPaceMps ?? 0.9;
+    const pace = Math.max(0.3, Math.min(2.5, options.seniorPaceMps ?? 0.9));
     const avoidStairs = options.avoidStairs ?? true;
-    const stairsPenalty = options.stairsPenaltyMultiplier ?? 4.0;
-    const rainMultiplier = options.rainMultiplier ?? 3.0;
-    const maxSnap = options.maxSnapRadiusMeters ?? 400;
+    const stairsPenalty = Math.max(1.0, Math.min(20.0, options.stairsPenaltyMultiplier ?? 4.0));
+    const rainMultiplier = Math.max(1.0, Math.min(10.0, options.rainMultiplier ?? 3.0));
+    const maxSnap = Math.max(50, Math.min(1000, options.maxSnapRadiusMeters ?? 400));
 
     // Determine rain condition
     let isRaining = options.isRaining;
@@ -134,6 +146,7 @@ export class PedestrianRouter {
         path: [{ lat: n.lat, lng: n.lng }],
         nodeIds: [startNode],
         edgeIds: [],
+        segments: [],
       };
     }
 
@@ -205,10 +218,17 @@ export class PedestrianRouter {
     const pathEdges: number[] = [];
     let curr = destNode;
 
+    const visited = new Set<number>([destNode]);
     while (curr !== startNode) {
-      const edgeId = cameFromEdge.get(curr)!;
+      const edgeId = cameFromEdge.get(curr);
+      const prev = cameFromNode.get(curr);
+      if (edgeId === undefined || prev === undefined || visited.has(prev)) {
+        console.warn(`[ROUTING] Pedestrian path reconstruction cycle or break at node ${curr}`);
+        return null;
+      }
+      visited.add(prev);
       pathEdges.unshift(edgeId);
-      curr = cameFromNode.get(curr)!;
+      curr = prev;
       pathNodes.unshift(curr);
     }
 
@@ -240,6 +260,22 @@ export class PedestrianRouter {
       return { lat: n.lat, lng: n.lng };
     });
 
+    const segments: PedestrianRouteSegment[] = pathEdges.map((eid) => {
+      const edge = this.graph.edges[eid];
+      const fn = this.graph.nodes[edge.from];
+      const tn = this.graph.nodes[edge.to];
+      return {
+        from: { lat: fn.lat, lng: fn.lng },
+        to: { lat: tn.lat, lng: tn.lng },
+        distanceMeters: edge.length,
+        covered: edge.covered,
+        isSteps: edge.isSteps,
+        hasRamp: edge.hasRamp,
+        name: edge.name || '',
+        highway: edge.highway,
+      };
+    });
+
     return {
       durationSeconds: Math.round(durationSeconds),
       distanceMeters: Math.round(totalDistanceMeters),
@@ -250,6 +286,111 @@ export class PedestrianRouter {
       path: pathCoords,
       nodeIds: pathNodes,
       edgeIds: pathEdges,
+      segments,
     };
   }
 }
+
+export type SeniorGuidanceLang = 'en' | 'zh' | 'ms' | 'ta';
+
+/**
+ * Generates clear, localized, step-by-step guidance tailored for elderly listeners.
+ * Highlights sheltered linkways, warns of stairs vs ramps, and advises safe crossings.
+ */
+export function generateSeniorInstructions(
+  result: PedestrianRouteResult,
+  lang: SeniorGuidanceLang = 'en'
+): string[] {
+  if (!result || result.segments.length === 0) {
+    switch (lang) {
+      case 'zh': return ['您已到达目的地。'];
+      case 'ms': return ['Anda telah tiba di destinasi.'];
+      case 'ta': return ['உங்கள் இலக்கை அடைந்துவிட்டீர்கள்.'];
+      default: return ['You have arrived at your destination.'];
+    }
+  }
+
+  const instructions: string[] = [];
+
+  interface GroupedStretch {
+    type: 'covered' | 'uncovered' | 'steps' | 'ramp' | 'crossing';
+    distanceMeters: number;
+    name?: string;
+  }
+
+  const stretches: GroupedStretch[] = [];
+  for (const seg of result.segments) {
+    let t: 'covered' | 'uncovered' | 'steps' | 'ramp' | 'crossing' = 'uncovered';
+    if (seg.isSteps) {
+      t = seg.hasRamp ? 'ramp' : 'steps';
+    } else if (seg.highway === 'crossing' || (seg.name && seg.name.toLowerCase().includes('crossing'))) {
+      t = 'crossing';
+    } else if (seg.covered) {
+      t = 'covered';
+    }
+
+    const last = stretches[stretches.length - 1];
+    if (last && last.type === t) {
+      last.distanceMeters += seg.distanceMeters;
+    } else {
+      stretches.push({ type: t, distanceMeters: seg.distanceMeters, name: seg.name });
+    }
+  }
+
+  for (const s of stretches) {
+    const dist = Math.max(5, Math.round(s.distanceMeters));
+    switch (s.type) {
+      case 'covered':
+        if (lang === 'zh') instructions.push(`沿着有盖走廊直行约 ${dist} 米。`);
+        else if (lang === 'ms') instructions.push(`Teruskan di laluan berbumbung sejauh lebih kurang ${dist} meter.`);
+        else if (lang === 'ta') instructions.push(`கூரை வேய்ந்த நடைபாதையில் சுமார் ${dist} மீட்டர் நேராகச் செல்லவும்.`);
+        else instructions.push(`Continue along the covered linkway for about ${dist} metres.`);
+        break;
+
+      case 'ramp':
+        if (lang === 'zh') instructions.push(`走前方无障碍缓坡（避开楼梯），约 ${dist} 米。`);
+        else if (lang === 'ms') instructions.push(`Gunakan tanjakan bebas halangan di hadapan (mengelak tangga), kira-kira ${dist} meter.`);
+        else if (lang === 'ta') instructions.push(`முன்னால் உள்ள தடையில்லா சாய்வுதளத்தைப் பயன்படுத்தவும் (படிக்கட்டுகளைத் தவிர்க்கவும்), சுமார் ${dist} மீட்டர்.`);
+        else instructions.push(`Take the gentle barrier-free ramp ahead (avoiding stairs), about ${dist} metres.`);
+        break;
+
+      case 'steps':
+        if (lang === 'zh') instructions.push(`注意：前方有台阶，请扶好扶手小心上下（约 ${dist} 米）。`);
+        else if (lang === 'ms') instructions.push(`Perhatian: ada tangga di hadapan, sila pegang pemegang dengan berhati-hati (kira-kira ${dist} meter).`);
+        else if (lang === 'ta') instructions.push(`கவனம்: முன்னால் படிகள் உள்ளன, கைப்பிடியைப் பிடித்து கவனமாக நடக்கவும் (சுமார் ${dist} மீட்டர்).`);
+        else instructions.push(`Caution: steps ahead, please hold the handrail carefully (about ${dist} metres).`);
+        break;
+
+      case 'crossing':
+        if (lang === 'zh') instructions.push('在行人过街横道处，等待绿灯安全过马路。');
+        else if (lang === 'ms') instructions.push('Di lintasan pejalan kaki, tunggu lampu hijau sebelum melintas dengan selamat.');
+        else if (lang === 'ta') instructions.push('பாதசாரி கடவையில், பாதுகாப்பாக கடக்க பச்சை விளக்குக்காக காத்திருக்கவும்.');
+        else instructions.push('At the pedestrian crossing, wait for the green signal to cross safely.');
+        break;
+
+      case 'uncovered':
+      default:
+        if (lang === 'zh') instructions.push(`沿人行道直行约 ${dist} 米。`);
+        else if (lang === 'ms') instructions.push(`Teruskan di laluan pejalan kaki sejauh lebih kurang ${dist} meter.`);
+        else if (lang === 'ta') instructions.push(`நடைபாதையில் சுமார் ${dist} மீட்டர் நேராகச் செல்லவும்.`);
+        else instructions.push(`Walk along the footpath for about ${dist} metres.`);
+        break;
+    }
+  }
+
+  if (lang === 'zh') instructions.push('您即将到达安全上车点。');
+  else if (lang === 'ms') instructions.push('Anda hampir sampai di tempat menunggu yang selamat.');
+  else if (lang === 'ta') instructions.push('நீங்கள் பாதுகாப்பான இடத்திற்கு வந்துவிட்டீர்கள்.');
+  else instructions.push('You are arriving at the safe pickup point.');
+
+  return instructions;
+}
+
+let defaultPedestrianRouterInstance: PedestrianRouter | null = null;
+export function getPedestrianRouter(): PedestrianRouter {
+  if (!defaultPedestrianRouterInstance) {
+    defaultPedestrianRouterInstance = new PedestrianRouter();
+  }
+  return defaultPedestrianRouterInstance;
+}
+
