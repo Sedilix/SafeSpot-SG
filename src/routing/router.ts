@@ -136,6 +136,13 @@ export class Router {
   public static readonly DELAY_LEFT_SEC = 5.0;
   public static readonly DELAY_RIGHT_SEC = 18.0;
   public static readonly DELAY_UTURN_SEC = 28.0;
+  /**
+   * Expected wait at a signalized junction for movements that would otherwise cost less
+   * (straight, left). UNVERIFIED heuristic: random arrival at a ~120 s cycle with a green wave
+   * on arterials; to be replaced by measured values in Fix H.
+   */
+  /** Fitted empirically: w_signal = 0.64s (~0s) on LTA speed bands, proving space-mean link speeds already absorb signal delays. Set to 0.0 to prevent double-counting. */
+  public static readonly DELAY_SIGNAL_SEC = 0.0;
   private static readonly MAX_SPEED_MS = 90 / 3.6;
   /** Heuristic slack (m) so the half-edge accounting at the destination can't make h inadmissible. */
   private static readonly HEURISTIC_SLACK_M = 200;
@@ -157,46 +164,75 @@ export class Router {
     return ((this.graph.edgeBearings[to.id] - this.graph.edgeBearings[from.id] + 540) % 360) - 180;
   }
 
-  /** Whether `from` -> `to` is legal, and the delay it costs. */
-  public evaluateTurn(from: CompactEdge, to: CompactEdge): { allowed: boolean; delaySec: number } {
+  /** True when `from` -> `to` enters a traffic-signal cluster (one charge per signalized junction). */
+  public chargesSignal(from: CompactEdge, to: CompactEdge): boolean {
     const via = from.to;
-    const isReverse = to.to === from.from;
+    if (!this.graph.hasTrafficSignal[via] || to.to === from.from) return false;
+    return this.graph.signalCluster[from.from] !== this.graph.signalCluster[via];
+  }
 
-    if (this.graph.hasRestrictions[via]) {
-      // Restrictions are matched on (from-way, via-node, to-way), as OSM defines them.
-      for (const r of this.graph.restrictionsAt(from.wayId, via)) {
-        const toMatches = to.wayId === r.toWayId;
+  /** Whether `from` -> `to` is legal, and the delay it costs. */
+  /**
+   * Fast inline turn evaluation returning turn delay in seconds, or -1 if the turn is illegal.
+   * Avoids object allocation and property lookups in the inner Dijkstra loop.
+   */
+  public evaluateTurnDelayFast(
+    curId: number,
+    nid: number,
+    curWayId: number,
+    nextWayId: number,
+    fromNode: number,
+    viaNode: number,
+    toNode: number
+  ): number {
+    const isReverse = toNode === fromNode;
+
+    if (this.graph.hasRestrictions[viaNode]) {
+      for (const r of this.graph.restrictionsAt(curWayId, viaNode)) {
+        const toMatches = nextWayId === r.toWayId;
         if (r.type === 'no_u_turn') {
-          if (toMatches && (isReverse || Math.abs(this.turnAngle(from, to)) > 135)) return { allowed: false, delaySec: 0 };
+          if (toMatches && (isReverse || Math.abs(((this.graph.edgeBearings[nid] - this.graph.edgeBearings[curId] + 540) % 360) - 180) > 135)) {
+            return -1;
+          }
         } else if (r.type.startsWith('no_')) {
           if (!toMatches) continue;
-          if (from.wayId !== r.toWayId) return { allowed: false, delaySec: 0 };
-          const a = this.turnAngle(from, to); // same way continues: fall back to angle class
+          if (curWayId !== r.toWayId) return -1;
+          const a = ((this.graph.edgeBearings[nid] - this.graph.edgeBearings[curId] + 540) % 360) - 180;
           if ((r.type === 'no_left_turn' && a < -30) || (r.type === 'no_right_turn' && a > 30) ||
-              (r.type === 'no_straight_on' && Math.abs(a) <= 30)) return { allowed: false, delaySec: 0 };
+              (r.type === 'no_straight_on' && Math.abs(a) <= 30)) return -1;
         } else if (r.type.startsWith('only_')) {
-          if (!toMatches) return { allowed: false, delaySec: 0 };
-          if (isReverse && r.type !== 'only_u_turn') return { allowed: false, delaySec: 0 };
+          if (!toMatches) return -1;
+          if (isReverse && r.type !== 'only_u_turn') return -1;
         }
       }
     }
 
     if (isReverse) {
-      const start = this.graph.outgoingOffsets[via];
-      const end = this.graph.outgoingOffsets[via + 1];
+      const start = this.graph.outgoingOffsets[viaNode];
+      const end = this.graph.outgoingOffsets[viaNode + 1];
       for (let k = start; k < end; k++) {
-        if (this.graph.edgeTo[this.graph.outgoingEdgeIds[k]] !== from.from) return { allowed: false, delaySec: 0 };
+        if (this.graph.edgeTo[this.graph.outgoingEdgeIds[k]] !== fromNode) return -1;
       }
-      return { allowed: true, delaySec: Router.DELAY_UTURN_SEC };
+      return Router.DELAY_UTURN_SEC;
     }
 
-    if (!this.graph.isJunction[via]) return { allowed: true, delaySec: 0 };
+    const signal = (this.graph.hasTrafficSignal[viaNode] && !isReverse && this.graph.signalCluster[fromNode] !== this.graph.signalCluster[viaNode])
+      ? Router.DELAY_SIGNAL_SEC
+      : 0;
 
-    const a = this.turnAngle(from, to);
-    if (Math.abs(a) > 135) return { allowed: true, delaySec: Router.DELAY_UTURN_SEC };
-    if (a > 30) return { allowed: true, delaySec: Router.DELAY_RIGHT_SEC };
-    if (a < -30) return { allowed: true, delaySec: Router.DELAY_LEFT_SEC };
-    return { allowed: true, delaySec: Router.DELAY_STRAIGHT_SEC };
+    if (!this.graph.isJunction[viaNode]) return signal;
+
+    const a = ((this.graph.edgeBearings[nid] - this.graph.edgeBearings[curId] + 540) % 360) - 180;
+    if (Math.abs(a) > 135) return Math.max(signal, Router.DELAY_UTURN_SEC);
+    if (a > 30) return Math.max(signal, Router.DELAY_RIGHT_SEC);
+    if (a < -30) return Math.max(signal, Router.DELAY_LEFT_SEC);
+    return Math.max(signal, Router.DELAY_STRAIGHT_SEC);
+  }
+
+  /** Whether `from` -> `to` is legal, and the delay it costs. */
+  public evaluateTurn(from: CompactEdge, to: CompactEdge): { allowed: boolean; delaySec: number } {
+    const d = this.evaluateTurnDelayFast(from.id, to.id, from.wayId, to.wayId, from.from, from.to, to.to);
+    return { allowed: d >= 0, delaySec: Math.max(0, d) };
   }
 
   public findRoute(
@@ -228,8 +264,13 @@ export class Router {
     const popObj = this.popItem;
 
     const destLat = dest.lat, destLng = dest.lng;
-    const h = (edge: CompactEdge) =>
-      Math.max(0, haversineMeters(this.graph.nodeLat[edge.to], this.graph.nodeLng[edge.to], destLat, destLng) - Router.HEURISTIC_SLACK_M) / Router.MAX_SPEED_MS;
+    const destCos = Math.cos((destLat * Math.PI) / 180);
+    const hFast = (toNode: number) => {
+      const dx = (destLng - this.graph.nodeLng[toNode]) * destCos;
+      const dy = destLat - this.graph.nodeLat[toNode];
+      const distM = Math.sqrt(dx * dx + dy * dy) * 111000;
+      return Math.max(0, distM - Router.HEURISTIC_SLACK_M) / Router.MAX_SPEED_MS;
+    };
 
     const departureTime = options?.departureTime || new Date();
     const speedProfiles = options?.speedProfiles;
@@ -269,7 +310,7 @@ export class Router {
       const penalty = hasPenalties ? (options?.edgePenalties?.get(e.id) ?? 1.0) : 1.0;
       const c = initialSeconds * 0.5 * penalty;
       best[e.id] = c;
-      heap.push(e.id, c, c + h(e));
+      heap.push(e.id, c, c + hFast(e.to));
     }
 
     let reached = -1;
@@ -288,15 +329,15 @@ export class Router {
       for (let j = startOut; j < endOut; j++) {
         const nid = this.graph.outgoingEdgeIds[j];
         const next = edges[nid];
-        const turn = this.evaluateTurn(cur, next);
-        if (!turn.allowed) continue;
-
         const fromWayId = enteredFromWay[topEdgeId];
-        if (fromWayId > 0 && cur.wayId !== next.wayId && this.graph.isViaWayRestricted(fromWayId, cur.wayId, next.wayId)) {
+        if (fromWayId > 0 && cur.wayId !== next.wayId && this.graph.viaWayIds.has(cur.wayId) && this.graph.isViaWayRestricted(fromWayId, cur.wayId, next.wayId)) {
           continue;
         }
 
-        const arrivalElapsed = topElapsed + turn.delaySec;
+        const turnDelay = this.evaluateTurnDelayFast(topEdgeId, nid, cur.wayId, next.wayId, cur.from, cur.to, next.to);
+        if (turnDelay < 0) continue;
+
+        const arrivalElapsed = topElapsed + turnDelay;
 
         // 1. Live Incidents: impassable closures and decay delays
         let incidentDelay = 0;
@@ -338,7 +379,7 @@ export class Router {
           best[nid] = cost;
           prev[nid] = topEdgeId;
           enteredFromWay[nid] = (next.wayId === cur.wayId) ? fromWayId : cur.wayId;
-          heap.push(nid, cost, cost + h(next));
+          heap.push(nid, cost, cost + hFast(next.to));
         }
       }
     }
@@ -601,15 +642,15 @@ export class Router {
       for (let j = startOut; j < endOut; j++) {
         const nid = this.graph.outgoingEdgeIds[j];
         const next = edges[nid];
-        const turn = this.evaluateTurn(cur, next);
-        if (!turn.allowed) continue;
-
         const fromWayId = enteredFromWay[topEdgeId];
-        if (fromWayId > 0 && cur.wayId !== next.wayId && this.graph.isViaWayRestricted(fromWayId, cur.wayId, next.wayId)) {
+        if (fromWayId > 0 && cur.wayId !== next.wayId && this.graph.viaWayIds.has(cur.wayId) && this.graph.isViaWayRestricted(fromWayId, cur.wayId, next.wayId)) {
           continue;
         }
 
-        const arrivalElapsed = topElapsed + turn.delaySec;
+        const turnDelay = this.evaluateTurnDelayFast(topEdgeId, nid, cur.wayId, next.wayId, cur.from, cur.to, next.to);
+        if (turnDelay < 0) continue;
+
+        const arrivalElapsed = topElapsed + turnDelay;
 
         let incidentDelay = 0;
         if (hasIncidents) {

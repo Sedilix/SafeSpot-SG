@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * graph.ts: in-memory directed road graph with a spatial grid for snapping,
- * junction flags and turn restrictions indexed by (from-way, via-node).
+ * junction flags, traffic-signal clusters and turn restrictions indexed by
+ * (from-way, via-node).
  */
 
 import { readFileSync, existsSync } from 'fs';
@@ -44,6 +45,8 @@ export interface RoadGraphData {
   edges: CompactEdge[];
   turnRestrictions: TurnRestriction[];
   viaWayRestrictions?: ViaWayRestriction[];
+  /** Graph node ids tagged highway=traffic_signals (absent in graphs built before 2026-10-21). */
+  trafficSignalNodes?: number[];
   generatedAt?: string;
   stats?: Record<string, number>;
 }
@@ -93,6 +96,14 @@ export class RoadGraph {
   public outgoingEdges: number[][];
   /** 1 where 3+ distinct neighbouring nodes meet: only there do turn delays/angles apply. */
   public isJunction: Uint8Array;
+  /** 1 where OSM tags highway=traffic_signals. */
+  public hasTrafficSignal: Uint8Array;
+  /**
+   * Signal nodes within SIGNAL_CLUSTER_M of each other share an id (one junction mapped with a
+   * signal per carriageway or stop line), so a route is charged one wait per junction. -1 = none.
+   */
+  public signalCluster: Int32Array;
+  public static readonly SIGNAL_CLUSTER_M = 50;
 
   // Typed arrays for high-performance cache-friendly routing
   public nodeLat: Float64Array;
@@ -193,6 +204,10 @@ export class RoadGraph {
       }
     }
 
+    this.hasTrafficSignal = new Uint8Array(N);
+    for (const id of data.trafficSignalNodes ?? []) if (id >= 0 && id < N) this.hasTrafficSignal[id] = 1;
+    this.signalCluster = this.clusterSignals();
+
     this.hasRestrictions = new Uint8Array(N);
     for (const r of data.turnRestrictions ?? []) {
       if (r.viaNode >= 0 && r.viaNode < N) {
@@ -207,15 +222,50 @@ export class RoadGraph {
       for (const r of data.viaWayRestrictions) {
         if (r.type.startsWith('no_')) {
           this.viaWayRestrictions.add(`${r.fromWayId}|${r.viaWayId}|${r.toWayId}`);
+          this.viaWayIds.add(r.viaWayId);
         }
       }
     }
   }
 
   private viaWayRestrictions = new Set<string>();
+  public viaWayIds = new Set<number>();
+
+  /** Union-find over signal nodes closer than SIGNAL_CLUSTER_M, bucketed on a ~110 m grid. */
+  private clusterSignals(): Int32Array {
+    const N = this.nodes.length;
+    const cluster = new Int32Array(N).fill(-1);
+    const ids: number[] = [];
+    for (let i = 0; i < N; i++) if (this.hasTrafficSignal[i]) ids.push(i);
+    const parent = new Map<number, number>(ids.map((i) => [i, i]));
+    const find = (x: number): number => {
+      while (parent.get(x)! !== x) { parent.set(x, parent.get(parent.get(x)!)!); x = parent.get(x)!; }
+      return x;
+    };
+    const S = 1000;
+    const buckets = new Map<number, number[]>();
+    for (const i of ids) {
+      const k = Math.floor(this.nodeLat[i] * S) * 1000000 + Math.floor(this.nodeLng[i] * S);
+      const b = buckets.get(k);
+      if (b) b.push(i); else buckets.set(k, [i]);
+    }
+    for (const i of ids) {
+      const la = Math.floor(this.nodeLat[i] * S), lo = Math.floor(this.nodeLng[i] * S);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        for (const j of buckets.get((la + dy) * 1000000 + lo + dx) ?? []) {
+          if (j <= i) continue;
+          if (haversineMeters(this.nodeLat[i], this.nodeLng[i], this.nodeLat[j], this.nodeLng[j]) <= RoadGraph.SIGNAL_CLUSTER_M) {
+            parent.set(find(i), find(j));
+          }
+        }
+      }
+    }
+    for (const i of ids) cluster[i] = find(i);
+    return cluster;
+  }
 
   public isViaWayRestricted(fromWayId: number, viaWayId: number, toWayId: number): boolean {
-    if (this.viaWayRestrictions.size === 0) return false;
+    if (!this.viaWayIds.has(viaWayId)) return false;
     return this.viaWayRestrictions.has(`${fromWayId}|${viaWayId}|${toWayId}`);
   }
 

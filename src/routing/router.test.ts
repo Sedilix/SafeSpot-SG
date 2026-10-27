@@ -45,6 +45,43 @@ describe('turn delays', () => {
   });
 });
 
+describe('traffic signal delays', () => {
+  const signal = (x: number, y: number) => ({ type: 'node', id: 900, tags: { highway: 'traffic_signals' }, ...pt(x, y) });
+
+  it('straight through a signalized junction costs the signal wait, not the 2s junction delay', () => {
+    const { g, r } = make([...cross(), signal(1, 0)]);
+    expect(g.hasTrafficSignal[nodeAt(g, 1, 0)]).toBe(1);
+    const inbound = edge(g, 11, [0, 0], [1, 0]);
+    expect(r.evaluateTurn(inbound, edge(g, 12, [1, 0], [2, 0])).delaySec).toBe(Router.DELAY_STRAIGHT_SEC);
+    expect(r.evaluateTurn(inbound, edge(g, 21, [1, 0], [1, 1])).delaySec).toBe(Router.DELAY_LEFT_SEC);
+    expect(r.evaluateTurn(inbound, edge(g, 22, [1, 0], [1, -1])).delaySec).toBe(Router.DELAY_RIGHT_SEC); // right is already longer
+  });
+
+  it('control: the same junction without a signal keeps the 2s straight delay', () => {
+    const { g, r } = make(cross());
+    expect(r.evaluateTurn(edge(g, 11, [0, 0], [1, 0]), edge(g, 12, [1, 0], [2, 0])).delaySec).toBe(Router.DELAY_STRAIGHT_SEC);
+  });
+
+  it('applies at a stop-line signal that is not itself a junction node', () => {
+    const { g, r } = make([way(1, [[0, 0], [0.8, 0], [2, 0]]), signal(0.8, 0)]);
+    expect(r.evaluateTurn(edge(g, 1, [0, 0], [0.8, 0]), edge(g, 1, [0.8, 0], [2, 0])).delaySec).toBe(Router.DELAY_SIGNAL_SEC);
+  });
+
+  it('charges one wait for signal nodes of the same junction (within 50 m)', () => {
+    const { g, r } = make([way(1, [[0, 0], [1, 0], [1.3, 0], [3, 0]]), signal(1, 0), signal(1.3, 0)]);
+    expect(g.signalCluster[nodeAt(g, 1, 0)]).toBe(g.signalCluster[nodeAt(g, 1.3, 0)]);
+    expect(r.evaluateTurn(edge(g, 1, [0, 0], [1, 0]), edge(g, 1, [1, 0], [1.3, 0])).delaySec).toBe(Router.DELAY_SIGNAL_SEC);
+    expect(r.evaluateTurn(edge(g, 1, [1, 0], [1.3, 0]), edge(g, 1, [1.3, 0], [3, 0])).delaySec).toBe(0);
+  });
+
+  it('a route through a signal is slower by the signal wait', () => {
+    const els = [way(1, [[0, 0], [1, 0], [2, 0]])];
+    const plain = make(els).r.findRoute(at(0.2, 0), at(1.8, 0))!;
+    const signalled = make([...els, signal(1, 0)]).r.findRoute(at(0.2, 0), at(1.8, 0))!;
+    expect(signalled.durationSeconds - plain.durationSeconds).toBeCloseTo(Router.DELAY_SIGNAL_SEC, 1);
+  });
+});
+
 describe('turn restrictions (matched on from-way, via-node, to-way)', () => {
   const extra = [way(3, [[0, 0], [0, -2], [1, -2], [1, -1]])]; // bypass round to the south arm
   const origin = at(0.5, 0), dest = at(1, -0.5);

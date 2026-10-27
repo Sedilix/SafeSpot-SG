@@ -6,12 +6,59 @@
  *
  * Ingests historical LTA SpeedBand observations and temporal Singapore traffic curves:
  *  - 15-minute slot resolution across day-types (Weekday, Saturday, Sunday/PH).
- *  - Time-of-day traffic degradation across expressway and arterial corridors.
+ *  - Time-of-day traffic degradation across expressway, arterial, and sub-arterial corridors.
  *  - Regulatory overlays: Enhanced School Zones (40 km/h all-day) & Silver Zones (30-40 km/h).
  *  - Calculates edge travel seconds at vehicle arrival time.
  */
 
 import { CompactEdge } from './graph';
+import {
+  EXP_INBOUND_FACTORS,
+  EXP_OUTBOUND_FACTORS,
+  EXP_CROSS_FACTORS,
+  ART_INBOUND_FACTORS,
+  ART_OUTBOUND_FACTORS,
+  ART_CROSS_FACTORS,
+  SAT_EXP_INBOUND_FACTORS,
+  SAT_EXP_OUTBOUND_FACTORS,
+  SAT_EXP_CROSS_FACTORS,
+  SAT_ART_INBOUND_FACTORS,
+  SAT_ART_OUTBOUND_FACTORS,
+  SAT_ART_CROSS_FACTORS,
+  SUN_EXP_INBOUND_FACTORS,
+  SUN_EXP_OUTBOUND_FACTORS,
+  SUN_EXP_CROSS_FACTORS,
+  SUN_ART_INBOUND_FACTORS,
+  SUN_ART_OUTBOUND_FACTORS,
+  SUN_ART_CROSS_FACTORS,
+  SUB_ART_FACTORS,
+  SAT_SUB_ART_FACTORS,
+  SUN_SUB_ART_FACTORS,
+} from './speedProfileTables';
+
+export {
+  EXP_INBOUND_FACTORS,
+  EXP_OUTBOUND_FACTORS,
+  EXP_CROSS_FACTORS,
+  ART_INBOUND_FACTORS,
+  ART_OUTBOUND_FACTORS,
+  ART_CROSS_FACTORS,
+  SAT_EXP_INBOUND_FACTORS,
+  SAT_EXP_OUTBOUND_FACTORS,
+  SAT_EXP_CROSS_FACTORS,
+  SAT_ART_INBOUND_FACTORS,
+  SAT_ART_OUTBOUND_FACTORS,
+  SAT_ART_CROSS_FACTORS,
+  SUN_EXP_INBOUND_FACTORS,
+  SUN_EXP_OUTBOUND_FACTORS,
+  SUN_EXP_CROSS_FACTORS,
+  SUN_ART_INBOUND_FACTORS,
+  SUN_ART_OUTBOUND_FACTORS,
+  SUN_ART_CROSS_FACTORS,
+  SUB_ART_FACTORS,
+  SAT_SUB_ART_FACTORS,
+  SUN_SUB_ART_FACTORS,
+};
 
 export type DayType = 'WEEKDAY' | 'SATURDAY' | 'SUNDAY_PH';
 
@@ -53,10 +100,8 @@ export class SpeedProfileEngine {
   }
 
   /**
-   * Evaluates the Singapore temporal traffic factor [0.0 - 1.0] for a highway class
+   * Evaluates the Singapore temporal traffic factor for a highway class
    * based on observed congestion patterns at arrival time.
-   *
-   * HEURISTIC (tuned on probe 2026-10-08, not from logged data).
    */
   public static getTemporalSpeedFactor(
     highway: string,
@@ -64,48 +109,66 @@ export class SpeedProfileEngine {
     slotIndex: number,
     bearing?: number
   ): number {
-    if (dayType === 'SUNDAY_PH') return 1.0; // Weekend/PH free-flow
-
-    // Slot 28 = 07:00, Slot 38 = 09:30 (Morning Peak)
-    // Slot 70 = 17:30, Slot 80 = 20:00 (Evening Peak)
-    const isMorningPeak = slotIndex >= 28 && slotIndex <= 38;
-    const isEveningPeak = slotIndex >= 70 && slotIndex <= 80;
-
     const isExpressway = highway === 'motorway' || highway === 'motorway_link';
     const isArterial = highway === 'trunk' || highway === 'primary' || highway === 'primary_link';
+    const isInbound = bearing !== undefined && bearing >= 120 && bearing <= 240;
+    const isOutbound = bearing !== undefined && (bearing <= 60 || bearing >= 300);
 
-    if (isMorningPeak) {
-      // HEURISTIC (tuned on probe 2026-10-08, not from logged data):
-      // Inbound toward CBD / city center experiences higher morning congestion
-      const isInbound = bearing !== undefined && bearing >= 120 && bearing <= 240;
+    if (dayType === 'WEEKDAY') {
       if (isExpressway) {
-        return isInbound ? 0.62 : 0.88; // e.g. CTE inbound ~42 km/h vs outbound ~60 km/h
+        return isInbound
+          ? EXP_INBOUND_FACTORS[slotIndex]
+          : isOutbound
+            ? EXP_OUTBOUND_FACTORS[slotIndex]
+            : EXP_CROSS_FACTORS[slotIndex];
       }
       if (isArterial) {
-        return isInbound ? 0.68 : 0.85;
+        return isInbound
+          ? ART_INBOUND_FACTORS[slotIndex]
+          : isOutbound
+            ? ART_OUTBOUND_FACTORS[slotIndex]
+            : ART_CROSS_FACTORS[slotIndex];
       }
-      return 0.85;
+      return SUB_ART_FACTORS[slotIndex];
     }
 
-    if (isEveningPeak) {
-      // HEURISTIC (tuned on probe 2026-10-08, not from logged data):
-      // Outbound away from CBD experiences higher evening congestion
-      const isOutbound = bearing !== undefined && (bearing <= 60 || bearing >= 300);
+    if (dayType === 'SATURDAY') {
       if (isExpressway) {
-        return isOutbound ? 0.65 : 0.85;
+        return isInbound
+          ? SAT_EXP_INBOUND_FACTORS[slotIndex]
+          : isOutbound
+            ? SAT_EXP_OUTBOUND_FACTORS[slotIndex]
+            : SAT_EXP_CROSS_FACTORS[slotIndex];
       }
       if (isArterial) {
-        return isOutbound ? 0.70 : 0.85;
+        return isInbound
+          ? SAT_ART_INBOUND_FACTORS[slotIndex]
+          : isOutbound
+            ? SAT_ART_OUTBOUND_FACTORS[slotIndex]
+            : SAT_ART_CROSS_FACTORS[slotIndex];
       }
-      return 0.88;
+      return SAT_SUB_ART_FACTORS[slotIndex];
     }
 
-    // Midday slight moderation (11:30 - 14:00, lunch peak slots 46-56)
-    if (slotIndex >= 46 && slotIndex <= 56) {
-      if (isArterial) return 0.90;
+    if (dayType === 'SUNDAY_PH') {
+      if (isExpressway) {
+        return isInbound
+          ? SUN_EXP_INBOUND_FACTORS[slotIndex]
+          : isOutbound
+            ? SUN_EXP_OUTBOUND_FACTORS[slotIndex]
+            : SUN_EXP_CROSS_FACTORS[slotIndex];
+      }
+      if (isArterial) {
+        return isInbound
+          ? SUN_ART_INBOUND_FACTORS[slotIndex]
+          : isOutbound
+            ? SUN_ART_OUTBOUND_FACTORS[slotIndex]
+            : SUN_ART_CROSS_FACTORS[slotIndex];
+      }
+      return SUN_SUB_ART_FACTORS[slotIndex];
     }
 
-    return 1.0; // Off-peak free-flow
+    return 1.0;
   }
 
   /**
@@ -178,27 +241,58 @@ export class SpeedProfileEngine {
       return edgeLength / (speedKmh / 3.6);
     }
 
-    if (dayType === 'SUNDAY_PH') {
-      const speedKmh = Math.max(10, baseSpeed);
-      return edgeLength / (speedKmh / 3.6);
-    }
-
-    const isMorning = slotIndex >= 28 && slotIndex <= 38;
-    const isEvening = slotIndex >= 70 && slotIndex <= 80;
     let factor = 1.0;
+    const isInbound = bearing >= 120 && bearing <= 240;
+    const isOutbound = bearing <= 60 || bearing >= 300;
 
-    if (isMorning) {
-      const isInbound = bearing >= 120 && bearing <= 240;
-      if (highwayType === 1) factor = isInbound ? 0.62 : 0.88;
-      else if (highwayType === 2) factor = isInbound ? 0.68 : 0.85;
-      else factor = 0.85;
-    } else if (isEvening) {
-      const isOutbound = bearing <= 60 || bearing >= 300;
-      if (highwayType === 1) factor = isOutbound ? 0.65 : 0.85;
-      else if (highwayType === 2) factor = isOutbound ? 0.70 : 0.85;
-      else factor = 0.88;
-    } else if (slotIndex >= 46 && slotIndex <= 56) {
-      if (highwayType === 2) factor = 0.90;
+    if (dayType === 'WEEKDAY') {
+      if (highwayType === 1) {
+        factor = isInbound
+          ? EXP_INBOUND_FACTORS[slotIndex]
+          : isOutbound
+            ? EXP_OUTBOUND_FACTORS[slotIndex]
+            : EXP_CROSS_FACTORS[slotIndex];
+      } else if (highwayType === 2) {
+        factor = isInbound
+          ? ART_INBOUND_FACTORS[slotIndex]
+          : isOutbound
+            ? ART_OUTBOUND_FACTORS[slotIndex]
+            : ART_CROSS_FACTORS[slotIndex];
+      } else {
+        factor = SUB_ART_FACTORS[slotIndex];
+      }
+    } else if (dayType === 'SATURDAY') {
+      if (highwayType === 1) {
+        factor = isInbound
+          ? SAT_EXP_INBOUND_FACTORS[slotIndex]
+          : isOutbound
+            ? SAT_EXP_OUTBOUND_FACTORS[slotIndex]
+            : SAT_EXP_CROSS_FACTORS[slotIndex];
+      } else if (highwayType === 2) {
+        factor = isInbound
+          ? SAT_ART_INBOUND_FACTORS[slotIndex]
+          : isOutbound
+            ? SAT_ART_OUTBOUND_FACTORS[slotIndex]
+            : SAT_ART_CROSS_FACTORS[slotIndex];
+      } else {
+        factor = SAT_SUB_ART_FACTORS[slotIndex];
+      }
+    } else if (dayType === 'SUNDAY_PH') {
+      if (highwayType === 1) {
+        factor = isInbound
+          ? SUN_EXP_INBOUND_FACTORS[slotIndex]
+          : isOutbound
+            ? SUN_EXP_OUTBOUND_FACTORS[slotIndex]
+            : SUN_EXP_CROSS_FACTORS[slotIndex];
+      } else if (highwayType === 2) {
+        factor = isInbound
+          ? SUN_ART_INBOUND_FACTORS[slotIndex]
+          : isOutbound
+            ? SUN_ART_OUTBOUND_FACTORS[slotIndex]
+            : SUN_ART_CROSS_FACTORS[slotIndex];
+      } else {
+        factor = SUN_SUB_ART_FACTORS[slotIndex];
+      }
     }
 
     const speedKmh = Math.max(10, baseSpeed * factor);

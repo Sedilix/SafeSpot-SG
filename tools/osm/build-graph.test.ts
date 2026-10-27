@@ -63,9 +63,9 @@ describe('build-graph: Expressway Corridor Link Normalization', () => {
     const edge = graphData.edges[0];
     expect(edge.highway).toBe('primary_link');
 
-    // Capped at primary_link free flow assumption (25 km/h)
+    // Capped at primary_link free flow assumption (35 km/h)
     const effectiveKmh = (edge.length / edge.seconds) * 3.6;
-    expect(effectiveKmh).toBeCloseTo(25, 0);
+    expect(effectiveKmh).toBeCloseTo(35, 0);
   });
 
   it('normalizes secondary_link or trunk_link with expressway ref to motorway_link', () => {
@@ -131,5 +131,20 @@ describe('build-graph: Expressway Corridor Link Normalization', () => {
       toWayId: 103,
     });
     expect(graphData.stats.restrictionsViaWayKept).toBe(1);
+  });
+});
+
+describe('build-graph: traffic signals', () => {
+  it('maps highway=traffic_signals nodes onto graph nodes by coordinate and counts the rest', () => {
+    const data = buildGraphFromElements([
+      { type: 'way', id: 1, tags: { highway: 'primary' }, geometry: [{ lat: 1.3, lon: 103.8 }, { lat: 1.301, lon: 103.8 }, { lat: 1.302, lon: 103.8 }] },
+      { type: 'node', id: 10, lat: 1.301, lon: 103.8, tags: { highway: 'traffic_signals' } },
+      { type: 'node', id: 11, lat: 1.35, lon: 103.9, tags: { highway: 'traffic_signals' } }, // on a road not in the graph
+      { type: 'node', id: 12, lat: 1.302, lon: 103.8, tags: { highway: 'crossing' } },
+    ]);
+    const mid = data.nodes.find((n) => n.lat === 1.301)!.id;
+    expect(data.trafficSignalNodes).toEqual([mid]);
+    expect(data.stats.trafficSignalsKept).toBe(1);
+    expect(data.stats.trafficSignalsNotOnGraph).toBe(1);
   });
 });
