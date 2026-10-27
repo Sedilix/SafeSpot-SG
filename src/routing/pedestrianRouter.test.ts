@@ -16,7 +16,7 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
 import { PedestrianGraph, PedestrianGraphData } from './pedestrianGraph';
-import { PedestrianRouter } from './pedestrianRouter';
+import { PedestrianRouter, generateSeniorInstructions } from './pedestrianRouter';
 import { WeatherService } from './weather';
 import { routeMatrix } from '../utils/pickupService';
 
@@ -209,5 +209,39 @@ describe('pickupService.ts ROUTING_ENGINE=local integration', () => {
     expect(leg).not.toBeNull();
     expect(leg!.meters).toBe(100);
     expect(leg!.seconds).toBeGreaterThan(50);
+  });
+});
+
+
+describe('Senior Guidance & Sheltered Segments', () => {
+  const graph = createSyntheticPedestrianGraph();
+  const router = new PedestrianRouter(graph);
+
+  it('provides structured route segments with covered and steps metadata', async () => {
+    const route = await router.findRoute({ lat: 1.3000, lng: 103.8000 }, { lat: 1.3010, lng: 103.8010 }, { isRaining: true });
+    expect(route).not.toBeNull();
+    expect(route.segments.length).toBe(2);
+    expect(route.segments[0].covered).toBe(true);
+    expect(route.segments[1].covered).toBe(true);
+    expect(route.shelteredPercentage).toBe(100);
+  });
+
+  it('generates clear, multilingual step-by-step guidance for elderly listeners', async () => {
+    const route = await router.findRoute({ lat: 1.3000, lng: 103.8000 }, { lat: 1.3010, lng: 103.8010 }, { isRaining: true });
+    expect(route).not.toBeNull();
+
+    const en = generateSeniorInstructions(route, 'en');
+    expect(en.length).toBeGreaterThan(0);
+    expect(en.some((i) => i.includes('covered linkway'))).toBe(true);
+    expect(en[en.length - 1]).toContain('safe pickup point');
+
+    const zh = generateSeniorInstructions(route, 'zh');
+    expect(zh.some((i) => i.includes('有盖走廊'))).toBe(true);
+
+    const ms = generateSeniorInstructions(route, 'ms');
+    expect(ms.some((i) => i.includes('berbumbung'))).toBe(true);
+
+    const ta = generateSeniorInstructions(route, 'ta');
+    expect(ta.some((i) => i.includes('கூரை வேய்ந்த'))).toBe(true);
   });
 });

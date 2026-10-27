@@ -72,6 +72,8 @@ import {
 import { bearerToken, canManagePairing, checkWearableEventAuth } from './src/utils/wearableAuth';
 import { classifyAddressQuery, mergeAddressSuggestions } from './src/utils/addressSearch';
 import { findPickupOptions } from './src/utils/pickupService';
+import { getPedestrianRouter, generateSeniorInstructions } from './src/routing/pedestrianRouter';
+import { getTripsService } from './src/utils/tripsService';
 import { maybeInitDriveWorkerAtStartup } from './src/routing/driveWorkerClient';
 import { checkOfflineWatches, recordWatchSeen } from './src/utils/watchHealth';
 import { reportedAccuracy } from './src/utils/locationFusion';
@@ -2519,6 +2521,83 @@ app.post('/api/pickup/options', async (req, res) => {
     console.warn('[PICKUP] Optimiser failed:', err.message);
     return res.status(502).json({ error: 'Pickup planning failed.' });
   }
+});
+
+app.post('/api/routing/pedestrian', async (req, res) => {
+  const { from, to, options, lang = 'en' } = req.body || {};
+  if (!from || !to || !inSingapore(from.lat, from.lng) || !inSingapore(to.lat, to.lng)) {
+    return res.status(400).json({ error: 'Valid Singapore coordinates for "from" and "to" are required.' });
+  }
+
+  try {
+    const router = getPedestrianRouter();
+    const route = await router.findRoute(
+      { lat: from.lat, lng: from.lng },
+      { lat: to.lat, lng: to.lng },
+      options
+    );
+
+    if (!route) {
+      return res.status(404).json({ error: 'No pedestrian route found.' });
+    }
+
+    const safeLang = (['en', 'zh', 'ms', 'ta'].includes(lang) ? lang : 'en') as 'en' | 'zh' | 'ms' | 'ta';
+    const instructions = generateSeniorInstructions(route, safeLang);
+
+    return res.json({
+      success: true,
+      route,
+      instructions,
+    });
+  } catch (err: any) {
+    console.warn('[ROUTING] Pedestrian router failed:', err.message);
+    return res.status(500).json({ error: 'Pedestrian routing failed.' });
+  }
+});
+
+// Ground Truth #1: Clean-room measured trips logging & calibration (docs/clean-room-calibration.md)
+app.post('/api/trips/start', (req, res) => {
+  const { tripId, predictedSec, pickupCandidateId, driverStart, targetEdgeId } = req.body || {};
+  if (typeof predictedSec !== 'number' || predictedSec <= 0) {
+    return res.status(400).json({ error: 'Valid predictedSec is required.' });
+  }
+
+  const generatedId = typeof tripId === 'string' && tripId.trim()
+    ? tripId.trim()
+    : `trip_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+  const active = getTripsService().startTrip({
+    tripId: generatedId,
+    departureTime: new Date(),
+    predictedSec,
+    pickupCandidateId: String(pickupCandidateId || 'unknown'),
+    driverStart: driverStart && inSingapore(driverStart.lat, driverStart.lng) ? driverStart : undefined,
+    targetEdgeId: typeof targetEdgeId === 'number' ? targetEdgeId : undefined,
+  });
+
+  return res.json({ success: true, trip: active });
+});
+
+app.post('/api/trips/complete', (req, res) => {
+  const { tripId, arrivalTime, gpsTrace, userConsented } = req.body || {};
+  if (typeof tripId !== 'string' || !tripId.trim()) {
+    return res.status(400).json({ error: 'tripId is required.' });
+  }
+
+  const arrTime = arrivalTime ? new Date(arrivalTime) : new Date();
+  const record = getTripsService().completeTrip(
+    tripId,
+    arrTime,
+    Array.isArray(gpsTrace) ? gpsTrace : undefined,
+    Boolean(userConsented)
+  );
+
+  return res.json({ success: true, record });
+});
+
+app.get('/api/trips/summary', (_req, res) => {
+  const summary = getTripsService().computeCalibrationSummary();
+  return res.json(summary);
 });
 
 app.get('/api/wearable/status', (req, res) => {
