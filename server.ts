@@ -2558,8 +2558,8 @@ app.post('/api/routing/pedestrian', async (req, res) => {
 // Ground Truth #1: Clean-room measured trips logging & calibration (docs/clean-room-calibration.md)
 app.post('/api/trips/start', (req, res) => {
   const { tripId, predictedSec, pickupCandidateId, driverStart, targetEdgeId } = req.body || {};
-  if (typeof predictedSec !== 'number' || predictedSec <= 0) {
-    return res.status(400).json({ error: 'Valid predictedSec is required.' });
+  if (typeof predictedSec !== 'number' || !Number.isFinite(predictedSec) || predictedSec <= 0 || predictedSec > 14400) {
+    return res.status(400).json({ error: 'Valid predictedSec (1-14400s) is required.' });
   }
 
   const generatedId = typeof tripId === 'string' && tripId.trim()
@@ -2585,6 +2585,9 @@ app.post('/api/trips/complete', (req, res) => {
   }
 
   const arrTime = arrivalTime ? new Date(arrivalTime) : new Date();
+  if (Number.isNaN(arrTime.getTime())) {
+    return res.status(400).json({ error: 'Invalid arrivalTime format.' });
+  }
   const record = getTripsService().completeTrip(
     tripId,
     arrTime,

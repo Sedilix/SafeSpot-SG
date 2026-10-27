@@ -109,11 +109,11 @@ export class PedestrianRouter {
     destination: { lat: number; lng: number },
     options: PedestrianRoutingOptions = {}
   ): Promise<PedestrianRouteResult | null> {
-    const pace = options.seniorPaceMps ?? 0.9;
+    const pace = Math.max(0.3, Math.min(2.5, options.seniorPaceMps ?? 0.9));
     const avoidStairs = options.avoidStairs ?? true;
-    const stairsPenalty = options.stairsPenaltyMultiplier ?? 4.0;
-    const rainMultiplier = options.rainMultiplier ?? 3.0;
-    const maxSnap = options.maxSnapRadiusMeters ?? 400;
+    const stairsPenalty = Math.max(1.0, Math.min(20.0, options.stairsPenaltyMultiplier ?? 4.0));
+    const rainMultiplier = Math.max(1.0, Math.min(10.0, options.rainMultiplier ?? 3.0));
+    const maxSnap = Math.max(50, Math.min(1000, options.maxSnapRadiusMeters ?? 400));
 
     // Determine rain condition
     let isRaining = options.isRaining;
@@ -218,10 +218,17 @@ export class PedestrianRouter {
     const pathEdges: number[] = [];
     let curr = destNode;
 
+    const visited = new Set<number>([destNode]);
     while (curr !== startNode) {
-      const edgeId = cameFromEdge.get(curr)!;
+      const edgeId = cameFromEdge.get(curr);
+      const prev = cameFromNode.get(curr);
+      if (edgeId === undefined || prev === undefined || visited.has(prev)) {
+        console.warn(`[ROUTING] Pedestrian path reconstruction cycle or break at node ${curr}`);
+        return null;
+      }
+      visited.add(prev);
       pathEdges.unshift(edgeId);
-      curr = cameFromNode.get(curr)!;
+      curr = prev;
       pathNodes.unshift(curr);
     }
 

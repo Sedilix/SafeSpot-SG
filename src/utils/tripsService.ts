@@ -159,10 +159,10 @@ export class TripsService {
     const sorted = [...trace].sort((a, b) => a.timestampMs - b.timestampMs);
     const matchedEdges: Array<{ edgeId: number; timestampMs: number }> = [];
 
-    // Candidate search & snapping
+    // Candidate search & snapping (max 1 grid ring, <= 35m)
     for (const p of sorted) {
-      const snap = g.findNearestSegment(p.lat, p.lng, 35);
-      if (snap && snap.edges.length > 0) {
+      const snap = g.findNearestSegment(p.lat, p.lng, 1);
+      if (snap && snap.edges.length > 0 && snap.distanceMeters <= 35) {
         // Choose edge with closest bearing or primary forward edge
         matchedEdges.push({
           edgeId: snap.edges[0].id,
